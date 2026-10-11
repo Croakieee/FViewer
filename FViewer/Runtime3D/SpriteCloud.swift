@@ -12,6 +12,7 @@ final class SpriteCloud {
         var age: Float = 0
         var position: Vec3
         var velocity: Vec3
+        var fall = Vec3.zero
         var scaleX: Float
         var scaleY: Float
         var rotation: Float
@@ -19,7 +20,7 @@ final class SpriteCloud {
         var world = false
     }
 
-    private static let flatteryScale: Float = 15
+    private static let flatteryScale: Float = 12.5
     private static let lineWidth: Float = 0.012
 
     let anim: RSimple
@@ -42,15 +43,13 @@ final class SpriteCloud {
         let a = anim
         for i in sprites.indices {
             sprites[i].age += frames
-            sprites[i].velocity += a.gravity * frames
-            if a.flatteryRate > 0 {
-                let keep = Vec3(
-                    pow(max(0, 1 - a.flatteryRate * (1 - a.coordAccuracy.x) * SpriteCloud.flatteryScale), frames),
-                    pow(max(0, 1 - a.flatteryRate * (1 - a.coordAccuracy.y) * SpriteCloud.flatteryScale), frames),
-                    pow(max(0, 1 - a.flatteryRate * (1 - a.coordAccuracy.z) * SpriteCloud.flatteryScale), frames))
-                sprites[i].velocity *= keep
-            }
-            sprites[i].position += sprites[i].velocity * frames
+            sprites[i].fall += a.gravity * frames
+            let keep = Vec3(
+                pow(max(0, 1 - (1 - a.coordAccuracy.x) * SpriteCloud.flatteryScale), frames),
+                pow(max(0, 1 - (1 - a.coordAccuracy.y) * SpriteCloud.flatteryScale), frames),
+                pow(max(0, 1 - (1 - a.coordAccuracy.z) * SpriteCloud.flatteryScale), frames))
+            sprites[i].velocity *= keep
+            sprites[i].position += (sprites[i].velocity + sprites[i].fall) * frames
         }
         sprites.removeAll { $0.age >= a.life }
         guard alive else { return }

@@ -17,6 +17,7 @@ struct RCurve3 {
     var ry: RCurve?
     var rz: RCurve?
     var connect = 0
+    var connectRandom = 0
 }
 
 struct RColor {
@@ -110,6 +111,10 @@ struct REmitter {
     var divideY: Int
     var radius: RCurve?
     var length: RCurve?
+    var coneAngle: RCurve?
+    var coneAngleRandom: RCurve?
+    var coneRotation: [RCurve?] = [nil, nil, nil]
+    var dataRotationOrder = 0
 }
 
 struct RUvSet {
@@ -235,6 +240,8 @@ struct RParticle {
 }
 
 struct RBinder {
+    var type = 0
+    var distance: Float = 0
     var bindTargetPoint: Int
     var bindPointId: Int
 }
@@ -279,7 +286,7 @@ enum AvfxSchemaReader {
     static func curve3(_ block: AvfxBlock?) -> RCurve3 {
         guard let block else { return RCurve3() }
         return RCurve3(x: curve(block.child("X")), y: curve(block.child("Y")), z: curve(block.child("Z")), rx: curve(block.child("XR")),
-                       ry: curve(block.child("YR")), rz: curve(block.child("ZR")), connect: block.int("ACT"))
+                       ry: curve(block.child("YR")), rz: curve(block.child("ZR")), connect: block.int("ACT"), connectRandom: block.int("ACTR"))
     }
 
     static func color(_ block: AvfxBlock?) -> RColor {
@@ -388,11 +395,14 @@ enum AvfxSchemaReader {
                 emitterItems: emitterRecords.enumerated().map { emitterItem($0.element, index: $0.offset) },
                 modelIndex: data?.int("MdNo", -1) ?? -1, generateMethod: data?.int("GeMT") ?? 0, injectionSpeed: curve(data?.child("IjS")),
                 injectionSpeedRandom: curve(data?.child("IjSR")), divideX: data?.int("DivX", 1) ?? 1, divideY: data?.int("DivY", 1) ?? 1,
-                radius: curve(data?.child("Rad")) ?? curve(data?.child("Rads")), length: curve(data?.child("Len")))
+                radius: curve(data?.child("Rad")) ?? curve(data?.child("Rads")), length: curve(data?.child("Len")),
+                coneAngle: curve(data?.child("IjA")), coneAngleRandom: curve(data?.child("IjAR")),
+                coneRotation: [curve(data?.child("AnX")), curve(data?.child("AnY")), curve(data?.child("AnZ"))],
+                dataRotationOrder: data?.int("ROT") ?? 0)
         }
         let particles = root.childrenNamed("Ptcl").enumerated().map { index, p -> RParticle in
             let data = p.child("Data")
-            let type = p.int("PrVT")
+            let type = p.int("PrVT") == 9 ? 8 : p.int("PrVT")
             var palette: RPalette?
             if let tp = p.child("TP"), tp.children != nil {
                 palette = RPalette(enabled: tp.bool("bEna"), border: tp.int("TBT"), texture: tp.int("TxNo", -1), offset: curve(tp.child("POff")),
@@ -418,7 +428,8 @@ enum AvfxSchemaReader {
         }
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
-            return RBinder(bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1)
+            return RBinder(type: b.int("BnVr"), distance: b.child("Data")?.float("Dst") ?? 0, bindTargetPoint: props?.int("BPTP") ?? 0,
+                           bindPointId: props?.int("BPID", -1) ?? -1)
         }
         return REffectSchema(
             revisedPosition: Vec3(root.float("RvPx"), root.float("RvPy"), root.float("RvPz")),

@@ -98,22 +98,27 @@ enum Eval {
     }
 
     static func axes(_ c: RCurve3, _ time: CurveTime, _ fallback: Float, _ seed: RandomSeed, _ slot: Int) -> Vec3 {
-        var x = curve(c.x, time, fallback) + randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot))
-        var y = curve(c.y, time, fallback) + randomOffset(c.ry, type: c.y?.random ?? 0, time, seed.get(slot + 1))
-        var z = curve(c.z, time, fallback) + randomOffset(c.rz, type: c.z?.random ?? 0, time, seed.get(slot + 2))
-        switch c.connect {
-        case 1: y = x; z = x
-        case 2: y = x
-        case 3: z = x
-        case 4: x = y; z = y
-        case 5: x = y
-        case 6: z = y
-        case 7: x = z; y = z
-        case 8: x = z
-        case 9: y = z
-        default: break
+        func linked(_ v: Vec3, _ mode: Int) -> Vec3 {
+            var x = v.x, y = v.y, z = v.z
+            switch mode {
+            case 1: y = x; z = x
+            case 2: y = x
+            case 3: z = x
+            case 4: x = y; z = y
+            case 5: x = y
+            case 6: z = y
+            case 7: x = z; y = z
+            case 8: x = z
+            case 9: y = z
+            default: break
+            }
+            return Vec3(x, y, z)
         }
-        return Vec3(x, y, z)
+        let base = Vec3(curve(c.x, time, fallback), curve(c.y, time, fallback), curve(c.z, time, fallback))
+        let offsets = Vec3(randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot)),
+                           randomOffset(c.ry, type: c.y?.random ?? 0, time, seed.get(slot + 1)),
+                           randomOffset(c.rz, type: c.z?.random ?? 0, time, seed.get(slot + 2)))
+        return linked(base, c.connect) + linked(offsets, c.connectRandom)
     }
 
     static func color(_ c: RColor, _ time: CurveTime, _ seed: RandomSeed) -> Vec4 {

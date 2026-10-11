@@ -121,6 +121,7 @@ struct FieldRows: View {
         let isChanged = field.map(changed) ?? false
         let before = isChanged ? field.flatMap { document.originalValue(of: $0, in: nodeID) } : nil
         var help = field.map { "\($0.label) [\($0.tag)]" } ?? text
+        if field?.tag == "SdNo" { help += " · -1 if no sound" }
         if isChanged { help += " · was " + (before.map(document.describe) ?? "not in the file") }
         return HStack(spacing: 4) {
             Spacer(minLength: 0)

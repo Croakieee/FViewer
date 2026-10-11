@@ -470,7 +470,7 @@ extension EffectDocument {
                 }
                 if missing { notes.append("Timeline \(t) is missing a value: one of its items has no emitter, clip or effector") }
             }
-            let unsupported: Set<Int> = [6, 9, 14, 15]
+            let unsupported: Set<Int> = [6, 14, 15]
             for (i, particle) in root.childrenNamed("Ptcl").enumerated() {
                 let type = particle.int("PrVT")
                 if unsupported.contains(type) || (type == 3 && particle.int("bSCt") == 0) {

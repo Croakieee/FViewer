@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     @Published var showBindPoints = true
     @Published var viewportBackground = 0
     @Published var highlightSelection = true
+    @Published var gameRoot: URL?
+    var game: GameArchive?
 
     static let backgrounds: [(name: String, value: Double)] = [("Dark Grey", 0.24), ("Black", 0.02), ("Mid Grey", 0.5), ("Light", 0.82)]
 
@@ -51,6 +53,7 @@ final class AppModel: ObservableObject {
             open(URL(fileURLWithPath: arguments[flag + 1]))
         }
         AppDelegate.model = self
+        restoreGameFolder()
         startAutosave()
     }
 
@@ -76,7 +79,7 @@ final class AppModel: ObservableObject {
         setLibrary(url)
     }
 
-    private func setLibrary(_ root: URL) {
+    func setLibrary(_ root: URL) {
         libraryRoot = root
         textureFiles = [:]
         texturePaths = [:]
@@ -250,12 +253,12 @@ final class AppModel: ObservableObject {
         return try modArchive(mod, effects: [(document, effectPath)], textures: textures)
     }
 
-    func exportMod(_ mod: ModDescription, effects: [(document: EffectDocument, path: String)], textures: [String]) {
+    func exportMod(_ mod: ModDescription, effects: [(document: EffectDocument, path: String)], textures: [String], texTools: Bool = false, group: ModGroup? = nil) {
         do {
-            let data = try modArchive(mod, effects: effects, textures: textures)
+            let data = try texTools ? texToolsArchive(mod, effects: effects, textures: textures) : modArchive(mod, effects: effects, textures: textures, group: group)
             let panel = NSSavePanel()
-            panel.title = "Export Penumbra Mod"
-            panel.nameFieldStringValue = mod.name + ".pmp"
+            panel.title = texTools ? "Export TexTools Mod" : "Export Penumbra Mod"
+            panel.nameFieldStringValue = mod.name + (texTools ? ".ttmp2" : ".pmp")
             guard panel.runModal() == .OK, let url = panel.url else { return }
             try data.write(to: url, options: .atomic)
             notice = "Mod written to \(url.lastPathComponent): \(effects.count) effect\(effects.count == 1 ? "" : "s"), \(Set(textures).count) texture\(Set(textures).count == 1 ? "" : "s")"
@@ -694,7 +697,7 @@ final class AppModel: ObservableObject {
         document.setName(field.stringValue.trimmingCharacters(in: .whitespaces), for: nodeID)
     }
 
-    private func prompt(_ title: String, placeholder: String, value: String = "") -> String? {
+    func prompt(_ title: String, placeholder: String, value: String = "") -> String? {
         let alert = NSAlert()
         alert.messageText = title
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
@@ -857,39 +860,57 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func openWorkspace(_ url: URL) {
+    func openWorkspace(_ url: URL, append: Bool = false) {
         guard let root = libraryRoot, let data = try? Data(contentsOf: url), let workspace = try? JSONDecoder().decode(Workspace.self, from: data) else {
             errorMessage = "\(url.lastPathComponent) could not be read"
             return
         }
+        if !append {
+            guard confirmDiscardingChanges() else { return }
+            documents = [:]
+            document = nil
+        }
+        let previous = document?.url
         var missing = 0
         for file in workspace.files {
             let target = file.split(separator: "/").reduce(root) { $0.appendingPathComponent(String($1)) }
             if FileManager.default.fileExists(atPath: target.path) { open(target) } else { missing += 1 }
         }
-        if !workspace.current.isEmpty {
+        if append, let previous {
+            open(previous)
+        } else if !workspace.current.isEmpty {
             let target = workspace.current.split(separator: "/").reduce(root) { $0.appendingPathComponent(String($1)) }
             if FileManager.default.fileExists(atPath: target.path) { open(target) }
         }
-        if !workspace.modName.isEmpty { UserDefaults.standard.set(workspace.modName, forKey: "mod.name") }
+        if !append, !workspace.modName.isEmpty { UserDefaults.standard.set(workspace.modName, forKey: "mod.name") }
         notice = "Opened \(workspace.files.count - missing) effect\(workspace.files.count - missing == 1 ? "" : "s")" + (missing > 0 ? " · \(missing) missing" : "")
     }
 
-    func modArchive(_ mod: ModDescription, effects: [(document: EffectDocument, path: String)], textures: [String]) throws -> Data {
-        var files: [(gamePath: String, data: [UInt8])] = []
+    func modFiles(effects: [(document: EffectDocument, path: String)], textures: [String], group: ModGroup? = nil) throws -> [(gamePath: String, data: [UInt8], option: Int)] {
+        var files: [(gamePath: String, data: [UInt8], option: Int)] = []
         var seen: Set<String> = []
+        if let group, let problem = group.problem { throw AvfxError.malformed(problem) }
         for effect in effects {
             if let problem = PenumbraExport.problem(in: effect.path) { throw AvfxError.malformed("\(effect.document.title): \(problem)") }
             guard effect.document.format == .avfx else { throw AvfxError.malformed("\(effect.document.title) is not an .avfx effect") }
-            guard seen.insert(PenumbraExport.normalized(effect.path)).inserted else { throw AvfxError.malformed("\(effect.path) is used by two effects") }
-            files.append((effect.path, [UInt8](effect.document.serializedData())))
+            let option = min(group?.effects[effect.document.id] ?? 0, group?.options.count ?? 0)
+            guard seen.insert("\(option)|" + PenumbraExport.normalized(effect.path)).inserted else { throw AvfxError.malformed("\(effect.path) is used by two effects") }
+            files.append((effect.path, [UInt8](effect.document.serializedData()), option))
         }
         for path in Set(textures).sorted() {
             guard let url = textureURL(path) else { throw AvfxError.malformed("\(path) was not found in the open folder") }
             if url.pathExtension.lowercased() == "png" { throw AvfxError.malformed("\(path) resolves to a PNG; convert it with Replace Image first") }
-            files.append((path, [UInt8](try Data(contentsOf: url))))
+            files.append((path, [UInt8](try Data(contentsOf: url)), min(group?.textures[path] ?? 0, group?.options.count ?? 0)))
         }
-        return Data(PenumbraExport.archive(mod, files: files))
+        return files
+    }
+
+    func modArchive(_ mod: ModDescription, effects: [(document: EffectDocument, path: String)], textures: [String], group: ModGroup? = nil) throws -> Data {
+        Data(PenumbraExport.archive(mod, files: try modFiles(effects: effects, textures: textures, group: group), group: group))
+    }
+
+    func texToolsArchive(_ mod: ModDescription, effects: [(document: EffectDocument, path: String)], textures: [String]) throws -> Data {
+        Data(try TexToolsExport.archive(mod, files: try modFiles(effects: effects, textures: textures).map { ($0.gamePath, $0.data) }))
     }
 
     func isDirty(_ url: URL) -> Bool { documents[url]?.isDirty ?? false }

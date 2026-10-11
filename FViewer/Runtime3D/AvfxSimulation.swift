@@ -105,6 +105,16 @@ final class EmitterInstance {
     private var onVertex: Bool { [2, 3, 6, 7].contains(schema.generateMethod) }
 
     func nextPoint(_ random: inout SeededRandom) -> EmitPoint? {
+        if schema.type == 1 || schema.type == 2 {
+            let at = CurveTime(age)
+            let half = max(0, Eval.curve(schema.coneAngle, at, 0) + Eval.curve(schema.coneAngleRandom, at, 0) * (random.next() * 2 - 1))
+            let cosine = 1 - random.next() * (1 - cos(min(half, .pi)))
+            let sine = (max(0, 1 - cosine * cosine)).squareRoot()
+            let turn = random.next() * 2 * .pi
+            let local = Vec3(sine * cos(turn), sine * sin(turn), cosine)
+            let angles = Vec3(Eval.curve(schema.coneRotation[0], at, 0), Eval.curve(schema.coneRotation[1], at, 0), Eval.curve(schema.coneRotation[2], at, 0))
+            return EmitPoint(position: .zero, normal: simd_act(Math3D.euler(angles, order: schema.dataRotationOrder), local))
+        }
         guard !points.isEmpty else { return nil }
         let index: Int
         if ordered {
@@ -251,6 +261,7 @@ final class AvfxSimulation {
     private var pendingRestart = false
     private var sequence = 0
     private var cameraRotation: simd_quatf?
+    private var cameraPosition = Vec3.zero
     private var modelGeometry: [Int: RenderGeometry] = [:]
     private var emitPoints: [Int: [EmitPoint]] = [:]
 
@@ -331,6 +342,14 @@ final class AvfxSimulation {
 
     private func binderMatrix(_ index: Int) -> () -> Mat4 {
         var object = matrix_identity_float4x4
+        if index >= 0, index < schema.binders.count, schema.binders[index].type == 3 {
+            let distance = schema.binders[index].distance
+            return { [weak self] in
+                guard let self else { return matrix_identity_float4x4 }
+                return Math3D.compose(self.cameraPosition, self.cameraRotation ?? simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), Vec3(1, 1, 1))
+                    * Math3D.translation(Vec3(0, 0, distance))
+            }
+        }
         if useBindPoints, index >= 0, index < schema.binders.count, schema.binders[index].bindTargetPoint == 3,
            let point = AvfxSimulation.bindPoints[schema.binders[index].bindPointId] {
             object = Math3D.translation(point)
@@ -689,6 +708,7 @@ final class AvfxSimulation {
 
     func render(camera: CameraState, filter: VisibilityFilter = VisibilityFilter()) -> [ParticleDraw] {
         cameraRotation = camera.rotation
+        cameraPosition = camera.position
         let identity = simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
         let pixelAngle = 2 * tan(camera.fovY / 2) / max(1, camera.viewportHeight)
         let fadeNow = fade

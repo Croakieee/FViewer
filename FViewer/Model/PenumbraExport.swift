@@ -8,6 +8,22 @@ struct ModDescription {
     var website = ""
 }
 
+struct ModGroup {
+    var name = ""
+    var multi = false
+    var options: [String] = []
+    var effects: [UUID: Int] = [:]
+    var textures: [String: Int] = [:]
+
+    var problem: String? {
+        if name.trimmingCharacters(in: .whitespaces).isEmpty { return "Give the option group a name" }
+        if options.isEmpty { return "Add at least one option" }
+        if options.contains(where: { $0.contains("/") || $0.contains("\\") }) { return "Option names cannot contain slashes" }
+        if Set(options.map { $0.lowercased() }).count != options.count { return "Option names must differ" }
+        return nil
+    }
+}
+
 enum PenumbraExport {
     static func normalized(_ gamePath: String) -> String {
         gamePath.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\\", with: "/").lowercased()
@@ -32,22 +48,48 @@ enum PenumbraExport {
         return "vfx/" + file
     }
 
-    static func archive(_ mod: ModDescription, files: [(gamePath: String, data: [UInt8])]) -> [UInt8] {
+    static func archive(_ mod: ModDescription, files: [(gamePath: String, data: [UInt8], option: Int)], group: ModGroup? = nil) -> [UInt8] {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var redirects: [JSONMember] = []
         var entries: [(path: String, data: [UInt8])] = []
-        for file in files {
-            let path = normalized(file.gamePath)
-            redirects.append(JSONMember(key: path, node: JSONNode(.string(path.replacingOccurrences(of: "/", with: "\\")))))
-            entries.append((path, file.data))
-        }
         func text(_ value: String) -> JSONNode { JSONNode(.string(value)) }
-        let container = JSONNode(.object([
-            JSONMember(key: "Files", node: JSONNode(.object(redirects))),
-            JSONMember(key: "FileSwaps", node: JSONNode(.object([]))),
-            JSONMember(key: "Manipulations", node: JSONNode(.array([]))),
-        ]))
+        func redirects(_ option: Int, folder: String) -> [JSONMember] {
+            var list: [JSONMember] = []
+            for file in files where file.option == option {
+                let path = normalized(file.gamePath)
+                let stored = folder.isEmpty ? path : folder + "/" + path
+                list.append(JSONMember(key: path, node: text(stored.replacingOccurrences(of: "/", with: "\\"))))
+                entries.append((stored, file.data))
+            }
+            return [
+                JSONMember(key: "Files", node: JSONNode(.object(list))),
+                JSONMember(key: "FileSwaps", node: JSONNode(.object([]))),
+                JSONMember(key: "Manipulations", node: JSONNode(.array([]))),
+            ]
+        }
+        let container = JSONNode(.object(redirects(0, folder: "")))
+        var groups: [JSONNode] = []
+        if let group {
+            let options = group.options.enumerated().map { index, name in
+                JSONNode(.object([
+                    JSONMember(key: "Id", node: text(UUID().uuidString.lowercased())),
+                    JSONMember(key: "Name", node: text(name)),
+                    JSONMember(key: "Description", node: text("")),
+                    JSONMember(key: "Priority", node: JSONNode(.number(0))),
+                    JSONMember(key: "Layout", node: JSONNode(.array([]))),
+                ] + redirects(index + 1, folder: "\(group.name)/\(name)".lowercased())))
+            }
+            groups.append(JSONNode(.object([
+                JSONMember(key: "Id", node: text(UUID().uuidString.lowercased())),
+                JSONMember(key: "Name", node: text(group.name)),
+                JSONMember(key: "Description", node: text("")),
+                JSONMember(key: "Priority", node: JSONNode(.number(0))),
+                JSONMember(key: "Type", node: text(group.multi ? "Multi" : "Single")),
+                JSONMember(key: "DefaultSettings", node: JSONNode(.number(group.multi ? 1 : 0))),
+                JSONMember(key: "Layout", node: JSONNode(.array([]))),
+                JSONMember(key: "Options", node: JSONNode(.array(options))),
+            ])))
+        }
         let meta = JSONNode(.object([
             JSONMember(key: "FileVersion", node: JSONNode(.number(4))),
             JSONMember(key: "Identifier", node: text(UUID().uuidString.lowercased())),
@@ -59,7 +101,7 @@ enum PenumbraExport {
             JSONMember(key: "Website", node: text(mod.website)),
             JSONMember(key: "ModTags", node: JSONNode(.array([]))),
             JSONMember(key: "DefaultData", node: container),
-            JSONMember(key: "Groups", node: JSONNode(.array([]))),
+            JSONMember(key: "Groups", node: JSONNode(.array(groups))),
         ]))
         entries.insert(("meta.json", Array(meta.serialized().utf8)), at: 0)
         return ZipWriter.archive(entries)

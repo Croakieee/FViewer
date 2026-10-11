@@ -45,6 +45,12 @@ struct TopBar: View {
                 }
                 Button("Open File…") { app.openFilePanel() }
                 Button("Open Folder…") { app.chooseLibrary() }
+                Menu("Game") {
+                    Button(app.gameRoot == nil ? "Choose Game Folder…" : "Change Game Folder…") { app.chooseGameFolder() }
+                    Button("Open Effect by Game Path…") { app.openFromGamePrompt() }.disabled(app.gameRoot == nil)
+                    Button("Extract File by Game Path…") { app.extractFromGamePrompt() }.disabled(app.gameRoot == nil)
+                    Button("Fetch Missing Textures") { app.fetchMissingTextures() }.disabled(app.gameRoot == nil || app.document == nil)
+                }
                 Menu("Open Recent") {
                     ForEach(app.recentFiles, id: \.self) { url in Button(url.lastPathComponent) { app.openRecent(url) } }
                 }
@@ -57,6 +63,10 @@ struct TopBar: View {
                     ForEach(app.workspaceFiles, id: \.self) { url in Button(url.deletingPathExtension().lastPathComponent) { app.openWorkspace(url) } }
                 }
                 .disabled(app.workspaceFiles.isEmpty)
+                Menu("Append Workspace") {
+                    ForEach(app.workspaceFiles, id: \.self) { url in Button(url.deletingPathExtension().lastPathComponent) { app.openWorkspace(url, append: true) } }
+                }
+                .disabled(app.workspaceFiles.isEmpty)
                 Divider()
                 Button("Reload from Disk") { app.reloadDocument() }.disabled(app.document == nil)
                 Button("Show Autosaves") { app.revealAutosaves() }
@@ -64,7 +74,7 @@ struct TopBar: View {
                 Button("Import Penumbra Mod (.pmp)…") { app.importPenumbraMod() }
                 Button("Import Nodes…") { app.importNodesPanel() }.disabled(app.document?.format != .avfx)
                 Button("Export Nodes…") { app.document?.exportRequest = [] }.disabled(app.document?.format != .avfx)
-                Button("Export Penumbra Mod…") { app.modExport = true }.disabled(app.document?.format != .avfx)
+                Button("Export Mod…") { app.modExport = true }.disabled(app.document?.format != .avfx)
             }
             menuButton("Edit") {
                 Button("Undo") { app.document?.undo() }.disabled(app.document?.undoManager.canUndo != true)
