@@ -204,6 +204,7 @@ struct ContentView: View {
         .onAppear {
             app.openModelWindow = { openWindow(id: "model") }
             app.openTextureWindow = { openWindow(id: "texture") }
+            app.openItemWindow = { openWindow(id: "item") }
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {

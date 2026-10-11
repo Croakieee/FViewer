@@ -140,7 +140,7 @@ final class AvfxCatalog {
         "AvfxTimeline": ["Item": "AvfxTimelineItem"],
         "AvfxEmitter": ["ItPr": "AvfxEmitterItem", "ItEm": "AvfxEmitterItem"],
     ]
-    private static let particleParts: [String: String] = [
+    static let particleParts: [String: String] = [
         "Smpl": "AvfxParticleSimple", "TC1": "AvfxParticleTextureColor1", "TC2": "AvfxParticleTextureColor2",
         "TC3": "AvfxParticleTextureColor2", "TC4": "AvfxParticleTextureColor2", "TD": "AvfxParticleTextureDistortion",
         "TN": "AvfxParticleTextureNormal", "TR": "AvfxParticleTextureReflection", "TP": "AvfxParticleTexturePalette",

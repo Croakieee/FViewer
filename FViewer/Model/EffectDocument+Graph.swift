@@ -25,6 +25,11 @@ struct GraphEdge: Identifiable {
     var retarget: ((Int, String) -> Void)?
 }
 
+struct LinkOption {
+    let title: String
+    let perform: () -> Void
+}
+
 struct EffectGraph {
     var nodes: [GraphNode] = []
     var edges: [GraphEdge] = []
@@ -348,22 +353,173 @@ extension EffectDocument {
         retarget(index, target)
     }
 
-    func canConnect(from: String, to: String) -> Bool {
+    static let linkKinds: [(prefix: String, name: String)] = [
+        ("avfx/Schd", "Scheduler"), ("avfx/TmLn/", "Timeline"), ("avfx/Emit/", "Emitter"), ("avfx/Ptcl/", "Particle"), ("avfx/Efct/", "Effector"),
+        ("avfx/Bind/", "Binder"), ("avfx/Tex/", "Texture"), ("avfx/Modl/", "Model"), ("json/timelines/", "Timeline"), ("json/emitters/", "Emitter"),
+        ("json/particles/", "Particle"), ("tex:", "Texture"),
+    ]
+
+    static func linkKind(_ id: String) -> String { linkKinds.first { id.hasPrefix($0.prefix) }?.name ?? "Node" }
+
+    private func linkPairAllowed(_ from: String, _ to: String) -> Bool {
         let pairs: [(String, [String])] = [
-            ("avfx/Schd/", ["avfx/TmLn/"]), ("avfx/TmLn/", ["avfx/Emit/", "avfx/Bind/"]),
+            ("avfx/Schd", ["avfx/TmLn/"]), ("avfx/TmLn/", ["avfx/Emit/", "avfx/Bind/"]),
             ("avfx/Emit/", ["avfx/Emit/", "avfx/Ptcl/", "avfx/Efct/", "avfx/Modl/"]), ("avfx/Ptcl/", ["avfx/Tex/", "avfx/Modl/"]),
             ("json/timelines/", ["json/emitters/"]), ("json/emitters/", ["json/emitters/", "json/particles/"]), ("json/particles/", ["tex:"]),
         ]
         return from != to && pairs.contains { from.hasPrefix($0.0) && $0.1.contains { to.hasPrefix($0) } }
     }
 
-    func connect(from: String, to: String) {
-        guard canConnect(from: from, to: to) else { return }
-        if let root = avfxRoot {
-            connectAvfx(root, from: from, to: to)
-        } else if let root = jsonRoot {
-            connectPixi(root, from: from, to: to)
+    func linkDirection(_ a: String, _ b: String) -> (from: String, to: String)? {
+        if linkPairAllowed(a, b) { return (a, b) }
+        if linkPairAllowed(b, a) { return (b, a) }
+        return nil
+    }
+
+    func canConnect(from: String, to: String) -> Bool { linkDirection(from, to) != nil }
+
+    func linkOptions(_ a: String, _ b: String) -> (options: [LinkOption], problem: String?) {
+        guard a != b else { return ([], nil) }
+        guard let pair = linkDirection(a, b) else {
+            return ([], "\(EffectDocument.linkKind(a)) and \(EffectDocument.linkKind(b)) cannot be linked")
         }
+        if let root = avfxRoot { return avfxLinkOptions(root, from: pair.from, to: pair.to) }
+        return ([LinkOption(title: "Link") { [weak self] in
+            guard let self, let root = self.jsonRoot else { return }
+            self.connectPixi(root, from: pair.from, to: pair.to)
+        }], nil)
+    }
+
+    @discardableResult func connect(from: String, to: String, option: Int = 0) -> String? {
+        let result = linkOptions(from, to)
+        guard option >= 0, option < result.options.count else { return result.problem ?? "Nothing to link" }
+        result.options[option].perform()
+        return nil
+    }
+
+    private func ensureChild(_ owner: AvfxBlock, _ tag: String, cls: String?) -> AvfxBlock? {
+        if let existing = owner.child(tag) { return existing }
+        guard let cls, let fields = catalog.classes[cls], let position = fields.firstIndex(where: { $0.tag == tag }),
+              let created = catalog.freshBlock(fields[position], in: cls) else { return nil }
+        let earlier = Set(fields.prefix(position).map(\.tag))
+        let list = owner.children ?? []
+        owner.insert(created, at: (list.lastIndex { earlier.contains($0.tag) }).map { $0 + 1 } ?? 0)
+        return created
+    }
+
+    private func ownerClass(_ id: String) -> String? {
+        if case .avfx(_, let cls, _)? = node(id)?.payload { return cls }
+        return nil
+    }
+
+    private func avfxLinkOptions(_ root: AvfxBlock, from: String, to: String) -> (options: [LinkOption], problem: String?) {
+        func one(_ title: String, _ action: @escaping () -> Void) -> (options: [LinkOption], problem: String?) { ([LinkOption(title: title, perform: action)], nil) }
+        if from.hasPrefix("avfx/Schd"), let timeline = index(to, "avfx/TmLn/"), let scheduler = root.child("Schd") {
+            return one("Schedule Timeline \(timeline)") { [weak self] in
+                guard let self else { return }
+                self.changeRecords(scheduler, list: "Item", title: "Link Timeline") { $0.append(self.record("AvfxSchedulerItem", ["TlNo": timeline])) }
+            }
+        }
+        if let t = index(from, "avfx/TmLn/"), t < root.childrenNamed("TmLn").count {
+            let timeline = root.childrenNamed("TmLn")[t]
+            if let emitter = index(to, "avfx/Emit/") {
+                return one("Add Emitter \(emitter) to Timeline \(t)") { [weak self] in
+                    guard let self else { return }
+                    self.changeRecords(timeline, list: "Item", title: "Link Emitter") { $0.append(self.record("AvfxTimelineItem", ["EmNo": emitter])) }
+                }
+            }
+            if let binder = index(to, "avfx/Bind/") {
+                let cls = ownerClass(from)
+                var options = [LinkOption(title: "Bind the whole timeline") { [weak self] in
+                    self?.performStructural("Link Binder") { self?.ensureChild(timeline, "BnNo", cls: cls)?.intValue = binder }
+                }]
+                for (i, record) in timeline.ownRecords("Item").enumerated() where record.contains(where: { $0.tag == "BdNo" }) {
+                    let emitter = record.first { $0.tag == "EmNo" }?.intValue ?? -1
+                    options.append(LinkOption(title: "Bind item \(i)" + (emitter >= 0 ? " (Emitter \(emitter))" : "")) { [weak self] in
+                        self?.changeRecords(timeline, list: "Item", title: "Link Binder") { records in
+                            if i < records.count { records[i].first { $0.tag == "BdNo" }?.intValue = binder }
+                        }
+                    })
+                }
+                return (options, nil)
+            }
+        }
+        if let e = index(from, "avfx/Emit/"), e < root.childrenNamed("Emit").count {
+            let emitter = root.childrenNamed("Emit")[e]
+            if let particle = index(to, "avfx/Ptcl/") {
+                return one("Emit Particle \(particle)") { [weak self] in
+                    guard let self else { return }
+                    self.changeRecords(emitter, list: "ItPr", title: "Link Particle") { $0.append(self.record("AvfxEmitterItem", ["TgtB": particle])) }
+                }
+            }
+            if let child = index(to, "avfx/Emit/") {
+                return one("Emit Emitter \(child)") { [weak self] in
+                    guard let self else { return }
+                    self.changeRecords(emitter, list: "ItEm", title: "Link Emitter") { $0.append(self.record("AvfxEmitterItem", ["TgtB": child])) }
+                }
+            }
+            if let effector = index(to, "avfx/Efct/") {
+                let cls = ownerClass(from)
+                return one("Use Effector \(effector)") { [weak self] in
+                    self?.performStructural("Link Effector") { self?.ensureChild(emitter, "EfNo", cls: cls)?.intValue = effector }
+                }
+            }
+            if let model = index(to, "avfx/Modl/") {
+                guard let field = emitter.child("Data")?.child("MdNo"), field.children == nil, field.data.count >= 4 else {
+                    return ([], "Emitter \(e) does not emit from a model. Set its type to Model first")
+                }
+                return one("Emit from Model \(model)") { [weak self] in self?.performStructural("Link Model") { field.intValue = model } }
+            }
+        }
+        if let p = index(from, "avfx/Ptcl/"), p < root.childrenNamed("Ptcl").count {
+            let particle = root.childrenNamed("Ptcl")[p]
+            if let texture = index(to, "avfx/Tex/") {
+                let cls = ownerClass(from)
+                let layers = [("TC1", "Color 1"), ("TC2", "Color 2"), ("TC3", "Color 3"), ("TC4", "Color 4"), ("TN", "Normal"), ("TR", "Reflection"),
+                              ("TD", "Distortion"), ("TP", "Palette")]
+                var options: [LinkOption] = []
+                for (tag, name) in layers {
+                    let layer = particle.child(tag)
+                    let current = layer?.child("TxNo")?.intValue ?? -1
+                    let used = layer?.children != nil && current >= 0 && layer?.int("bEna") != 0
+                    if used && current == texture { continue }
+                    let entry = LinkOption(title: name + (used ? " (now Texture \(current))" : "")) { [weak self] in
+                        self?.performStructural("Link Texture") {
+                            guard let self, let layerClass = AvfxCatalog.particleParts[tag] else { return }
+                            var existing = particle.child(tag)
+                            if existing == nil || existing?.children == nil {
+                                if let empty = existing { particle.remove(empty) }
+                                let fresh = AvfxBlock(tag: tag, children: (self.catalog.classes[layerClass] ?? []).compactMap {
+                                    self.catalog.freshBlock($0, in: layerClass)
+                                })
+                                let order = ["TC1", "TC2", "TC3", "TC4", "TN", "TR", "TD", "TP"]
+                                let earlier = Set(order.prefix { $0 != tag } + ["Data", "UvSt"])
+                                let list = particle.children ?? []
+                                particle.insert(fresh, at: (list.lastIndex { earlier.contains($0.tag) }).map { $0 + 1 } ?? list.count)
+                                existing = fresh
+                            }
+                            guard let block = existing else { return }
+                            self.ensureChild(block, "TxNo", cls: layerClass)?.intValue = texture
+                            self.ensureChild(block, "bEna", cls: layerClass)?.intValue = 1
+                        }
+                    }
+                    if used { options.append(entry) } else { options.insert(entry, at: options.prefix { !$0.title.contains("(now") }.count) }
+                }
+                return (options, options.isEmpty ? "Particle \(p) already uses this texture on every layer" : nil)
+            }
+            if let model = index(to, "avfx/Modl/") {
+                guard let data = particle.child("Data"), data.child("MdNo") != nil || data.child("MNO") != nil else {
+                    return ([], "Particle \(p) is not a model particle. Set its type to Model or Light Model first")
+                }
+                return one("Use Model \(model)") { [weak self] in
+                    self?.performStructural("Link Model") {
+                        if let list = data.child("MdNo"), list.data.count < 4 { list.data = [UInt8(truncatingIfNeeded: model)] }
+                        data.child("MNO")?.intValue = model
+                    }
+                }
+            }
+        }
+        return ([], "\(EffectDocument.linkKind(from)) and \(EffectDocument.linkKind(to)) cannot be linked")
     }
 
     private func record(_ cls: String, _ values: [String: Int]) -> [AvfxBlock] {
@@ -372,45 +528,6 @@ extension EffectDocument {
         for field in fields where field.tag == "bEna" || field.tag == "bEnb" { field.data = [1] + [UInt8](repeating: 0, count: max(field.data.count - 1, 0)) }
         if cls == "AvfxTimelineItem" { fields.first { $0.tag == "EdTm" }?.intValue = 30 }
         return fields
-    }
-
-    private func connectAvfx(_ root: AvfxBlock, from: String, to: String) {
-        if from.hasPrefix("avfx/Schd/"), let timeline = index(to, "avfx/TmLn/"), let scheduler = root.child("Schd") {
-            changeRecords(scheduler, list: "Item", title: "Link Timeline") { $0.append(self.record("AvfxSchedulerItem", ["TlNo": timeline])) }
-        } else if let t = index(from, "avfx/TmLn/"), t < root.childrenNamed("TmLn").count {
-            let timeline = root.childrenNamed("TmLn")[t]
-            if let emitter = index(to, "avfx/Emit/") {
-                changeRecords(timeline, list: "Item", title: "Link Emitter") { $0.append(self.record("AvfxTimelineItem", ["EmNo": emitter])) }
-            } else if let binder = index(to, "avfx/Bind/"), let field = timeline.child("BnNo") {
-                performStructural("Link Binder") { field.intValue = binder }
-            }
-        } else if let e = index(from, "avfx/Emit/"), e < root.childrenNamed("Emit").count {
-            let emitter = root.childrenNamed("Emit")[e]
-            if let particle = index(to, "avfx/Ptcl/") {
-                changeRecords(emitter, list: "ItPr", title: "Link Particle") { $0.append(self.record("AvfxEmitterItem", ["TgtB": particle])) }
-            } else if let child = index(to, "avfx/Emit/") {
-                changeRecords(emitter, list: "ItEm", title: "Link Emitter") { $0.append(self.record("AvfxEmitterItem", ["TgtB": child])) }
-            } else if let effector = index(to, "avfx/Efct/"), let field = emitter.child("EfNo") {
-                performStructural("Link Effector") { field.intValue = effector }
-            } else if let model = index(to, "avfx/Modl/"), let field = emitter.child("Data")?.child("MdNo"), field.data.count >= 4 {
-                performStructural("Link Model") { field.intValue = model }
-            }
-        } else if let p = index(from, "avfx/Ptcl/"), p < root.childrenNamed("Ptcl").count {
-            let particle = root.childrenNamed("Ptcl")[p]
-            if let texture = index(to, "avfx/Tex/") {
-                let layers = ["TC1", "TC2", "TC3", "TC4"].compactMap { particle.child($0) }
-                guard let layer = layers.first(where: { $0.int("bEna") == 0 || $0.int("TxNo", -1) < 0 }) ?? layers.first, let field = layer.child("TxNo") else { return }
-                performStructural("Link Texture") {
-                    field.intValue = texture
-                    layer.child("bEna")?.intValue = 1
-                }
-            } else if let model = index(to, "avfx/Modl/"), let data = particle.child("Data") {
-                performStructural("Link Model") {
-                    if let list = data.child("MdNo"), list.data.count < 4 { list.data = [UInt8(truncatingIfNeeded: model)] }
-                    data.child("MNO")?.intValue = model
-                }
-            }
-        }
     }
 
     private func connectPixi(_ root: JSONNode, from: String, to: String) {

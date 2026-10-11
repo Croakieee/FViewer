@@ -307,6 +307,9 @@ struct InspectorView: View {
                 Text(node.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
                 Text(node.detail).font(Theme.font).foregroundStyle(Theme.dim).lineLimit(1)
                 Spacer()
+                if app.canOpenEditor(node.id) {
+                    HeaderButton(symbol: "macwindow", help: "Open the full editor of this item in a separate window") { app.openEditor(for: node.id) }
+                }
                 HeaderButton(symbol: "doc.on.doc", help: "Copy the parameters and curves of this node") { ParameterClipboard.copy(node, in: document) }
                 HeaderButton(symbol: "doc.on.clipboard", help: "Paste the copied parameters into this node, matching fields by name") {
                     ParameterClipboard.paste(into: node, in: document)

@@ -28,6 +28,11 @@ struct FViewerApp: App {
         }
         .defaultSize(width: 1100, height: 720)
         .defaultLaunchBehavior(.suppressed)
+        Window("Item Editor", id: "item") {
+            ItemEditorView().environmentObject(app)
+        }
+        .defaultSize(width: 1320, height: 820)
+        .defaultLaunchBehavior(.suppressed)
         Window("Model Editor", id: "model") {
             ModelEditorView().environmentObject(app)
         }

@@ -142,6 +142,10 @@ struct OutlinerView: View {
         .frame(height: 20)
         .background(selected ? Theme.selection : striped ? Color.white.opacity(0.025) : Color.clear)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            document.selectionID = node.id
+            AppDelegate.model?.openEditor(for: node.id)
+        }
         .onTapGesture { document.selectionID = node.id }
         .contextMenu {
             if let key = node.visibility {
@@ -154,6 +158,9 @@ struct OutlinerView: View {
             }
             ForEach(node.actions) { action in
                 Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform)
+            }
+            if AppDelegate.model?.canOpenEditor(node.id) == true {
+                Button("Open Editor…") { AppDelegate.model?.openEditor(for: node.id) }
             }
             Divider()
             Button("Rename…") { AppDelegate.model?.renameNode(node.id) }

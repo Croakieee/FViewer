@@ -13,6 +13,31 @@ private struct NodeMetrics {
     }
 }
 
+private final class LinkMenu: NSObject {
+    private var actions: [() -> Void] = []
+
+    @objc private func pick(_ item: NSMenuItem) {
+        if item.tag >= 0, item.tag < actions.count { actions[item.tag]() }
+    }
+
+    static func show(_ options: [LinkOption], title: String) {
+        let handler = LinkMenu()
+        let menu = NSMenu(title: title)
+        let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+        for (index, option) in options.enumerated() {
+            let item = NSMenuItem(title: option.title, action: #selector(pick(_:)), keyEquivalent: "")
+            item.target = handler
+            item.tag = index
+            handler.actions.append(option.perform)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+}
+
 struct NodeGraphView: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
@@ -22,6 +47,9 @@ struct NodeGraphView: View {
     @State private var dragOrigin: CGPoint?
     @State private var panOrigin: CGSize?
     @State private var wire: (from: String, point: CGPoint)?
+    @State private var wireFromInput = false
+    @State private var linkNote: String?
+    @State private var hoveredSocket: String?
     @State private var selectedEdge: String?
     @State private var rewire: (edge: GraphEdge, point: CGPoint)?
     @State private var loadedDocument: UUID?
@@ -120,7 +148,10 @@ struct NodeGraphView: View {
                         }
                     }
                     if let wire, let from = positions[wire.from] {
-                        context.stroke(curve(screen(outputPoint(from)), wire.point), with: .color(.white), style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
+                        let aimed = nodeHit(graph, positions, at: wire.point).map { $0.id != wire.from && !document.linkOptions(wire.from, $0.id).options.isEmpty }
+                        let color: Color = aimed == true ? .green : aimed == false ? Color(red: 1, green: 0.45, blue: 0.4) : .white
+                        let path = wireFromInput ? curve(wire.point, screen(inputPoint(from))) : curve(screen(outputPoint(from)), wire.point)
+                        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
                     }
                     if let rewire, let from = positions[rewire.edge.from] {
                         context.stroke(curve(screen(outputPoint(from)), rewire.point), with: .color(Theme.changed), style: StrokeStyle(lineWidth: 2.5, dash: [5, 3]))
@@ -188,7 +219,12 @@ struct NodeGraphView: View {
                             self.selectedEdge = nil
                         }
                     }
-                    HelpBadge(text: "Drag a link onto another node to switch it\ndrag a socket to a node to add a link\nclick a link and press X to remove it\ndrag nodes to arrange")
+                    HelpBadge(text: "Drag from a socket onto another node to link them, in either direction\nnodes that can take the link turn green\ndrag an existing link onto another node to switch it\nclick a link and press X to remove it\ndrag nodes to arrange")
+                    if let linkNote {
+                        Text(linkNote).font(Theme.small).foregroundStyle(Color.orange).lineLimit(1)
+                            .padding(.horizontal, 8).frame(height: 20)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+                    }
                 }
                 .padding(6)
             }
@@ -235,6 +271,52 @@ struct NodeGraphView: View {
         }
     }
 
+    private func finishLink(_ a: String, _ b: String) {
+        guard a != b else { return }
+        let result = document.linkOptions(a, b)
+        if result.options.isEmpty {
+            show(result.problem ?? "These nodes cannot be linked")
+        } else if result.options.count == 1 {
+            result.options[0].perform()
+            linkNote = nil
+        } else {
+            linkNote = nil
+            LinkMenu.show(result.options, title: "Link \(EffectDocument.linkKind(a)) and \(EffectDocument.linkKind(b)) as")
+        }
+    }
+
+    private func show(_ note: String) {
+        linkNote = note
+        app.notice = note
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if linkNote == note { linkNote = nil } }
+    }
+
+    private func socket(_ node: GraphNode, input: Bool, graph: EffectGraph, positions: [String: CGPoint]) -> some View {
+        let key = node.id + (input ? "<" : ">")
+        let hot = hoveredSocket == key || (wire?.from == node.id && wireFromInput == input)
+        return Circle().fill(input ? Color(white: 0.75) : node.tint.color)
+            .overlay(Circle().stroke(hot ? Color.white : Color.black, lineWidth: hot ? 2 : 1))
+            .frame(width: 13, height: 13)
+            .scaleEffect(hot ? 1.3 : 1)
+            .frame(width: 30, height: 30)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hoveredSocket = key } else if hoveredSocket == key { hoveredSocket = nil }
+            }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("graph"))
+                .updating($pressing) { _, state, _ in state = true }
+                .onChanged { drag in
+                    wireFromInput = input
+                    wire = (node.id, drag.location)
+                }
+                .onEnded { drag in
+                    let hit = nodeHit(graph, positions, at: drag.location)
+                    wire = nil
+                    if let hit { finishLink(node.id, hit.id) }
+                })
+            .help("Drag onto another node to link them")
+    }
+
     private func zoomBy(_ factor: CGFloat, at point: CGPoint) {
         let next = min(max(zoom * factor, 0.25), 2)
         let anchor = graphPoint(point)
@@ -258,7 +340,8 @@ struct NodeGraphView: View {
     private func nodeView(_ node: GraphNode, graph: EffectGraph, positions: [String: CGPoint]) -> some View {
         let selected = document.selectionID == node.id
         let hidden = node.visibility.map { document.hidden.contains($0) } ?? false
-        let linking = wire.flatMap { w in nodeHit(graph, positions, at: w.point)?.id == node.id && document.canConnect(from: w.from, to: node.id) ? true : nil } ?? false
+        let linkable = wire.map { $0.from != node.id && !document.linkOptions($0.from, node.id).options.isEmpty } ?? false
+        let linking = linkable && (wire.map { nodeHit(graph, positions, at: $0.point)?.id == node.id } ?? false)
         let relinking = rewire.map { document.canRetarget($0.edge, to: node.id) } ?? false
         let aimed = rewire.map { nodeHit(graph, positions, at: $0.point)?.id == node.id } ?? false
         let target = linking || (relinking && aimed)
@@ -303,28 +386,25 @@ struct NodeGraphView: View {
         .frame(width: NodeMetrics.width, height: NodeMetrics.height(node), alignment: .top)
         .background(Color(white: 0.19))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(target ? Color.green : relinking ? Theme.changed.opacity(0.8) : selected ? Color.white : Color.black.opacity(0.6),
-                                                           lineWidth: target || selected || relinking ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(target ? Color.green : linkable ? Color.green.opacity(0.55) : relinking ? Theme.changed.opacity(0.8)
+            : selected ? Color.white : Color.black.opacity(0.6), lineWidth: target ? 3 : selected || relinking || linkable ? 2 : 1))
         .overlay(alignment: .topLeading) {
-            Circle().fill(Color(white: 0.75)).overlay(Circle().stroke(Color.black, lineWidth: 1)).frame(width: 10, height: 10)
-                .offset(x: -5, y: NodeMetrics.header / 2 - 5)
+            if !node.id.hasPrefix("avfx/Schd") {
+                socket(node, input: true, graph: graph, positions: positions).offset(x: -15, y: NodeMetrics.header / 2 - 15)
+            }
         }
         .overlay(alignment: .topTrailing) {
             if node.hasOutput {
-                Circle().fill(node.tint.color).overlay(Circle().stroke(Color.black, lineWidth: 1)).frame(width: 12, height: 12)
-                    .offset(x: 6, y: NodeMetrics.header / 2 - 6)
-                    .contentShape(Rectangle().inset(by: -8))
-                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("graph"))
-                        .updating($pressing) { _, state, _ in state = true }
-                        .onChanged { drag in wire = (node.id, drag.location) }
-                        .onEnded { drag in
-                            if let hit = nodeHit(graph, positions, at: drag.location) { document.connect(from: node.id, to: hit.id) }
-                            wire = nil
-                        })
-                    .help("Drag to another node to create a link")
+                socket(node, input: false, graph: graph, positions: positions).offset(x: 15, y: NodeMetrics.header / 2 - 15)
             }
         }
         .opacity(hidden ? 0.6 : 1)
+        .onTapGesture(count: 2) {
+            if node.selectable {
+                document.selectionID = node.id
+                app.openEditor(for: node.id)
+            }
+        }
         .onTapGesture {
             focused = true
             selectedEdge = nil

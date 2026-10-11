@@ -220,6 +220,44 @@ final class AppModel: ObservableObject {
     @Published var textureEditorTarget: String?
     var openTextureWindow: (() -> Void)?
 
+    @Published var itemEditorTarget: String?
+    var openItemWindow: (() -> Void)?
+
+    static func itemEditorRoot(_ id: String) -> String? {
+        let parts = id.split(separator: "/").map(String.init)
+        guard parts.count >= 3 else { return nil }
+        let kinds = parts[0] == "avfx" ? ["Schd", "TmLn", "Emit", "Ptcl", "Efct", "Bind"] : parts[0] == "json" ? ["timelines", "emitters", "particles"] : []
+        return kinds.contains(parts[1]) ? parts.prefix(3).joined(separator: "/") : nil
+    }
+
+    func canOpenEditor(_ nodeID: String) -> Bool {
+        nodeID.hasPrefix("avfx/Tex/") || nodeID.hasPrefix("avfx/Modl/") || AppModel.itemEditorRoot(nodeID).flatMap { document?.node($0) } != nil
+    }
+
+    func openEditor(for nodeID: String) {
+        guard let document else { return }
+        if nodeID.hasPrefix("avfx/Tex/") {
+            requestTextureEditor(nodeID.split(separator: "/").prefix(3).joined(separator: "/"))
+        } else if nodeID.hasPrefix("avfx/Modl/") {
+            requestModelEditor(nodeID.split(separator: "/").prefix(3).joined(separator: "/"))
+        } else if let root = AppModel.itemEditorRoot(nodeID), document.node(root) != nil {
+            if !UserDefaults.standard.bool(forKey: "itemEditor.skipQuestion") {
+                let alert = NSAlert()
+                alert.messageText = "Open the \(EffectDocument.linkKind(root)) Editor in a separate window?"
+                alert.informativeText = "It shows every parameter, list, texture layer and curve of this item next to a preview."
+                alert.addButton(withTitle: "Open Window")
+                alert.addButton(withTitle: "Cancel")
+                alert.showsSuppressionButton = true
+                let answer = alert.runModal()
+                if alert.suppressionButton?.state == .on { UserDefaults.standard.set(true, forKey: "itemEditor.skipQuestion") }
+                guard answer == .alertFirstButtonReturn else { return }
+            }
+            itemEditorTarget = root
+            document.selectionID = document.node(nodeID) != nil ? nodeID : root
+            openItemWindow?()
+        }
+    }
+
     func requestTextureEditor(_ nodeID: String) {
         let alert = NSAlert()
         alert.messageText = "Open the Texture Editor in a separate window?"

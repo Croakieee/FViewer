@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import QuartzCore
 
 final class PlaybackClock: ObservableObject {
     @Published var time: Double = 0
@@ -14,6 +15,7 @@ final class PlaybackClock: ObservableObject {
     var releaseTime: Double?
     var triggers: [(time: Double, index: Int)] = []
     var restartToken = 0
+    private var lastTick: Double = 0
 
     func rewind() {
         time = startFrame
@@ -31,8 +33,11 @@ final class PlaybackClock: ObservableObject {
     }
 
     func advance(_ seconds: Double, duration: Double, finished: Bool, held: Bool) {
+        let now = CACurrentMediaTime()
+        let sinceLast = lastTick == 0 ? seconds : now - lastTick
+        lastTick = now
         guard playing else { return }
-        let next = time + min(seconds, 0.1) * 30 * speed
+        let next = time + min(seconds, sinceLast, 0.1) * 30 * speed
         let ended = endFrame == nil && finished && next > 2 && !held
         let overrun = next >= (endFrame ?? max(duration, 1))
         if ended || overrun {
