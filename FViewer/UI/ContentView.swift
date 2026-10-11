@@ -99,6 +99,7 @@ struct TopBar: View {
 
 struct ContentView: View {
     @EnvironmentObject var app: AppModel
+    @Environment(\.openWindow) private var openWindow
     @AppStorage("layout.left") private var leftFraction = 0.17
     @AppStorage("layout.right") private var rightFraction = 0.22
     @AppStorage("layout.bottom") private var bottomFraction = 0.4
@@ -170,6 +171,7 @@ struct ContentView: View {
         }
         .background(Theme.window)
         .background(WindowConfigurator())
+        .onAppear { app.openModelWindow = { openWindow(id: "model") } }
         .preferredColorScheme(.dark)
         .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {
             if let document = app.document { ExportNodesSheet(document: document, selected: document.exportRequest ?? []) }
@@ -188,7 +190,6 @@ struct ContentView: View {
         VStack(spacing: 12) {
             Image(systemName: "sparkles").font(.system(size: 40)).foregroundStyle(NodeTint.particle.color)
             Text("FViewer").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.text)
-            Text("FFXIV effect editor: .avfx and JSON").font(Theme.font).foregroundStyle(Theme.dim)
             HStack(spacing: 8) {
                 welcomeButton("Open Folder…", "folder") { app.chooseLibrary() }
                 welcomeButton("Open File…", "doc") { app.openFilePanel() }
@@ -211,10 +212,7 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 14) {
-            hint("Drag", "orbit")
-            hint("⇧ Drag", "pan")
-            hint("Scroll / Pinch", "orbit / zoom")
-            hint("Drag a field", "change value, ⇧ for precision")
+            HelpBadge(text: "Drag a number field to change it, ⇧ for precision, ⌃ to snap; click it to type.\nRight-click a field label to reset it or remove it from the file.\nAn amber dot marks anything changed since the file was opened.")
             Spacer()
             if let notice = app.notice { Text(notice).font(Theme.small).foregroundStyle(Theme.text) }
             if let document = app.document {
@@ -226,10 +224,4 @@ struct ContentView: View {
         .background(Color(white: 0.094))
     }
 
-    private func hint(_ key: String, _ text: String) -> some View {
-        HStack(spacing: 4) {
-            Text(key).font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.text)
-            Text(text).font(Theme.small).foregroundStyle(Theme.dim)
-        }
-    }
 }

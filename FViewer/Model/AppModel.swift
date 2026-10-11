@@ -207,6 +207,19 @@ final class AppModel: ObservableObject {
 
     @Published var notice: String?
     @Published var modExport = false
+    @Published var modelEditorTarget: String?
+    var openModelWindow: (() -> Void)?
+
+    func requestModelEditor(_ nodeID: String) {
+        let alert = NSAlert()
+        alert.messageText = "Open the Model Editor in a separate window?"
+        alert.informativeText = "It shows the UV layout and the vertex and emit point tables of this model."
+        alert.addButton(withTitle: "Open Window")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        modelEditorTarget = nodeID
+        openModelWindow?()
+    }
 
     func isCustomTexture(_ path: String) -> Bool {
         guard let url = textureURL(path) else { return false }

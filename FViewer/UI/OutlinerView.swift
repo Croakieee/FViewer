@@ -154,7 +154,6 @@ struct LibraryView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if app.files.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Open a folder with effects (.avfx, .json) and textures.").font(Theme.font).foregroundStyle(Theme.dim)
                             Text("Open Folder…").font(Theme.font).foregroundStyle(Theme.text)
                                 .padding(.horizontal, 10).frame(height: 22)
                                 .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field))

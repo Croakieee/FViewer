@@ -1,0 +1,192 @@
+{
+ "angles": {
+  "AvfxEffectorDataCameraQuake": [
+   "Rot"
+  ],
+  "AvfxEffectorDataDirectionalLight": [
+   "Rot"
+  ],
+  "AvfxEffectorDataPointLight": [
+   "Rot"
+  ],
+  "AvfxEmitter": [
+   "Rot",
+   "IAX",
+   "IAXR",
+   "IAY",
+   "IAYR",
+   "IAZ",
+   "IAZR"
+  ],
+  "AvfxEmitterDataCone": [
+   "AnX",
+   "AnY",
+   "AnZ",
+   "AnXR",
+   "AnYR",
+   "AnZR",
+   "IjA",
+   "IjAR"
+  ],
+  "AvfxEmitterDataConeModel": [
+   "AnX",
+   "AnY",
+   "AnZ",
+   "AnXR",
+   "AnYR",
+   "AnZR",
+   "IjA",
+   "IjAR"
+  ],
+  "AvfxEmitterDataCylinderModel": [
+   "AnX",
+   "AnY",
+   "AnZ",
+   "AnXR",
+   "AnYR",
+   "AnZR"
+  ],
+  "AvfxEmitterDataModel": [
+   "AnX",
+   "AnY",
+   "AnZ",
+   "AnXR",
+   "AnYR",
+   "AnZR"
+  ],
+  "AvfxEmitterDataSphereModel": [
+   "AnX",
+   "AnY",
+   "AnZ",
+   "AnXR",
+   "AnYR",
+   "AnZR"
+  ],
+  "AvfxParticle": [
+   "Rot"
+  ],
+  "AvfxParticleDataDisc": [
+   "Ang",
+   "AngR"
+  ],
+  "AvfxParticleDataModel": [
+   "FrRt"
+  ],
+  "AvfxParticleDataModelSkin": [
+   "FrRt"
+  ],
+  "AvfxParticleUvSet": [
+   "Rot",
+   "RotR"
+  ]
+ },
+ "defaults": {
+  "AvfxBinderProperties": {
+   "BPID": 3,
+   "BPTP": 3,
+   "CoUF": -1,
+   "RnPT": 1
+  },
+  "AvfxEmitter": {
+   "EfNo": -1
+  },
+  "AvfxEmitterDataCylinderModel": {
+   "DivX": 1,
+   "DivY": 1
+  },
+  "AvfxEmitterDataModel": {
+   "MdNo": -1
+  },
+  "AvfxEmitterDataSphereModel": {
+   "DivX": 1,
+   "DivY": 1
+  },
+  "AvfxEmitterItem": {
+   "BIAX": 0,
+   "BIAY": 0,
+   "BIAZ": 0,
+   "CrCn": 1,
+   "CrPr": 100,
+   "CrTm": 1,
+   "ICSK": 0,
+   "ICbB": 0,
+   "ICbP": 1,
+   "ICbR": 0,
+   "ICbS": 0,
+   "IPbL": 0,
+   "IPbV": 0,
+   "LoDr": 0,
+   "OvrR": 0,
+   "OvrV": 60,
+   "PICd": 1,
+   "PICo": 1,
+   "PrLk": -1,
+   "StFr": 0,
+   "TgtB": -1,
+   "bEnb": 0,
+   "bGD": 0,
+   "bOvr": 0,
+   "bStN": 0
+  },
+  "AvfxLife": {
+   "Val": -1
+  },
+  "AvfxMain": {
+   "Ver": 537987347
+  },
+  "AvfxParticleDataModel": {
+   "MdNo": -1
+  },
+  "AvfxParticleSimple": {
+   "IJMN": -1,
+   "VBMN": -1
+  },
+  "AvfxParticleTextureColor1": {
+   "TLst": -1,
+   "TxNo": -1
+  },
+  "AvfxParticleTextureColor2": {
+   "TxNo": -1
+  },
+  "AvfxParticleTextureDistortion": {
+   "TxNo": -1
+  },
+  "AvfxParticleTextureNormal": {
+   "TxNo": -1
+  },
+  "AvfxParticleTexturePalette": {
+   "TxNo": -1
+  },
+  "AvfxParticleTextureReflection": {
+   "TxNo": -1
+  },
+  "AvfxSchedulerItem": {
+   "StTm": 0,
+   "TlNo": -1,
+   "bEna": 1
+  },
+  "AvfxTimelineItem": {
+   "BdNo": -1,
+   "EfNo": -1,
+   "EmNo": -1
+  }
+ },
+ "optional": [
+  "AvfxParticleDataQuad"
+ ],
+ "sizes": {
+  "AvfxEmitter": {
+   "bAD": 1
+  },
+  "AvfxParticleDataLightModel": {
+   "MNO": 1
+  },
+  "AvfxParticleSimple": {
+   "bBnP": 1,
+   "bCrN": 1,
+   "bRUV": 1,
+   "bSRL": 1,
+   "bSnP": 1
+  }
+ }
+}

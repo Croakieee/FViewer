@@ -92,6 +92,7 @@ enum DebugDriver {
     static var log: [String] = []
 
     static var own: NSWindow?
+    static var extra: NSWindow?
     static var patched: Set<String> = []
 
     static func run(_ script: String, _ model: AppModel) {
@@ -507,6 +508,101 @@ enum DebugDriver {
                     if let model = root.childrenNamed("Modl").last { try doc.applyMesh(mesh, to: model, emitPoints: false); log.append("  applied: models=\(root.childrenNamed("Modl").count) bytes=\(model.child("VDrw")?.data.count ?? 0) reparse=\((try? AvfxBlock.parseFile([UInt8](doc.serializedData()))) != nil) MdCn=\((try? AvfxBlock.parseFile([UInt8](doc.serializedData())))?.int("MdCn") ?? -1)") }
                 }
             } catch { log.append("GLTFLOAD FAILED \(error)") }
+        case "survey":
+            if let doc = app?.document {
+                func walk(_ n: OutlineNode) {
+                    let fields = doc.sections(for: n).flatMap(\.fields)
+                    let info = fields.filter { $0.write == nil }
+                    let curves = doc.curveGroups(for: n).count
+                    let generic = n.id.split(separator: "/").map { Int($0) == nil ? String($0.filter { !$0.isNumber }) : "#" }.joined(separator: "/")
+                    if fields.count - info.count == 0 && curves == 0 {
+                        log.append("EMPTY \(generic) [\(n.title.filter { !$0.isNumber })] actions=\(n.actions.map(\.title)) children=\(n.children.count) info=\(info.map(\.label).prefix(5))")
+                    } else if !info.isEmpty {
+                        log.append("INFO \(generic) \(info.map { "\($0.label)[\($0.tag)]" })")
+                    }
+                    n.children.forEach(walk)
+                }
+                doc.outline.forEach(walk)
+            }
+        case "resize": window()?.setContentSize(NSSize(width: n(1), height: n(2))); delay = 0.8
+        case "modelwin":
+            if let app {
+                app.modelEditorTarget = parts[1]
+                let w = NSWindow(contentRect: NSRect(x: 60, y: 80, width: 980, height: 620), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+                w.isReleasedWhenClosed = false
+                let host = NSHostingView(rootView: ModelEditorView().environmentObject(app))
+                w.contentView = host
+                w.orderFrontRegardless()
+                DebugDriver.extra = w
+            }
+            delay = 1.0
+        case "extrashot":
+            if let view = DebugDriver.extra?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/" + parts[1] + ".png"))
+            }
+        case "freshcheck":
+            if let doc = app?.document, let root = doc.avfxRoot {
+                var issues: [String] = []
+                var checked = 0
+                func ordered(_ file: [String], _ fresh: [String]) -> Bool {
+                    var at = 0
+                    for tag in file { guard let found = fresh[at...].firstIndex(of: tag) else { return false }; at = found + 1 }
+                    return true
+                }
+                for (cls, info) in AvfxCatalog.dataTypes {
+                    let tag = ["AvfxEmitter": "Emit", "AvfxParticle": "Ptcl", "AvfxEffector": "Efct", "AvfxBinder": "Bind"][cls] ?? ""
+                    for (i, node) in root.childrenNamed(tag).enumerated() {
+                        guard let data = node.child("Data"), let name = doc.catalog.enumCaseName(info.enumName, node.int(info.field))?.replacingOccurrences(of: "_Variable", with: "") else { continue }
+                        guard let fresh = doc.catalog.freshData(info.prefix + name) else { issues.append("\(tag)\(i) \(name): no class"); continue }
+                        checked += 1
+                        let fileTags = (data.children ?? []).map(\.tag), freshTags = (fresh.children ?? []).map(\.tag)
+                        if !ordered(fileTags, freshTags) { issues.append("\(tag)\(i) \(name): file=\(fileTags) fresh=\(freshTags)") }
+
+                    }
+                }
+                let lists: [(String, String, String)] = [("Schd", "Item", "AvfxSchedulerItem"), ("TmLn", "Item", "AvfxTimelineItem"), ("Emit", "ItPr", "AvfxEmitterItem"), ("Emit", "ItEm", "AvfxEmitterItem")]
+                for (tag, list, cls) in lists {
+                    for (i, node) in root.childrenNamed(tag).enumerated() {
+                        for record in node.ownRecords(list) {
+                            checked += 1
+                            let fileTags = record.map(\.tag), freshTags = doc.defaultRecord(cls).map(\.tag)
+                            if fileTags != freshTags && !(cls == "AvfxTimelineItem" && fileTags.filter({ $0 != "ClNo" }) == freshTags) { issues.append("\(tag)\(i).\(list): file=\(fileTags) fresh=\(freshTags)") }
+                            let fresh = doc.defaultRecord(cls)
+                            _ = fresh
+                        }
+                    }
+                }
+                log.append("FRESH \(doc.title) checked=\(checked) issues(\(issues.count))=\(Array(Set(issues)).sorted().prefix(4))")
+            }
+        case "coverage":
+            if let doc = app?.document {
+                var lines: [String: Int] = [:]
+                var total = 0, covered = 0
+                func walk(_ n: OutlineNode) {
+                    if case .avfx(let block, let cls, let record) = n.payload, record == nil {
+                        let childIDs = Set(n.children.compactMap { child -> ObjectIdentifier? in if case .avfx(let b, _, _) = child.payload { return ObjectIdentifier(b) }; return nil })
+                        let curveTags = Set(doc.curveGroups(for: n).map(\.tag))
+                        let listTags = Set(AvfxBlock.cumulativeTags[block.tag] ?? [])
+                        for child in block.children ?? [] {
+                            total += 1
+                            if AvfxCatalog.countTags.contains(child.tag) || listTags.contains(child.tag) { covered += 1; continue }
+                            if child.children != nil {
+                                if childIDs.contains(ObjectIdentifier(child)) || curveTags.contains(child.tag) || child.tag == "Life" { covered += 1 } else { lines["container \(cls ?? "?").\(child.tag)", default: 0] += 1 }
+                            } else if let field = doc.avfxField(child, cls: cls, id: "x") {
+                                if field.write == nil { lines["readonly \(cls ?? "?").\(child.tag) [\(child.data.count)b]", default: 0] += 1 } else { covered += 1 }
+                            } else if EffectDocument.indexListTarget(child, cls: cls) != nil || ["Keys", "Cols", "Frms", "Clip", "VDrw", "VIdx", "VEmt", "VNum", "Life"].contains(child.tag) || (child.tag == "Tex" && cls == "AvfxMain") {
+                                covered += 1
+                            } else {
+                                lines["hidden \(cls ?? "?").\(child.tag) [\(child.data.count)b]", default: 0] += 1
+                            }
+                        }
+                    }
+                    n.children.forEach(walk)
+                }
+                doc.outline.forEach(walk)
+                log.append("COVERAGE \(doc.title) \(covered)/\(total) " + lines.sorted { $0.value > $1.value }.map { "\($0.key)×\($0.value)" }.joined(separator: " | "))
+            }
         case "shot":
             if let w = window(), let view = w.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: rep)

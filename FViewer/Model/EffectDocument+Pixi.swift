@@ -60,6 +60,9 @@ extension EffectDocument {
             let childID = "\(id)/\(member.key)"
             if let elements = child.elements {
                 let group = OutlineNode(id: childID, title: member.key, detail: "\(elements.count)", symbol: "folder", tint: childTint, payload: .group)
+                group.actions = [NodeAction(id: childID + "!add", title: "Add", symbol: "plus") { [weak self] in
+                    self?.appendElement(to: child, key: member.key, groupID: childID)
+                }]
                 for (i, element) in elements.enumerated() where !element.isScalar {
                     let (title, detail) = EffectDocument.elementTitle(element, i)
                     let item = OutlineNode(id: "\(childID)/\(i)", title: title, detail: detail, symbol: symbol, tint: childTint, payload: .json(element))
@@ -85,11 +88,62 @@ extension EffectDocument {
         return result
     }
 
+    func appendElement(to array: JSONNode, key: String, groupID: String) {
+        guard var items = array.elements else { return }
+        let fresh: JSONNode
+        if let last = items.last(where: { !$0.isScalar }) {
+            fresh = last.deepCopy()
+            if let id = fresh["id"]?.string {
+                var candidate = id + "_new"
+                let taken = Set(items.compactMap { $0["id"]?.string })
+                var counter = 2
+                while taken.contains(candidate) {
+                    candidate = id + "_new\(counter)"
+                    counter += 1
+                }
+                fresh["id"]?.value = .string(candidate)
+            }
+        } else {
+            let firstParticle = jsonRoot?["particles"]?.elements?.first?["id"]?.string ?? ""
+            let firstEmitter = jsonRoot?["emitters"]?.elements?.first?["id"]?.string ?? ""
+            let firstTexture = textureSlots.first?.name ?? ""
+            switch key {
+            case "layers": fresh = JSONNode(.object([JSONMember(key: "texture", node: JSONNode(.string(firstTexture)))]))
+            case "items" where groupID.contains("/timelines/"):
+                fresh = JSONNode(.object([JSONMember(key: "emitter", node: JSONNode(.string(firstEmitter))), JSONMember(key: "start", node: JSONNode(.number(0)))]))
+            case "items": fresh = JSONNode(.object([JSONMember(key: "particle", node: JSONNode(.string(firstParticle)))]))
+            default: fresh = JSONNode(.object([JSONMember(key: "id", node: JSONNode(.string("new")))]))
+            }
+        }
+        performStructural("Add") {
+            items.append(fresh)
+            array.value = .array(items)
+        }
+        selectionID = "\(groupID)/\(items.count - 1)"
+    }
+
     func pixiSections(_ node: OutlineNode, _ json: JSONNode) -> [PropSection] {
+        var sections: [PropSection] = []
+        let own = pixiFields(json, id: node.id)
+        if !own.isEmpty { sections.append(PropSection(id: node.id + "/main", title: node.title, fields: own)) }
+        func nested(_ object: JSONNode, id: String, title: String, depth: Int) {
+            for member in object.members ?? [] where member.node.members != nil && member.node["keys"] == nil && depth < 4 {
+                let childID = "\(id)/\(member.key)"
+                let childTitle = title.isEmpty ? member.key : title + " › " + member.key
+                let fields = pixiFields(member.node, id: childID)
+                if !fields.isEmpty { sections.append(PropSection(id: childID + "/nested", title: childTitle, fields: fields)) }
+                nested(member.node, id: childID, title: childTitle, depth: depth + 1)
+            }
+        }
+        nested(json, id: node.id, title: "", depth: 0)
+        return sections
+    }
+
+    private func pixiFields(_ json: JSONNode, id nodeID: String) -> [PropField] {
         var fields: [PropField] = []
         for member in json.members ?? [] {
             let value = member.node
-            let id = "\(node.id)#\(member.key)"
+            let id = "\(nodeID)#\(member.key)"
             switch value.value {
             case .number:
                 var field = PropField(id: id, label: member.key, tag: member.key, kind: .double, read: { .double(value.number ?? 0) },
@@ -103,7 +157,7 @@ extension EffectDocument {
                                                   JSONMember(key: "value", node: JSONNode(.number(v)))]))
                             })
                         }
-                        self?.activeCurveID = "\(node.id)~\(member.key)"
+                        self?.activeCurveID = "\(nodeID)~\(member.key)"
                     }
                 }
                 fields.append(field)
@@ -133,7 +187,7 @@ extension EffectDocument {
             default: break
             }
         }
-        return fields.isEmpty ? [] : [PropSection(id: node.id + "/main", title: node.title, fields: fields)]
+        return fields
     }
 
     func pixiCurveGroups(_ node: OutlineNode, _ json: JSONNode) -> [CurveGroup] {

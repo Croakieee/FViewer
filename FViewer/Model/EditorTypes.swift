@@ -162,6 +162,7 @@ struct SequencerRow: Identifiable {
     var base: Double = 0
     var startField: PropField?
     var endField: PropField?
+    var enabledField: PropField?
 }
 
 struct TextureSlot: Identifiable {

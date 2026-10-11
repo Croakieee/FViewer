@@ -21,6 +21,7 @@ struct NumberField: View {
     var step: Double = 0.01
     var roundTop = true
     var roundBottom = true
+    var digits: Int?
     let onLive: (Double) -> Void
     let onCommit: (Double, Double) -> Void
 
@@ -35,7 +36,7 @@ struct NumberField: View {
 
     private var formatted: String {
         if isInteger { return String(Int(value.rounded())) }
-        let digits = abs(value) >= 100 ? 2 : abs(value) >= 1 ? 3 : 4
+        let digits = self.digits ?? (abs(value) >= 100 ? 2 : abs(value) >= 1 ? 3 : 4)
         return String(format: "%.\(digits)f", value)
     }
 
@@ -59,12 +60,12 @@ struct NumberField: View {
                 HStack(spacing: 2) {
                     Image(systemName: "chevron.left").font(.system(size: 7, weight: .bold)).opacity(hovering ? 0.7 : 0)
                     if let label {
-                        Text(label).lineLimit(1)
-                        Spacer(minLength: 4)
-                        Text(formatted + suffix).monospacedDigit().lineLimit(1)
+                        Text(label).lineLimit(1).layoutPriority(-1)
+                        Spacer(minLength: 2)
+                        Text(formatted + suffix).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
                     } else {
                         Spacer(minLength: 0)
-                        Text(formatted + suffix).monospacedDigit().lineLimit(1)
+                        Text(formatted + suffix).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
                         Spacer(minLength: 0)
                     }
                     Image(systemName: "chevron.right").font(.system(size: 7, weight: .bold)).opacity(hovering ? 0.7 : 0)
@@ -169,7 +170,7 @@ struct ChoiceField: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(choices.first { $0.value == value }?.name ?? "\(value)").lineLimit(1)
+                Text(choices.first { $0.value == value }?.name ?? "\(value)").lineLimit(1).minimumScaleFactor(0.75)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
             }
@@ -250,6 +251,27 @@ struct ColorField: View {
                 .labelsHidden()
                 .frame(width: 28, height: 20)
         }
+    }
+}
+
+struct HelpBadge: View {
+    let text: String
+    var symbol = "questionmark.circle"
+    var tint = Theme.dim
+    @State private var shown = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11))
+            .foregroundStyle(shown ? Theme.text : tint)
+            .frame(width: 20, height: 20)
+            .contentShape(Rectangle())
+            .onTapGesture { shown.toggle() }
+            .popover(isPresented: $shown, arrowEdge: .bottom) {
+                Text(text).font(Theme.font).foregroundStyle(Theme.text).lineSpacing(2)
+                    .frame(width: 280, alignment: .leading).fixedSize(horizontal: false, vertical: true).padding(12)
+                    .preferredColorScheme(.dark)
+            }
     }
 }
 

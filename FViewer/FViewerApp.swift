@@ -23,6 +23,11 @@ struct FViewerApp: App {
                 .frame(minWidth: 960, minHeight: 600)
         }
         .defaultLaunchBehavior(.presented)
+        Window("Model Editor", id: "model") {
+            ModelEditorView().environmentObject(app)
+        }
+        .defaultSize(width: 980, height: 620)
+        .defaultLaunchBehavior(.suppressed)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Menu("New Effect") {

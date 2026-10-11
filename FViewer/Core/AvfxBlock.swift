@@ -17,7 +17,7 @@ final class AvfxBlock: Identifiable {
     var children: [AvfxBlock]?
     weak var parent: AvfxBlock?
 
-    static let binaryLeafTags: Set<String> = ["Keys", "Cols", "Frms", "VDrw", "VIdx", "VEmt", "VNum", "Clip"]
+    static let binaryLeafTags: Set<String> = ["Keys", "Cols", "Frms", "VDrw", "VIdx", "VEmt", "VNum", "Clip", "Name"]
 
     init(rawTag: [UInt8], data: [UInt8] = [], children: [AvfxBlock]? = nil) {
         self.rawTag = rawTag

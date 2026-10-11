@@ -23,6 +23,61 @@ final class AvfxCatalog {
     private(set) var classes: [String: [AvfxField]] = [:]
     private(set) var enums: [String: [AvfxEnumCase]] = [:]
     private var fieldMaps: [String: [String: AvfxField]] = [:]
+    private var defaultValues: [String: [String: Double]] = [:]
+    private var fieldSizes: [String: [String: Int]] = [:]
+    private var optionalData: Set<String> = []
+    private var angleFields: [String: Set<String>] = [:]
+
+    func isAngle(_ cls: String?, _ tag: String) -> Bool { cls.map { angleFields[$0]?.contains(tag) ?? false } ?? false }
+
+    func defaultValue(_ cls: String, _ tag: String) -> Double { defaultValues[cls]?[tag] ?? 0 }
+    func fieldSize(_ cls: String, _ tag: String) -> Int { fieldSizes[cls]?[tag] ?? 4 }
+    func isOptionalData(_ cls: String) -> Bool { optionalData.contains(cls) }
+
+    func freshLeaf(_ field: AvfxField, in cls: String) -> AvfxBlock? {
+        let value = defaultValue(cls, field.tag)
+        switch field.baseType {
+        case "AvfxBool":
+            var bytes = [UInt8](repeating: 0, count: max(fieldSize(cls, field.tag), 1))
+            bytes[0] = value != 0 ? 1 : 0
+            return AvfxBlock(tag: field.tag, data: bytes)
+        case "AvfxInt", "AvfxEnum", "AvfxFlag":
+            let size = fieldSize(cls, field.tag)
+            if size == 1 { return AvfxBlock(tag: field.tag, data: [UInt8(truncatingIfNeeded: Int(value))]) }
+            return AvfxBlock.leaf(field.tag, int: Int(value))
+        case "AvfxFloat", "AvfxRadians": return AvfxBlock.leaf(field.tag, float: Float(value))
+        case "AvfxIntList": return AvfxBlock(tag: field.tag, data: [value < 0 ? 255 : UInt8(truncatingIfNeeded: Int(value))])
+        default: return nil
+        }
+    }
+
+    static func freshCurve(_ tag: String, color: Bool = false) -> AvfxBlock {
+        var children = [AvfxBlock.leaf("KeyC", int: 0), AvfxBlock.leaf("BvPr", int: 0), AvfxBlock.leaf("BvPo", int: 0)]
+        if !color { children.append(AvfxBlock.leaf("RanT", int: 0)) }
+        children.append(AvfxBlock(tag: "Keys", data: []))
+        return AvfxBlock(tag: tag, children: children)
+    }
+
+    func freshBlock(_ field: AvfxField, in cls: String) -> AvfxBlock? {
+        switch field.baseType {
+        case "AvfxCurve1Axis", "AvfxCurveData": return AvfxCatalog.freshCurve(field.tag)
+        case "AvfxCurve2Axis", "AvfxCurve3Axis":
+            let axes = field.baseType == "AvfxCurve2Axis" ? ["X", "Y", "RX", "RY"] : ["X", "Y", "Z", "RX", "RY", "RZ"]
+            return AvfxBlock(tag: field.tag, children: [AvfxBlock.leaf("ACT", int: 0), AvfxBlock.leaf("ACTR", int: 0)] + axes.map { AvfxCatalog.freshCurve($0) })
+        case "AvfxCurveColor":
+            let parts = (classes["AvfxCurveColor"] ?? []).map { AvfxCatalog.freshCurve($0.tag, color: $0.tag == "RGB") }
+            return AvfxBlock(tag: field.tag, children: parts)
+        default:
+            if let leaf = freshLeaf(field, in: cls) { return leaf }
+            guard let fields = classes[field.baseType], field.baseType != cls else { return nil }
+            return AvfxBlock(tag: field.tag, children: fields.compactMap { freshBlock($0, in: field.baseType) })
+        }
+    }
+
+    func freshData(_ cls: String) -> AvfxBlock? {
+        guard let fields = classes[cls] else { return nil }
+        return AvfxBlock(tag: "Data", children: fields.compactMap { freshBlock($0, in: cls) })
+    }
 
     init(url: URL? = Bundle.main.url(forResource: "AvfxCatalog", withExtension: "json")) {
         guard let url, let data = try? Data(contentsOf: url),
@@ -41,6 +96,13 @@ final class AvfxCatalog {
                 guard $0.count == 2, let n = $0[0] as? String, let v = ($0[1] as? NSNumber)?.intValue else { return nil }
                 return AvfxEnumCase(name: n, value: v)
             }
+        }
+        if let url = Bundle.main.url(forResource: "AvfxDefaults", withExtension: "json"), let data = try? Data(contentsOf: url),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for (cls, values) in json["defaults"] as? [String: [String: NSNumber]] ?? [:] { defaultValues[cls] = values.mapValues(\.doubleValue) }
+            for (cls, values) in json["sizes"] as? [String: [String: NSNumber]] ?? [:] { fieldSizes[cls] = values.mapValues(\.intValue) }
+            optionalData = Set(json["optional"] as? [String] ?? [])
+            for (cls, tags) in json["angles"] as? [String: [String]] ?? [:] { angleFields[cls] = Set(tags) }
         }
         addFields("AvfxLife", [("Val", "Value", "AvfxFloat"), ("ValR", "Random Value", "AvfxFloat"), ("Type", "Random Type", "AvfxEnum<RandomType>")])
         addFields("AvfxEmitter", [("EVT", "Type", "AvfxEnum<EmitterType>")])

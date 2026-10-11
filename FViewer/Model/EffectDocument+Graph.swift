@@ -369,6 +369,8 @@ extension EffectDocument {
     private func record(_ cls: String, _ values: [String: Int]) -> [AvfxBlock] {
         let fields = defaultRecord(cls)
         for field in fields { if let value = values[field.tag] { field.intValue = value } }
+        for field in fields where field.tag == "bEna" || field.tag == "bEnb" { field.data = [1] + [UInt8](repeating: 0, count: max(field.data.count - 1, 0)) }
+        if cls == "AvfxTimelineItem" { fields.first { $0.tag == "EdTm" }?.intValue = 30 }
         return fields
     }
 

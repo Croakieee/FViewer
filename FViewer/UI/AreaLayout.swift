@@ -12,6 +12,45 @@ extension EnvironmentValues {
     }
 }
 
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    private func rows(_ subviews: Subviews, width: CGFloat) -> [[(index: Int, size: CGSize)]] {
+        var rows: [[(index: Int, size: CGSize)]] = [[]]
+        var used: CGFloat = 0
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if used > 0, used + size.width > width {
+                rows.append([])
+                used = 0
+            }
+            rows[rows.count - 1].append((index, size))
+            used += size.width + spacing
+        }
+        return rows
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? 400
+        let layout = rows(subviews, width: width)
+        let height = layout.reduce(CGFloat(0)) { $0 + ($1.map(\.size.height).max() ?? 0) } + spacing * CGFloat(max(layout.count - 1, 0))
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(subviews, width: bounds.width) {
+            var x = bounds.minX
+            let height = row.map(\.size.height).max() ?? 0
+            for item in row {
+                subviews[item.index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += height + spacing
+        }
+    }
+}
+
 struct AreaDivider: View {
     static let thickness: CGFloat = 5
     let vertical: Bool

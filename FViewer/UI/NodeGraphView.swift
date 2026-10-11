@@ -188,8 +188,7 @@ struct NodeGraphView: View {
                             self.selectedEdge = nil
                         }
                     }
-                    Text("Drag a link onto another node to switch it · drag a socket to a node to add a link · click a link and press X to remove it · drag nodes to arrange")
-                        .font(Theme.small).foregroundStyle(Theme.dim)
+                    HelpBadge(text: "Drag a link onto another node to switch it\ndrag a socket to a node to add a link\nclick a link and press X to remove it\ndrag nodes to arrange")
                 }
                 .padding(6)
             }

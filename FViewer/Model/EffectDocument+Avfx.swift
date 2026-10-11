@@ -231,6 +231,33 @@ extension EffectDocument {
     }
 
     func avfxField(_ block: AvfxBlock, cls: String?, id: String, list: String? = nil) -> PropField? {
+        if block.tag == "Name", block.children == nil {
+            return PropField(id: id, label: "Bind Point Name", tag: block.tag, kind: .text, read: { .text(block.stringValue) },
+                             write: {
+                                 guard case .text(let v) = $0 else { return }
+                                 var bytes = Array(v.utf8) + [0]
+                                 while bytes.count % 4 != 0 { bytes.append(0) }
+                                 block.data = bytes
+                             })
+        }
+        if block.tag == "Tex", cls == "AvfxMain" { return nil }
+        if block.tag == "UvSN", cls?.hasPrefix("AvfxParticleTexture") == true, block.data.count >= 4 {
+            let count = block.parent?.parent?.childrenNamed("UvSt").count ?? 0
+            var choices = (0..<count).map { FieldChoice(name: "UV Set \($0)", value: $0) }
+            let current = block.intValue
+            if !choices.contains(where: { $0.value == current }) { choices.append(FieldChoice(name: "\(current) · missing", value: current)) }
+            return PropField(id: id, label: "UV Set", tag: block.tag, kind: .choice(choices), read: { .int(block.intValue) },
+                             write: { if case .int(let v) = $0 { block.intValue = v } })
+        }
+        if block.tag == "ClNo", cls == "AvfxTimelineItem", block.data.count >= 4 {
+            var choices = [FieldChoice(name: "None", value: -1)]
+            let clips = block.parent?.parent?.childrenNamed("Clip") ?? []
+            for (i, clip) in clips.enumerated() { choices.append(FieldChoice(name: "Clip \(i) · \(clipTypeName(clip))", value: i)) }
+            let current = block.intValue
+            if !choices.contains(where: { $0.value == current }) { choices.append(FieldChoice(name: "\(current) · missing", value: current)) }
+            return PropField(id: id, label: "Clip", tag: block.tag, kind: .choice(choices), read: { .int(block.intValue) },
+                             write: { if case .int(let v) = $0 { block.intValue = v } })
+        }
         if AvfxBlock.binaryLeafTags.contains(block.tag) || block.children != nil { return nil }
         if block.data.count >= 4, let choices = referenceChoices(tag: block.tag, cls: cls, list: list) {
             let label = catalog.field(cls, block.tag)?.name ?? block.tag
@@ -273,7 +300,7 @@ extension EffectDocument {
                                  block.data[0] = byte
                                  for i in 1..<block.data.count { block.data[i] = 0 }
                              })
-            field.triState = block.data.count == 1
+            field.triState = true
             return field
         case "AvfxEnum":
             let choices = (catalog.enums[def?.enumName ?? ""] ?? []).map { FieldChoice(name: $0.name, value: $0.value) }
@@ -383,6 +410,12 @@ extension EffectDocument {
         let source = record ?? block.children ?? []
         let list = record != nil ? block.tag : nil
         var sections = [PropSection(id: node.id + "/main", title: node.title, fields: avfxFields(source, cls: cls, id: node.id, list: list))]
+        if block === avfxRoot, let x = block.child("RvSx"), let y = block.child("RvSy"), let z = block.child("RvSz") {
+            let combined = PropField(id: node.id + "#RvSc", label: "Revised Scale (Combined)", tag: "RvSx", kind: .double,
+                                     read: { .double(Double(x.floatValue)) },
+                                     write: { value in for target in [x, y, z] { target.floatValue = Float(value.number) } })
+            sections.insert(PropSection(id: node.id + "/revised", title: "Revised Scale", fields: [combined]), at: 0)
+        }
         if record == nil, block.tag == "Emit" || block.tag == "Ptcl" {
             sections.insert(PropSection(id: node.id + "/transform", title: "Transform", fields: transformFields(block, id: node.id)), at: 0)
         }
@@ -395,8 +428,9 @@ extension EffectDocument {
                     sections.append(PropSection(id: node.id + "/life", title: "Life",
                                                 fields: avfxFields(fields, cls: "AvfxLife", id: node.id + "/life")))
                 } else {
-                    let info = PropField(id: node.id + "#Life", label: "Value", tag: "Life", kind: .info, read: { .text("∞ (−1)") }, write: nil)
-                    sections.append(PropSection(id: node.id + "/life", title: "Life", fields: [info]))
+                    let infinite = PropField(id: node.id + "#Life", label: "Infinite", tag: "Life", kind: .bool, read: { .bool(true) },
+                                             write: { [weak self] in if case .bool(false) = $0 { self?.makeLifeFinite(child, in: block) } })
+                    sections.append(PropSection(id: node.id + "/life", title: "Life", fields: [infinite]))
                 }
             }
         }
@@ -528,7 +562,7 @@ extension EffectDocument {
             seen[child.tag] = n + 1
             let id = "\(node.id)~\(child.tag)\(n)"
             let title = catalog.field(cls, child.tag)?.name ?? EffectDocument.colorTitles[child.tag] ?? child.tag
-            let isAngle = EffectDocument.angleTags.contains(child.tag)
+            let isAngle = EffectDocument.angleTags.contains(child.tag) || catalog.isAngle(cls, child.tag)
             let scale = isAngle ? 180 / Double.pi : 1
             var channels: [CurveChannel] = []
             var settings: [PropField] = []
@@ -599,6 +633,7 @@ extension EffectDocument {
                 row.base = base
                 row.startField = record.first { $0.tag == "StTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#StTm") }
                 row.endField = record.first { $0.tag == "EdTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#EdTm") }
+                row.enabledField = record.first { $0.tag == "bEna" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#bEna") }
                 children.append(row)
             }
             let end = children.map(\.end).max() ?? base + 30

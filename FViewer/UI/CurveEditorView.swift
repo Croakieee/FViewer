@@ -50,6 +50,7 @@ struct CurveEditorView: View {
 
     @State private var cache = GroupCache()
     @State private var dragActive = false
+    @AppStorage("curves.radians") private var radians = false
     @State private var aim: (key: KeyRef, outgoing: Bool, reach: CGFloat)?
     @State private var ghost: [String: [CurveKeyPoint]] = [:]
     @State private var ghostStamp = 0
@@ -175,7 +176,7 @@ struct CurveEditorView: View {
     var body: some View {
         GeometryReader { outer in
             HStack(spacing: 0) {
-                channelList.frame(width: min(max(outer.size.width * 0.14, 140), 260))
+                channelList.frame(width: listWidth(outer.size.width))
                 Rectangle().fill(Theme.line).frame(width: 1)
                 GeometryReader { geometry in
                     sized(geometry.size)
@@ -190,7 +191,7 @@ struct CurveEditorView: View {
                         }
                 }
                 Rectangle().fill(Theme.line).frame(width: 1)
-                sidebar.frame(width: min(max(outer.size.width * 0.2, 210), 340))
+                sidebar.frame(width: sidebarWidth(outer.size.width))
             }
         }
         .background(Color(white: 0.157))
@@ -295,7 +296,6 @@ struct CurveEditorView: View {
                     }
                 } else {
                     parameterPicker(nil)
-                    Text("Pick a parameter above, or a curve under Properties → Animation").font(Theme.font).foregroundStyle(Theme.dim).padding(8)
                 }
             }
         }
@@ -875,9 +875,80 @@ struct CurveEditorView: View {
         }
     }
 
-    private func pasteKeys() {
+    private func clearKeys() {
+        guard let group, document.format == .avfx else { return }
+        var before: [() -> Void] = []
+        var after: [() -> Void] = []
+        for channel in visibleChannels(group) where !channel.read().isEmpty {
+            before.append(channel.snapshot())
+            channel.write([])
+            after.append(channel.snapshot())
+        }
+        guard !before.isEmpty else { return }
+        document.registerUndo("Clear Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        selection = []
+        activeKey = nil
+    }
+
+    private func keyTable(_ channel: CurveChannel) -> some View {
+        let keys = channel.read()
+        let unit = group?.isAngle == true && radians ? Double.pi / 180 : 1
+        return VStack(spacing: 2) {
+            ForEach(Array(keys.enumerated().prefix(64)), id: \.offset) { index, key in
+                let ref = KeyRef(channel: channel.id, index: index)
+                HStack(spacing: 3) {
+                    NumberField(label: nil, value: key.time, isInteger: true, onLive: { _ in },
+                                onCommit: { _, next in
+                                    change(channel, "Key Frame") { keys in if index < keys.count { keys[index].time = max(0, next.rounded()) } }
+                                })
+                        .frame(width: 44)
+                    NumberField(label: nil, value: key.value * unit, step: 0.01, digits: 3, onLive: { _ in },
+                                onCommit: { _, next in
+                                    change(channel, "Key Value") { keys in
+                                        guard index < keys.count else { return }
+                                        keys[index].value = channel.clampUnit ? min(max(next / unit, 0), 1) : next / unit
+                                    }
+                                })
+                    if channel.colorComponent == nil {
+                        Text(["S", "L", "St"][min(max(key.interpolation, 0), 2)]).font(Theme.small).foregroundStyle(Theme.text)
+                            .frame(width: 20, height: 20).background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                change(channel, "Set Interpolation") { keys in if index < keys.count { keys[index].interpolation = (keys[index].interpolation + 1) % 3 } }
+                            }
+                            .help("Interpolation: Spline, Linear or Step. Click to cycle")
+                    }
+                    Image(systemName: "plus.square.on.square").font(.system(size: 9)).foregroundStyle(Theme.dim).frame(width: 16, height: 20)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            change(channel, "Duplicate Keyframe") { keys in
+                                guard index < keys.count else { return }
+                                var copy = keys[index]
+                                copy.time += 1
+                                while keys.contains(where: { $0.time == copy.time }) { copy.time += 1 }
+                                keys.append(copy)
+                                keys.sort { $0.time < $1.time }
+                            }
+                        }
+                        .help("Duplicate this key one frame later")
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 16, height: 20)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            change(channel, "Delete Keyframe") { keys in if index < keys.count { keys.remove(at: index) } }
+                            selection = []
+                            activeKey = nil
+                        }
+                        .help("Delete this key")
+                }
+                .padding(.horizontal, 2)
+                .background(RoundedRectangle(cornerRadius: 4).fill(selection.contains(ref) ? Theme.selection.opacity(0.6) : Color.clear))
+            }
+        }
+    }
+
+    private func pasteKeys(replace: Bool = false) {
         guard let group, !KeyClipboard.entries.isEmpty else { return }
-        let at = clock.time.rounded()
+        let at = replace ? 0 : clock.time.rounded()
         var before: [() -> Void] = []
         var after: [() -> Void] = []
         var pasted: Set<KeyRef> = []
@@ -886,7 +957,7 @@ struct CurveEditorView: View {
                 ?? (KeyClipboard.entries.count == 1 ? currentChannel() : nil)
             guard let target else { continue }
             before.append(target.snapshot())
-            var keys = target.read()
+            var keys = replace ? [] : target.read()
             let times = Set(entry.keys.map { $0.time + at })
             keys.removeAll { times.contains($0.time) }
             for key in entry.keys {
@@ -933,7 +1004,7 @@ struct CurveEditorView: View {
         let keys = channel.read()
         let current = index < keys.count ? get(keys[index]) : 0
         return HStack(spacing: 6) {
-            Text(label).font(Theme.font).foregroundStyle(Theme.text).frame(width: 64, alignment: .trailing)
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7).frame(width: 72, alignment: .trailing)
             NumberField(label: nil, value: current, isInteger: integer, step: step,
                         onLive: { next in
                             var live = channel.read()
@@ -968,7 +1039,7 @@ struct CurveEditorView: View {
             }
         }
         return HStack(spacing: 6) {
-            Text("Color").font(Theme.font).foregroundStyle(Theme.text).frame(width: 64, alignment: .trailing)
+            Text("Color").font(Theme.font).foregroundStyle(Theme.text).frame(width: 72, alignment: .trailing)
             ColorField(color: current, alpha: false,
                        onLive: { color in
                            apply(color)
@@ -984,10 +1055,17 @@ struct CurveEditorView: View {
         }
     }
 
+    private func listWidth(_ total: CGFloat) -> CGFloat { min(max(total * 0.16, 110), 240) }
+
+    private func sidebarWidth(_ total: CGFloat) -> CGFloat {
+        let wanted = min(max(total * 0.24, 190), 320)
+        return max(150, min(wanted, total - listWidth(total) - 180))
+    }
+
     private var sidebar: some View {
         ScrollView {
             VStack(spacing: 6) {
-                HStack(spacing: 2) {
+                FlowLayout(spacing: 2) {
                     HeaderButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Frame All (Home)") { fit(group) }
                     HeaderButton(symbol: "scope", help: "Frame Selected (.)") { fit(group, selectedOnly: !selection.isEmpty) }
                     HeaderButton(symbol: "plus", help: "Insert Keyframe at the playhead (I) — or double-click the graph") { insertAtPlayhead() }
@@ -997,9 +1075,18 @@ struct CurveEditorView: View {
                     SoloButton(document: document)
                     HeaderButton(symbol: "doc.on.doc", help: "Copy the selected keyframes (⌘C)") { copyKeys() }
                     HeaderButton(symbol: "doc.on.clipboard", help: "Paste keyframes at the playhead (⌘V)") { pasteKeys() }
-                    Spacer()
+                    HeaderButton(symbol: "doc.on.clipboard.fill", help: "Replace: paste the copied keyframes over the whole curve") { pasteKeys(replace: true) }
+                    HeaderButton(symbol: "eraser", help: "Clear: remove every keyframe of the visible channels") { clearKeys() }
+                    if group?.isAngle == true {
+                        HeaderButton(symbol: "angle", active: radians, help: "Show angles in radians instead of degrees") { radians.toggle() }
+                    }
+                    HelpBadge(text: "Drag a key to move it\ndouble-click empty space: new key there\n⌥ click a key: delete\n⇧ click a key: linear ↔ spline\ndrag a square handle to aim the tangent\n⌘ click adds to the selection\ndrag empty space to box-select\n⌃ snaps values\nscroll pans\n⌘ scroll or pinch zooms")
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 6)
+                if let channel = currentChannel() {
+                    Panel(title: "Keys", trailing: channel.name) { keyTable(channel) }
+                }
                 if !selection.isEmpty {
                     Panel(title: "Selection", trailing: "\(selection.count) keys") {
                         HStack(spacing: 2) {
@@ -1019,7 +1106,7 @@ struct CurveEditorView: View {
                             colorRow(group, index: active.index)
                         } else {
                             HStack(spacing: 6) {
-                                Text("Interpolation").font(Theme.font).foregroundStyle(Theme.text).frame(width: 64, alignment: .trailing).lineLimit(1)
+                                Text("Interpolation").font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7).frame(width: 72, alignment: .trailing)
                                 ChoiceField(choices: [FieldChoice(name: "Spline", value: 0), FieldChoice(name: "Linear", value: 1), FieldChoice(name: "Step", value: 2)],
                                             value: channel.read()[active.index].interpolation) { next in
                                     change(channel, "Set Interpolation") { keys in if active.index < keys.count { keys[active.index].interpolation = next } }
@@ -1039,8 +1126,6 @@ struct CurveEditorView: View {
                     if !group.settings.isEmpty {
                         Panel(title: group.title) { CompactFields(document: document, fields: group.settings) }
                     }
-                    Text("Drag a key to move it · double-click empty space: new key there · ⌥ click a key: delete · ⇧ click a key: linear ↔ spline · drag a square handle to aim the tangent · ⌘ click adds to the selection · drag empty space to box-select · ⌃ snaps values · scroll pans · ⌘ scroll or pinch zooms")
-                        .font(Theme.small).foregroundStyle(Theme.dim).padding(.horizontal, 10).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(.vertical, 6)
@@ -1056,7 +1141,8 @@ struct CompactFields: View {
     var body: some View {
         ForEach(fields) { field in
             HStack(spacing: 6) {
-                Text(field.label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).frame(width: 86, alignment: .trailing)
+                Text(field.label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.7).frame(width: 92, alignment: .trailing)
+                    .help(field.label)
                 FieldControl(document: document, field: field)
             }
         }

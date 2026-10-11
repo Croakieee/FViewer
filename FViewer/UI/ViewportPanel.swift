@@ -151,7 +151,7 @@ struct ViewportPanel: View {
                 EditorHeader(symbol: "view.2d", title: "2D Viewport") {
                     visibilityNote
                     Spacer()
-                    Text("Drag: pan · Pinch or ⌘ Scroll: zoom · Double-click: reset").font(Theme.small).foregroundStyle(Theme.dim)
+                    HelpBadge(text: "Drag: pan\nPinch or ⌘ Scroll: zoom\nDouble-click: reset")
                     HeaderButton(symbol: "circle.lefthalf.filled", help: "Cycle the background") {
                         app.viewportBackground = (app.viewportBackground + 1) % AppModel.backgrounds.count
                     }
@@ -187,6 +187,7 @@ struct ViewportPanel: View {
                 visibilityNote
                 Spacer()
                 if scene.showEffect {
+                    HelpBadge(text: "Drag: orbit\n⇧ Drag or right drag: pan\nScroll: orbit on a trackpad, zoom with a mouse wheel\nPinch or ⌘ Scroll: zoom\n1 / 3 / 7: front, right, top\n. : frame all")
                     HeaderButton(symbol: "dot.radiowaves.left.and.right", active: app.showEmitters, help: "Show emitter axes and shape points") {
                         app.showEmitters.toggle()
                     }

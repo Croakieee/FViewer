@@ -44,6 +44,25 @@ struct SequencerView: View {
             Text(row.label).font(Theme.font).foregroundStyle(document.selectionID == row.nodeID ? .white : Theme.text).lineLimit(1)
             if let id = row.nodeID, changes.contains(id) { ChangeDot(added: changes.added.contains(id)) }
             Spacer(minLength: 0)
+            if let enabled = row.enabledField {
+                let value = enabled.read()
+                Image(systemName: value == .bool(true) ? "checkmark.square.fill" : "square").font(.system(size: 10))
+                    .foregroundStyle(value == .bool(true) ? Theme.text : Theme.dim)
+                    .frame(width: 16, height: rowHeight).contentShape(Rectangle())
+                    .onTapGesture { document.commit(enabled, from: value, to: .bool(value != .bool(true))) }
+                    .help("Enabled")
+            }
+            if row.depth == 0, let id = row.nodeID, let add = document.node(id + "/Item")?.actions.first(where: { $0.title == "Add Item" }) {
+                Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.text)
+                    .frame(width: 16, height: rowHeight).contentShape(Rectangle())
+                    .onTapGesture(perform: add.perform).help("Add an item to this timeline")
+            }
+        }
+        .opacity(row.enabledField.map { $0.read() == .bool(true) ? 1 : 0.55 } ?? 1)
+        .contextMenu {
+            if let id = row.nodeID, let node = document.node(id) {
+                ForEach(node.actions) { action in Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform) }
+            }
         }
         .padding(.horizontal, 6)
         .frame(height: rowHeight)
@@ -58,36 +77,41 @@ struct SequencerView: View {
         let end = clock.endFrame ?? duration
         let span = currentSpan(max(end, duration))
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Text(clock.status).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
-                Spacer()
-                HeaderButton(symbol: "backward.end.fill", help: "Jump to start") { clock.rewind() }
-                HeaderButton(symbol: clock.playing ? "pause.fill" : "play.fill", active: clock.playing, help: "Play / Pause") { clock.playing.toggle() }
-                HeaderButton(symbol: "forward.end.fill", help: "Jump to end") { clock.time = end }
-                HeaderButton(symbol: "repeat", active: clock.loop, help: "Loop playback") { clock.loop.toggle() }
-                SoloButton(document: document)
-                HeaderButton(symbol: "lock.open", help: "Release loop points: held particles and emitters play out") { clock.release() }
-                triggerMenu
-                Spacer()
-                NumberField(label: "Frame", value: clock.time, isInteger: true, onLive: { clock.time = max(0, $0) },
-                            onCommit: { _, next in clock.time = max(0, next) })
-                    .frame(width: 104)
-                NumberField(label: "End", value: end, isInteger: true, onLive: { clock.endFrame = max(1, $0.rounded()) },
-                            onCommit: { _, next in clock.endFrame = max(1, next.rounded()) })
-                    .frame(width: 96)
-                    .help("Last frame of playback. The timeline scale stays fixed to this range")
-                HeaderButton(symbol: "arrow.uturn.backward", active: clock.endFrame != nil, help: "Use the effect's own length (\(Int(duration)) frames)") {
-                    clock.endFrame = nil
+            FlowLayout(spacing: 6) {
+                HStack(spacing: 6) {
+                    HeaderButton(symbol: "backward.end.fill", help: "Jump to start") { clock.rewind() }
+                    HeaderButton(symbol: clock.playing ? "pause.fill" : "play.fill", active: clock.playing, help: "Play / Pause") { clock.playing.toggle() }
+                    HeaderButton(symbol: "forward.end.fill", help: "Jump to end") { clock.time = end }
+                    HeaderButton(symbol: "repeat", active: clock.loop, help: "Loop playback") { clock.loop.toggle() }
+                    SoloButton(document: document)
+                    HeaderButton(symbol: "lock.open", help: "Release loop points: held particles and emitters play out") { clock.release() }
+                    triggerMenu
                 }
-                ChoiceField(choices: [FieldChoice(name: "0.1×", value: 10), FieldChoice(name: "0.25×", value: 25), FieldChoice(name: "0.5×", value: 50),
-                                      FieldChoice(name: "1×", value: 100), FieldChoice(name: "2×", value: 200)],
-                            value: Int((clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
-                    .frame(width: 64)
-                    .help("Playback speed")
-                Text("30 fps").font(Theme.small).foregroundStyle(Theme.dim)
+                .fixedSize()
+                HStack(spacing: 6) {
+                    NumberField(label: "Frame", value: clock.time, isInteger: true, onLive: { clock.time = max(0, $0) },
+                                onCommit: { _, next in clock.time = max(0, next) })
+                        .frame(width: 100)
+                    NumberField(label: "End", value: end, isInteger: true, onLive: { clock.endFrame = max(1, $0.rounded()) },
+                                onCommit: { _, next in clock.endFrame = max(1, next.rounded()) })
+                        .frame(width: 92)
+                        .help("Last frame of playback. The timeline scale stays fixed to this range")
+                    HeaderButton(symbol: "arrow.uturn.backward", active: clock.endFrame != nil, help: "Use the effect's own length (\(Int(duration)) frames)") {
+                        clock.endFrame = nil
+                    }
+                    ChoiceField(choices: [FieldChoice(name: "0.1×", value: 10), FieldChoice(name: "0.25×", value: 25), FieldChoice(name: "0.5×", value: 50),
+                                          FieldChoice(name: "1×", value: 100), FieldChoice(name: "2×", value: 200)],
+                                value: Int((clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
+                        .frame(width: 64)
+                        .help("Playback speed")
+                }
+                .fixedSize()
+                Text(clock.status.isEmpty ? "30 fps" : clock.status + " · 30 fps").font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
+                    .frame(height: 20)
             }
             .padding(.horizontal, 8)
-            .frame(height: 26)
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.panel)
             ScrollView {
                 HStack(alignment: .top, spacing: 0) {

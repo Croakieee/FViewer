@@ -124,7 +124,7 @@ struct FieldRows: View {
         return HStack(spacing: 4) {
             Spacer(minLength: 0)
             if isChanged { ChangeDot(added: before == nil) }
-            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : Theme.text).lineLimit(1)
+            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
         }
         .frame(width: labelWidth, height: 20)
         .help(help)
@@ -259,12 +259,34 @@ struct InspectorView: View {
             .help(help)
     }
 
+    private func contentRow(_ child: OutlineNode) -> some View {
+        let changes = document.changes
+        return HStack(spacing: 6) {
+            Image(systemName: child.symbol).font(.system(size: 10)).foregroundStyle(child.tint.color).frame(width: 16)
+            Text(child.title).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
+            if changes.contains(child.id) { ChangeDot(added: changes.added.contains(child.id)) }
+            Spacer(minLength: 4)
+            Text(child.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
+            Image(systemName: "chevron.right").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.dim)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.45)))
+        .contentShape(Rectangle())
+        .onTapGesture { document.selectionID = child.id }
+        .contextMenu {
+            ForEach(child.actions) { action in Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform) }
+        }
+    }
+
     private func actionButton(_ action: NodeAction) -> some View {
         HStack(spacing: 4) {
             Image(systemName: action.symbol).font(.system(size: 9))
             Text(action.title).font(Theme.font)
         }
         .foregroundStyle(action.destructive ? Color(red: 1, green: 0.5, blue: 0.45) : Theme.text)
+        .lineLimit(1)
+        .fixedSize()
         .padding(.horizontal, 8)
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
@@ -292,12 +314,15 @@ struct InspectorView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
             if !node.actions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) { ForEach(node.actions) { actionButton($0) } }.padding(.horizontal, 8)
-                }
+                FlowLayout(spacing: 4) { ForEach(node.actions) { actionButton($0) } }
+                    .padding(.horizontal, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let path = texturePath(for: node, sections: sections) {
                 Panel(title: "Preview") { TexturePreview(path: path) }
+            }
+            if case .avfx(let block, _, let record) = node.payload, record == nil, block.tag == "UvSt" {
+                Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
             }
             ForEach(sections) { section in
                 Panel(title: section.title, trailing: "\(section.fields.count)") {
@@ -313,12 +338,11 @@ struct InspectorView: View {
                     if !missing.isEmpty { addMenu("Add Curve", missing) }
                 }
             }
-            if sections.isEmpty && curves.isEmpty && missing.isEmpty && node.actions.isEmpty {
-                Text("This node has no fields of its own. Select one of its children.").font(Theme.font).foregroundStyle(Theme.dim)
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            if !node.children.isEmpty {
+                Panel(title: "Contents", trailing: "\(node.children.count)") {
+                    ForEach(node.children) { child in contentRow(child) }
+                }
             }
-        } else {
-            Text("Nothing selected").font(Theme.font).foregroundStyle(Theme.dim).padding(10)
         }
     }
 
@@ -379,9 +403,6 @@ struct InspectorView: View {
 
     @ViewBuilder private var textures: some View {
         let slots = document.textureSlots
-        if slots.isEmpty {
-            Text("This effect has no textures").font(Theme.font).foregroundStyle(Theme.dim).padding(10)
-        }
         ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
             Panel(title: "\(index) · \(slot.name)") {
                 TexturePreview(path: slot.path, height: 110)

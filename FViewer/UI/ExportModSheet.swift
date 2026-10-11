@@ -39,12 +39,16 @@ struct ExportModSheet: View {
                         row("Description") { TextValueField(value: details) { details = $0 } }
                     }
                     Panel(title: "Effect") {
-                        row("Replaces") { TextValueField(value: gamePath) { gamePath = $0 } }
-                        Text("The game path this effect is loaded from. \(document.title) is written there inside the mod, in its current state.")
-                            .font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
+                        row("Replaces") {
+                            TextValueField(value: gamePath) { gamePath = $0 }
+                            HelpBadge(text: "The game path this effect is loaded from. The effect is written there inside the mod, in its current state.")
+                        }
                     }
                     Panel(title: "Textures", trailing: "\(included.count) / \(slots.count)") {
-                        if slots.isEmpty { Text("This effect has no textures").font(Theme.font).foregroundStyle(Theme.dim) }
+                        HStack {
+                            Spacer()
+                            HelpBadge(text: "Tick the textures you changed. Unticked textures keep coming from the game.")
+                        }
                         ForEach(slots) { slot in
                             let found = app.textureURL(slot.path) != nil
                             HStack(spacing: 6) {
@@ -55,8 +59,6 @@ struct ExportModSheet: View {
                             }
                             .opacity(found ? 1 : 0.6)
                         }
-                        Text("Tick the textures you changed. Unticked textures keep coming from the game.")
-                            .font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.vertical, 8)
