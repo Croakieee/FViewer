@@ -81,6 +81,7 @@ final class GameArchive {
     let root: URL
     private var indexFiles: [String: URL] = [:]
     private var indexes: [String: [UInt64: SqPackEntry]] = [:]
+    private var indexes2: [String: [UInt32: SqPackEntry]] = [:]
     private var datFiles: [URL: Data] = [:]
 
     init(root: URL) throws {
@@ -128,6 +129,26 @@ final class GameArchive {
         return table
     }
 
+    private func index2(_ stem: String) throws -> [UInt32: SqPackEntry] {
+        if let cached = indexes2[stem] { return cached }
+        guard let first = indexFiles[stem] else { return [:] }
+        let url = first.deletingLastPathComponent().appending(path: "\(stem).win32.index2")
+        guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+        let data = try Data(contentsOf: url, options: .alwaysMapped)
+        guard data.count >= 0x400, data.prefix(6) == Data("SqPack".utf8) else { throw SqPackError.notSqPack(url.lastPathComponent) }
+        let header = Int(try data.sqLE(0x0C, as: UInt32.self))
+        let tableOffset = Int(try data.sqLE(header + 0x08, as: UInt32.self))
+        let count = Int(try data.sqLE(header + 0x0C, as: UInt32.self)) / 8
+        var table: [UInt32: SqPackEntry] = [:]
+        table.reserveCapacity(count)
+        for i in 0..<count {
+            let at = tableOffset + i * 8
+            table[try data.sqLE(at, as: UInt32.self)] = SqPackEntry(raw: try data.sqLE(at + 4, as: UInt32.self))
+        }
+        indexes2[stem] = table
+        return table
+    }
+
     private func dat(_ stem: String, _ number: Int) throws -> Data {
         guard let indexURL = indexFiles[stem] else { throw SqPackError.missingDatFile(stem) }
         let url = indexURL.deletingLastPathComponent().appending(path: "\(stem).win32.dat\(number)")
@@ -148,8 +169,11 @@ final class GameArchive {
         let path = PenumbraExport.normalized(gamePath)
         let key = SqPackHash.key(path)
         for stem in stems(for: path) {
-            guard let entry = try index(stem)[key] else { continue }
-            guard !entry.isSynonym else { throw SqPackError.collision(path) }
+            guard var entry = try index(stem)[key] else { continue }
+            if entry.isSynonym {
+                guard let other = try index2(stem)[SqPackHash.jam(path[...])], !other.isSynonym else { throw SqPackError.collision(path) }
+                entry = other
+            }
             do {
                 return try SqPackDat.read(try dat(stem, entry.dataFile), at: entry.offset)
             } catch SqPackError.outOfBounds {

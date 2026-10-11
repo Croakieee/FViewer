@@ -24,6 +24,8 @@ final class AppModel: ObservableObject {
     @Published var viewportBackground = 0
     @Published var highlightSelection = true
     @Published var gameRoot: URL?
+    @Published var convertImages = false
+    @Published var effectList: EffectList?
     var game: GameArchive?
 
     static let backgrounds: [(name: String, value: Double)] = [("Dark Grey", 0.24), ("Black", 0.02), ("Mid Grey", 0.5), ("Light", 0.82)]
@@ -306,7 +308,7 @@ final class AppModel: ObservableObject {
         notice = count == 0 ? "Nothing to clean up: every node is in use" : "Removed \(count) unused node\(count == 1 ? "" : "s")"
     }
 
-    private func freeURL(_ directory: URL, _ name: String, _ ext: String) -> URL {
+    func freeURL(_ directory: URL, _ name: String, _ ext: String) -> URL {
         var base = name
         var candidate = directory.appendingPathComponent(base).appendingPathExtension(ext)
         while FileManager.default.fileExists(atPath: candidate.path) {

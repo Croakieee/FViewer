@@ -50,6 +50,9 @@ struct TopBar: View {
                     Button("Open Effect by Game Path…") { app.openFromGamePrompt() }.disabled(app.gameRoot == nil)
                     Button("Extract File by Game Path…") { app.extractFromGamePrompt() }.disabled(app.gameRoot == nil)
                     Button("Fetch Missing Textures") { app.fetchMissingTextures() }.disabled(app.gameRoot == nil || app.document == nil)
+                    Divider()
+                    Button("Effects of Timeline by Game Path…") { app.listEffectsOfGamePath() }.disabled(app.gameRoot == nil)
+                    Button("Effects of Timeline File (.tmb, .pap)…") { app.listEffectsOfFile() }
                 }
                 Menu("Open Recent") {
                     ForEach(app.recentFiles, id: \.self) { url in Button(url.lastPathComponent) { app.openRecent(url) } }
@@ -82,6 +85,7 @@ struct TopBar: View {
                 Divider()
                 Button("Clean Up Unused Nodes") { app.cleanUp() }.disabled(app.document?.format != .avfx)
                 Button("Convert Textures to Custom Paths") { app.convertTextures() }.disabled(app.document?.format != .avfx)
+                Button("Convert Images…") { app.convertImages = true }
             }
             Spacer()
             if let document = app.document {
@@ -156,7 +160,7 @@ struct ContentView: View {
                         }
                         .frame(height: max(100, size.height - library - AreaDivider.thickness))
                         AreaDivider(vertical: false) { y in libraryFraction = clamp(1 - Double((y - origin.y) / size.height), 0.1, 0.8) }
-                        LibraryView().frame(height: library)
+                        BrowserPanel().frame(height: library)
                     }
                     .frame(width: left)
                     AreaDivider(vertical: true) { x in leftFraction = clamp(Double((x - origin.x) / size.width), 0.1, 0.35) }
@@ -203,6 +207,8 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {
             if let document = app.document { ExportNodesSheet(document: document, selected: document.exportRequest ?? []) }
         }
+        .sheet(isPresented: $app.convertImages) { ConvertImagesSheet().environmentObject(app) }
+        .sheet(item: $app.effectList) { list in EffectListSheet(list: list).environmentObject(app) }
         .sheet(isPresented: $app.modExport) {
             if let document = app.document { ExportModSheet(document: document).environmentObject(app) }
         }

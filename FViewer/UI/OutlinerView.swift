@@ -87,6 +87,12 @@ struct OutlinerView: View {
                 }
             }
             .background(Color(white: 0.157))
+            .dropDestination(for: URL.self) { urls, _ in
+                let nodes = urls.filter { ["vfxedit", "vfxedit2"].contains($0.pathExtension.lowercased()) }
+                guard document.format == .avfx, !nodes.isEmpty else { return false }
+                nodes.forEach { AppDelegate.model?.importFromNodeLibrary($0) }
+                return true
+            }
         }
     }
 
@@ -157,6 +163,7 @@ struct OutlinerView: View {
 
 struct LibraryView: View {
     @EnvironmentObject var app: AppModel
+    @Binding var mode: Int
 
     private var groups: [(folder: String, files: [LibraryFile])] {
         let favorites = app.favorites
@@ -169,7 +176,8 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorHeader(symbol: "folder", title: "File Browser") {
-                Spacer()
+                Spacer(minLength: 0)
+                HeaderButton(symbol: "shippingbox", help: "Show the Node Library") { mode = 1 }
                 HeaderButton(symbol: "folder.badge.plus", help: "Open Folder (⇧⌘O)") { app.chooseLibrary() }
                 HeaderButton(symbol: "doc.badge.plus", help: "Open File (⌘O)") { app.openFilePanel() }
             }
