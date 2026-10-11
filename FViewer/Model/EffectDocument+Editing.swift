@@ -98,6 +98,25 @@ extension EffectDocument {
         selectionID = "\(id)/\(list)/\(records.count - 1)"
     }
 
+    func timelineSpan(_ timeline: AvfxBlock) -> Int {
+        timeline.ownRecords("Item").compactMap { record in record.first { $0.tag == "EdTm" }?.intValue }.max() ?? 0
+    }
+
+    @discardableResult func repeatItems(_ timeline: AvfxBlock, copies: Int, period: Int) -> Int {
+        let source = timeline.ownRecords("Item")
+        guard copies > 0, period > 0, !source.isEmpty else { return 0 }
+        var records = source
+        for k in 1...copies {
+            for record in source {
+                let copy = record.map { $0.deepCopy() }
+                for field in copy where field.tag == "StTm" || field.tag == "EdTm" { field.intValue += period * k }
+                records.append(copy)
+            }
+        }
+        performStructural("Repeat Items") { timeline.setOwnRecords("Item", records) }
+        return records.count - source.count
+    }
+
     func changeRecords(_ owner: AvfxBlock, list: String, title: String, _ change: (inout [[AvfxBlock]]) -> Void) {
         var records = owner.ownRecords(list)
         change(&records)
@@ -383,6 +402,9 @@ extension EffectDocument {
         }
         if block.tag == "TmLn" {
             actions.insert(NodeAction(id: node.id + "!clip", title: "Add Clip", symbol: "scissors") { [weak self] in self?.addClip(block) }, at: 0)
+            actions.append(NodeAction(id: node.id + "!repeat", title: "Repeat Items…", symbol: "repeat") { [weak self] in
+                AppDelegate.model?.repeatTimelineItems(block, in: self)
+            })
         }
         if block.tag == "Clip", let parent {
             actions.append(NodeAction(id: node.id + "!del", title: "Delete Clip", symbol: "trash", destructive: true) { [weak self] in
@@ -470,19 +492,17 @@ extension EffectDocument {
                 }
                 if missing { notes.append("Timeline \(t) is missing a value: one of its items has no emitter, clip or effector") }
             }
-            let unsupported: Set<Int> = [6, 14, 15]
+            let unsupported: Set<Int> = [14, 15]
             for (i, particle) in root.childrenNamed("Ptcl").enumerated() {
                 let type = particle.int("PrVT")
                 if unsupported.contains(type) || (type == 3 && particle.int("bSCt") == 0) {
                     notes.append("Particle \(i): \(catalog.enumCaseName("ParticleType", type) ?? "?") is not drawn in the preview")
                 }
-                if particle.int("DsSp") != 0 { notes.append("Particle \(i): soft particle fade is not drawn") }
-                if particle.child("TC1")?.int("bUSC") == 1 { notes.append("Particle \(i): screen copy is not drawn") }
+                if type == 6 { notes.append("Particle \(i): the trail is drawn facing the camera over half its point count in frames") }
             }
-            for (i, emitter) in root.childrenNamed("Emit").enumerated() where [1, 2].contains(emitter.int("EVT")) {
-                notes.append("Emitter \(i): \(catalog.enumCaseName("EmitterType", emitter.int("EVT")) ?? "?") shape is treated as a point")
+            for (i, effector) in root.childrenNamed("Efct").enumerated() where effector.int("EfVT") != 0 {
+                notes.append("Effector \(i): \(catalog.enumCaseName("EffectorType", effector.int("EfVT")) ?? "?") is not previewed")
             }
-            if !root.childrenNamed("Efct").isEmpty { notes.append("Effectors (lights, blurs, camera quake) are not previewed") }
             sections.append(("Preview Notes", notes.isEmpty ? ["Everything in this effect is covered by the preview"] : notes))
         } else if let root = jsonRoot {
             sections.append(("Summary", [

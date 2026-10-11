@@ -494,6 +494,7 @@ struct InspectorView: View {
                 }
             }
         }
+        ClipLogPanel(clock: document.clock)
         Panel(title: "Textures") {
             ForEach(document.textureSlots) { slot in
                 HStack(spacing: 6) {
@@ -501,6 +502,20 @@ struct InspectorView: View {
                         .foregroundStyle(app.textureURL(slot.path) == nil ? Color.orange : Color.green)
                     Text(slot.path).font(Theme.small).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.head)
                     Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+}
+
+struct ClipLogPanel: View {
+    @ObservedObject var clock: PlaybackClock
+
+    var body: some View {
+        if !clock.clipLog.isEmpty {
+            Panel(title: "Clip Log", trailing: "\(clock.clipLog.count)") {
+                ForEach(Array(clock.clipLog.suffix(40).enumerated()), id: \.offset) { _, line in
+                    Text(line).font(Theme.font).foregroundStyle(Theme.text).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

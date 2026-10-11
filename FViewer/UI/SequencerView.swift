@@ -107,6 +107,10 @@ struct SequencerView: View {
                                 value: Int((clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
                         .frame(width: 64)
                         .help("Playback speed")
+                    NumberField(label: "Seed", value: Double(clock.seed), isInteger: true, onLive: { _ in },
+                                onCommit: { _, next in clock.seed = Int(min(max(next, 0), 999_999)) })
+                        .frame(width: 92)
+                        .help("Random seed of the preview. Another seed plays another variation of the same effect")
                     HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
                         viewZoom = 1
                         viewStart = 0

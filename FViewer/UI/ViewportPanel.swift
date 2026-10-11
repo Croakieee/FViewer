@@ -74,6 +74,7 @@ struct ViewportPanel: View {
         scene.effectShading = app.effectShading
         scene.showEmitters = app.showEmitters
         scene.showBindPoints = app.showBindPoints
+        scene.showFloor = app.showFloor
         scene.filter = document.visibilityFilter
         scene.highlight = app.highlightSelection ? document.visibilityKey(forNodeID: document.selectionID) : nil
         let selected = document.selectionID ?? ""
@@ -154,6 +155,15 @@ struct ViewportPanel: View {
                     HelpBadge(text: "Drag: pan\nPinch or ⌘ Scroll: zoom\nDouble-click: reset")
                     HeaderButton(symbol: "circle.lefthalf.filled", help: "Cycle the background") {
                         app.viewportBackground = (app.viewportBackground + 1) % AppModel.backgrounds.count
+                    }
+                    if document.format == .avfx, document.isDirty || document.showOriginal {
+                        HeaderButton(symbol: "clock.arrow.circlepath", active: document.showOriginal,
+                                     help: "Play the effect as it was opened, to compare with your changes") {
+                            document.showOriginal.toggle()
+                        }
+                    }
+                    HeaderButton(symbol: "square.fill.on.square", active: app.showFloor, help: "Show a floor that effect lights and soft particles react to") {
+                        app.showFloor.toggle()
                     }
                     isolateButton
                     shadingButtons

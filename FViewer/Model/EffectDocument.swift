@@ -113,6 +113,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     }
 
     private(set) var original: EffectDocument?
+    @Published var showOriginal = false
     var originalFields: [String: [String: FieldValue]] = [:]
     private var changeCache: (revision: Int, set: ChangeSet)?
 

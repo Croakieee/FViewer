@@ -5,6 +5,8 @@ final class AvfxPlayer {
     let document: EffectDocument
     private(set) var simulation: AvfxSimulation?
     private var loadedRevision = -1
+    private var loadedOriginal = false
+    private var loggedClips = -1
     private var duration: Double = 30
     private var appliedRelease = false
     private var appliedTriggers = 0
@@ -15,12 +17,13 @@ final class AvfxPlayer {
         self.document = document
     }
 
-    var schemaChanged: Bool { loadedRevision != document.revision }
+    var schemaChanged: Bool { loadedRevision != document.revision || loadedOriginal != document.showOriginal }
 
     private func rebuild() {
         loadedRevision = document.revision
         duration = document.duration
-        guard let root = document.avfxRoot else {
+        loadedOriginal = document.showOriginal
+        guard let root = (document.showOriginal ? document.original?.avfxRoot : nil) ?? document.avfxRoot else {
             simulation = nil
             return
         }
@@ -38,6 +41,11 @@ final class AvfxPlayer {
         if schemaChanged { rebuild() }
         guard let simulation else { return [] }
         let clock = document.clock
+        let seed = UInt64(max(0, clock.seed))
+        if simulation.seed != seed {
+            simulation.seed = seed
+            rewindSimulation()
+        }
         clock.advance(elapsed, duration: duration, finished: simulation.finished, held: simulation.held)
         let target = Float(clock.time)
         if target < simulation.time - 0.01 || (!clock.playing && abs(simulation.time - target) > 0.001) { rewindSimulation() }
@@ -58,6 +66,12 @@ final class AvfxPlayer {
         }
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1
+        if simulation.clipLog.count != loggedClips {
+            loggedClips = simulation.clipLog.count
+            let names = ["KILL": "Kill", "REST": "Reset", "END ": "End", "FADI": "Fade In", "ULLP": "Unlock Loop Point", "TRG ": "Trigger", "RTRG": "Random Trigger"]
+            let lines = simulation.clipLog.map { "Frame \(Int($0.time.rounded())): \(names[$0.type] ?? $0.type.trimmingCharacters(in: .whitespaces))" }
+            DispatchQueue.main.async { if clock.clipLog != lines { clock.clipLog = lines } }
+        }
         if statusTick % 12 == 0 {
             let status = "\(simulation.particles.count) particles · \(simulation.emitters.count) emitters" + (simulation.held ? " · held" : "")
             if clock.status != status { clock.status = status }

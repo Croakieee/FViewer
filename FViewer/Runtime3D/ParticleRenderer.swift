@@ -21,6 +21,8 @@ private struct ParticleUniforms {
     var flags2 = Vec4.zero
     var cameraPosition = Vec4.zero
     var debugColor = Vec4.zero
+    var scene = Vec4.zero
+    var scene2 = Vec4.zero
 }
 
 struct LoadedTexture {
@@ -38,6 +40,8 @@ private struct PreparedMaterial {
     var depthWrite = false
     var cull = MTLCullMode.none
     var hasColorEnds = false
+    var soft = false
+    var screenCopy: Float = 0
 }
 
 private final class GeometryBuffers {
@@ -70,6 +74,19 @@ final class ParticleRenderer {
     private var depthStates: [MTLDepthStencilState] = []
     private var samplers: [Int: MTLSamplerState] = [:]
     private var white: MTLTexture?
+    private lazy var emptyDepth: MTLTexture? = {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: 1, height: 1, mipmapped: false)
+        descriptor.textureType = .type2DMultisample
+        descriptor.sampleCount = 4
+        descriptor.usage = [.shaderRead, .renderTarget]
+        descriptor.storageMode = .private
+        return device.makeTexture(descriptor: descriptor)
+    }()
+    var sceneColor: MTLTexture?
+    var sceneDepth: MTLTexture?
+    var viewport = SIMD2<Float>(1, 1)
+    var clip = SIMD2<Float>(0.1, 2000)
+    var softDistance: Float = 0.5
     private var materials: [Int: PreparedMaterial] = [:]
     private var buffers: [ObjectIdentifier: GeometryBuffers] = [:]
     private var frameIndex = 0
@@ -158,7 +175,9 @@ final class ParticleRenderer {
         let slots = [0, 1, 3, 4]
         var loaded: [LoadedTexture?] = [nil, nil, nil, nil]
         var flags: [Vec4] = [.zero, .zero, .zero, .zero]
+        let copiesScene = ps.tc1?.enabled == true && ps.tc1?.screenCopy == true
         for (i, layer) in layers.enumerated() {
+            if i == 0, copiesScene { continue }
             guard let layer, layer.enabled, let first = layer.textures.first, let texture = textureProvider(first) else { continue }
             loaded[i] = texture
             var calcColor = layer.calcColor
@@ -202,13 +221,18 @@ final class ParticleRenderer {
         let fresnel = isModel && ps.fresnelType != 0 && (ps.colorBegin != nil || ps.colorEnd != nil)
         let lineGradient = ps.type == 3 && (ps.colorBegin != nil || ps.colorEnd != nil)
         let sprites = ps.simple != nil && (ps.type == 1 || ps.type == 3)
-        let vertexColors = isModel || ps.type == 12
+        let vertexColors = isModel || ps.type == 12 || ps.type == 6
         m.uniforms.flags = Vec4(vertexColors ? 1 : 0, fresnel ? 1 : 0, sprites ? 1 : 0, lineGradient ? 1 : 0)
         m.uniforms.flags2 = Vec4(premultiply, distortion != nil ? 1 : 0, palette ? 1 : 0, 1)
         m.hasColorEnds = fresnel || lineGradient
+        m.soft = ps.softParticle
+        if copiesScene {
+            let shifted = distortion != nil && (ps.tc1.map { $0.uvSet >= 0 && $0.uvSet < 4 && distortion?.targets[$0.uvSet] == true } ?? false)
+            m.screenCopy = shifted ? 2 : 1
+        }
         m.depthTest = ps.depthTest
         m.depthWrite = ps.depthWrite
-        if ps.type == 10 || ps.type == 11 {
+        if ps.type == 10 || ps.type == 11 || ps.type == 6 {
             m.cull = .none
         } else if ps.culling == 2 {
             m.cull = .front
@@ -232,6 +256,10 @@ final class ParticleRenderer {
         }
         let soft = rgb * 0.75 + Vec3(0.25, 0.25, 0.25)
         return Vec4(soft.x, soft.y, soft.z, 0.9)
+    }
+
+    func needsScene(_ particles: [RParticle]) -> Bool {
+        particles.contains { $0.softParticle || ($0.tc1?.enabled == true && $0.tc1?.screenCopy == true) }
     }
 
     func draw(_ encoder: MTLRenderCommandEncoder, draws: [ParticleDraw], particles: [RParticle], view: Mat4, projection: Mat4, camera: Vec3,
@@ -277,6 +305,10 @@ final class ParticleRenderer {
             u.misc.y = draw.distortPower
             u.misc.z = draw.paletteOffset
             u.cameraPosition = Vec4(camera.x, camera.y, camera.z, 1)
+            let sceneReady = !wire && sceneColor != nil && sceneDepth != nil
+            u.scene = Vec4(sceneReady && material.soft ? softDistance : 0, sceneReady ? material.screenCopy : 0, viewport.x, viewport.y)
+            u.scene2 = Vec4(clip.x, clip.y, 0, 0)
+            if material.screenCopy > 0, !sceneReady, !wire { u.color.w = 0 }
             if wire {
                 u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle)
                 u.misc.w = 0
@@ -297,6 +329,8 @@ final class ParticleRenderer {
                 encoder.setFragmentTexture(texture ?? white, index: slot)
                 encoder.setFragmentSamplerState(material.samplers[slot] ?? sampler(0, 0), index: slot)
             }
+            encoder.setFragmentTexture(sceneColor ?? white, index: 6)
+            encoder.setFragmentTexture(sceneDepth ?? emptyDepth, index: 7)
             encoder.drawIndexedPrimitives(type: .triangle, indexCount: geometry.indexCount, indexType: .uint32, indexBuffer: geometry.indices,
                                           indexBufferOffset: 0)
         }

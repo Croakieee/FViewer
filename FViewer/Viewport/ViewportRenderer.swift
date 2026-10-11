@@ -51,6 +51,7 @@ struct ViewportScene {
     var effectShading = 0
     var showEmitters = false
     var showBindPoints = false
+    var showFloor = false
     var filter = VisibilityFilter()
     var highlight: VisibilityKey?
     var texture: CGImage?
@@ -63,6 +64,8 @@ private struct Uniforms {
     var model: simd_float4x4
     var tint: SIMD4<Float>
     var options: SIMD4<Float>
+    var lightPosition: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+    var lightColor: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
 }
 
 private struct DrawItem {
@@ -103,6 +106,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var texturePaths: [String] = []
     private var libraryToken = -1
     private var lastFrame = CACurrentMediaTime()
+    private var showFloor = false
+    private var floor: DrawItem?
+    private var sceneColor: MTLTexture?
+    private var sceneDepth: MTLTexture?
     weak var document: EffectDocument?
     weak var app: AppModel?
 
@@ -273,6 +280,39 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         points.append((SIMD3(0, 0, -e), SIMD4(0.25, 0.50, 0.95, 0.9)))
         points.append((SIMD3(0, 0, e), SIMD4(0.25, 0.50, 0.95, 0.9)))
         grid = lineItem(points).map { [$0] } ?? []
+        var disc: [MeshVertex] = [MeshVertex(position: SIMD3(0, -0.002, 0), normal: SIMD3(0, 1, 0), color: SIMD4(0.43, 0.38, 0.34, 1), uv: SIMD2(0.5, 0.5))]
+        var indices: [UInt32] = []
+        let segments = 64
+        for i in 0...segments {
+            let a = Float(i) / Float(segments) * 2 * .pi
+            disc.append(MeshVertex(position: SIMD3(cos(a) * 8, -0.002, sin(a) * 8), normal: SIMD3(0, 1, 0), color: SIMD4(0.43, 0.38, 0.34, 1),
+                                   uv: SIMD2(0.5 + cos(a) / 2, 0.5 + sin(a) / 2)))
+            if i > 0 { indices.append(contentsOf: [0, UInt32(i + 1), UInt32(i)]) }
+        }
+        if let vb = device.makeBuffer(bytes: disc, length: MemoryLayout<MeshVertex>.stride * disc.count),
+           let ib = device.makeBuffer(bytes: indices, length: 4 * indices.count) {
+            floor = DrawItem(vertices: vb, indices: ib, count: indices.count, primitive: .triangle, tint: SIMD4(1, 1, 1, 1), lit: true, textured: false,
+                             wire: false)
+        }
+    }
+
+    private func sceneTextures(_ drawable: MTLTexture, depth: MTLTexture) -> Bool {
+        if sceneColor?.width != drawable.width || sceneColor?.height != drawable.height {
+            let color = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: drawable.pixelFormat, width: drawable.width, height: drawable.height,
+                                                                 mipmapped: false)
+            color.usage = [.shaderRead]
+            color.storageMode = .private
+            sceneColor = device.makeTexture(descriptor: color)
+        }
+        if sceneDepth?.width != depth.width || sceneDepth?.height != depth.height || sceneDepth?.sampleCount != depth.sampleCount {
+            let copy = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: depth.pixelFormat, width: depth.width, height: depth.height, mipmapped: false)
+            copy.textureType = depth.textureType
+            copy.sampleCount = depth.sampleCount
+            copy.usage = [.shaderRead, .renderTarget]
+            copy.storageMode = .private
+            sceneDepth = device.makeTexture(descriptor: copy)
+        }
+        return sceneColor != nil && sceneDepth != nil
     }
 
     func update(_ scene: ViewportScene) {
@@ -280,6 +320,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         effectShading = scene.effectShading
         showEmitters = scene.showEmitters
         showBindPoints = scene.showBindPoints
+        showFloor = scene.showFloor
         filter = scene.filter
         highlight = scene.highlight
         guard scene.revision != sceneRevision else { return }
@@ -351,9 +392,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         guard let pipeline, let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+              let buffer = queue.makeCommandBuffer() else { return }
         let aspect = Float(view.drawableSize.width / max(view.drawableSize.height, 1))
-        let projection = ViewportRenderer.perspective(fovY: 0.75, aspect: aspect, near: max(camera.distance * 0.01, 0.01), far: 2000)
+        let near = max(camera.distance * 0.01, 0.01)
+        let projection = ViewportRenderer.perspective(fovY: 0.75, aspect: aspect, near: near, far: 2000)
         let viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
         let viewProjection = projection * viewMatrix
         let now = CACurrentMediaTime()
@@ -364,14 +406,36 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let cameraState = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: simd_cross(forward, right), z: forward),
                                       fovY: 0.75, viewportHeight: Float(view.drawableSize.height))
         let effect = effectDraws(elapsed: elapsed, camera: cameraState)
+        let lights = Array((effect != nil ? player?.simulation?.lights(filter: filter) : nil ?? []) ?? []).prefix(4)
+        let split = effect.map { particleRenderer?.needsScene($0.particles) ?? false } ?? false
+        let depthTarget = descriptor.depthAttachment.texture
+        let resolved = descriptor.colorAttachments[0].resolveTexture ?? descriptor.colorAttachments[0].texture
+        let canSplit = split && depthTarget != nil && resolved != nil && descriptor.colorAttachments[0].resolveTexture != nil
+        if canSplit {
+            descriptor.colorAttachments[0].storeAction = .storeAndMultisampleResolve
+            descriptor.depthAttachment.storeAction = .store
+        }
+        guard var encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
         encoder.setCullMode(.none)
-        for (pass, list) in [grid, items].enumerated() {
+        func lit(_ uniforms: inout Uniforms) {
+            var positions = [SIMD4<Float>](repeating: .zero, count: 4), colors = [SIMD4<Float>](repeating: .zero, count: 4)
+            for (i, light) in lights.enumerated() {
+                positions[i] = SIMD4(light.position.x, light.position.y, light.position.z, light.decay)
+                colors[i] = SIMD4(light.color.x, light.color.y, light.color.z, light.distance)
+            }
+            uniforms.lightPosition = (positions[0], positions[1], positions[2], positions[3])
+            uniforms.lightColor = (colors[0], colors[1], colors[2], colors[3])
+            uniforms.options.w = lights.isEmpty ? 0 : 1
+        }
+        let ground = showFloor ? [floor].compactMap { $0 } : []
+        for (pass, list) in [ground, grid, items].enumerated() {
             for item in list {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
-                                        options: SIMD4(item.lit ? 1 : 0, item.textured ? 1 : 0, item.pointSize, 0))
-                encoder.setDepthStencilState(pass == 0 || item.wire || item.textured ? overlayDepthState : depthState)
+                                        options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured ? 1 : 0, item.pointSize, 0))
+                if item.lit { lit(&uniforms) }
+                encoder.setDepthStencilState(pass == 1 || item.wire || item.textured ? overlayDepthState : depthState)
                 encoder.setTriangleFillMode(item.wire ? .lines : .fill)
                 encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
                 encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -385,7 +449,31 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        particleRenderer?.sceneColor = nil
+        particleRenderer?.sceneDepth = nil
+        if canSplit, let depthTarget, let resolved, sceneTextures(resolved, depth: depthTarget), let sceneColor, let sceneDepth {
+            encoder.endEncoding()
+            if let blit = buffer.makeBlitCommandEncoder() {
+                blit.copy(from: resolved, to: sceneColor)
+                blit.copy(from: depthTarget, to: sceneDepth)
+                blit.endEncoding()
+            }
+            descriptor.colorAttachments[0].loadAction = .load
+            descriptor.colorAttachments[0].storeAction = .multisampleResolve
+            descriptor.depthAttachment.loadAction = .load
+            descriptor.depthAttachment.storeAction = .dontCare
+            guard let second = buffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+                buffer.commit()
+                return
+            }
+            encoder = second
+            particleRenderer?.sceneColor = sceneColor
+            particleRenderer?.sceneDepth = sceneDepth
+        }
         if let effect, let particleRenderer {
+            particleRenderer.viewport = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
+            particleRenderer.clip = SIMD2(near, 2000)
+            particleRenderer.softDistance = player?.simulation?.schema.softFadeRange ?? 0.5
             particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: camera.eye,
                                   shading: effectShading)
             if !highlightDraws.isEmpty {
@@ -497,6 +585,8 @@ struct MetalViewport: NSViewRepresentable {
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .depth32Float
         view.sampleCount = 4
+        view.framebufferOnly = false
+        view.depthStencilStorageMode = .private
         view.clearColor = MTLClearColor(red: 0.24, green: 0.24, blue: 0.24, alpha: 1)
         view.delegate = context.coordinator
         view.camera = camera

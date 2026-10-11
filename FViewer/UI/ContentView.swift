@@ -76,6 +76,7 @@ struct TopBar: View {
                 Divider()
                 Button("Import Penumbra Mod (.pmp)…") { app.importPenumbraMod() }
                 Button("Import Nodes…") { app.importNodesPanel() }.disabled(app.document?.format != .avfx)
+                Button("Merge Effect…") { app.mergeEffectPanel() }.disabled(app.document?.format != .avfx)
                 Button("Export Nodes…") { app.document?.exportRequest = [] }.disabled(app.document?.format != .avfx)
                 Button("Export Mod…") { app.modExport = true }.disabled(app.document?.format != .avfx)
             }
@@ -86,6 +87,7 @@ struct TopBar: View {
                 Button("Clean Up Unused Nodes") { app.cleanUp() }.disabled(app.document?.format != .avfx)
                 Button("Convert Textures to Custom Paths") { app.convertTextures() }.disabled(app.document?.format != .avfx)
                 Button("Convert Images…") { app.convertImages = true }
+                Button("Export All Textures as PNG…") { app.exportAllTextures() }.disabled(app.document == nil)
             }
             Spacer()
             if let document = app.document {
@@ -207,6 +209,7 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {
             if let document = app.document { ExportNodesSheet(document: document, selected: document.exportRequest ?? []) }
         }
+        .dropDestination(for: URL.self) { urls, _ in app.openDropped(urls) }
         .sheet(isPresented: $app.convertImages) { ConvertImagesSheet().environmentObject(app) }
         .sheet(item: $app.effectList) { list in EffectListSheet(list: list).environmentObject(app) }
         .sheet(isPresented: $app.modExport) {

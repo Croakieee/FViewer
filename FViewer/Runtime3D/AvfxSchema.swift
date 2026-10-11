@@ -136,6 +136,7 @@ struct RTextureLayer {
     var texNRandom: RCurve?
     var targets: [Bool] = [false, false, false, false]
     var power: RCurve?
+    var screenCopy = false
 }
 
 struct RPalette {
@@ -191,6 +192,24 @@ struct RDisc {
     var colorOuter: RColor?
 }
 
+struct RPolyline {
+    var createType: Int
+    var pointCount: Int
+    var pointCountCenter: Int
+    var useEdge: Bool
+    var width: RCurve?
+    var widthBegin: RCurve?
+    var widthCenter: RCurve?
+    var widthEnd: RCurve?
+    var length: RCurve?
+    var colorBegin: RColor?
+    var colorCenter: RColor?
+    var colorEnd: RColor?
+    var colorEdgeBegin: RColor?
+    var colorEdgeCenter: RColor?
+    var colorEdgeEnd: RColor?
+}
+
 struct RParticle {
     var index: Int
     var type: Int
@@ -237,6 +256,8 @@ struct RParticle {
     var ringFan: Float
     var simple: RSimple?
     var disc: RDisc?
+    var polyline: RPolyline?
+    var softParticle = false
 }
 
 struct RBinder {
@@ -244,6 +265,17 @@ struct RBinder {
     var distance: Float = 0
     var bindTargetPoint: Int
     var bindPointId: Int
+}
+
+struct REffector {
+    var index: Int
+    var type: Int
+    var loopStart: Int
+    var loopEnd: Int
+    var color: RColor
+    var distance: RCurve?
+    var attenuation: Int
+    var position: RCurve3
 }
 
 struct REffectSchema {
@@ -259,6 +291,9 @@ struct REffectSchema {
     var binders: [RBinder]
     var models: [AvfxBlock]
     var textureCount: Int
+    var effectors: [REffector] = []
+    var emitterEffectors: [Int] = []
+    var softFadeRange: Float = 0.5
 }
 
 private extension Array where Element == AvfxBlock {
@@ -320,7 +355,8 @@ enum AvfxSchemaReader {
         return RTextureLayer(enabled: block.bool("bEna"), colorToAlpha: block.bool("bC2A"), uvSet: block.int("UvSN"), borderU: block.int("TBUT"),
                              borderV: block.int("TBVT"), calcColor: block.int("TCCT"), calcAlpha: block.int("TCAT"),
                              textures: textures.filter { $0 >= 0 }, texN: curve(block.child("TxN")), texNRandom: curve(block.child("TxNR")),
-                             targets: [block.bool("bT1"), block.bool("bT2"), block.bool("bT3"), block.bool("bT4")], power: curve(block.child("DPow")))
+                             targets: [block.bool("bT1"), block.bool("bT2"), block.bool("bT3"), block.bool("bT4")], power: curve(block.child("DPow")),
+                             screenCopy: block.bool("bUSC"))
     }
 
     static func simple(_ block: AvfxBlock?) -> RSimple? {
@@ -358,6 +394,16 @@ enum AvfxSchemaReader {
         }
         return RDisc(countU: block.int("PCnU", 2), countV: block.int("PCnV", 2), curves: curves, colorInner: optionalColor(block.child("CEI")),
                      colorOuter: optionalColor(block.child("CEO")))
+    }
+
+    static func polyline(_ block: AvfxBlock?) -> RPolyline? {
+        guard let block, block.children != nil else { return nil }
+        return RPolyline(createType: block.int("LnCT"), pointCount: block.int("PnC", 2), pointCountCenter: block.int("PnCC"), useEdge: block.bool("bEdg"),
+                         width: curve(block.child("Wd")), widthBegin: curve(block.child("WdB")), widthCenter: curve(block.child("WdC")),
+                         widthEnd: curve(block.child("WdE")), length: curve(block.child("Len")), colorBegin: optionalColor(block.child("ColB")),
+                         colorCenter: optionalColor(block.child("ColC")), colorEnd: optionalColor(block.child("ColE")),
+                         colorEdgeBegin: optionalColor(block.child("CoEB")), colorEdgeCenter: optionalColor(block.child("CoEC")),
+                         colorEdgeEnd: optionalColor(block.child("CoEE")))
     }
 
     static func read(_ root: AvfxBlock) -> REffectSchema {
@@ -424,19 +470,29 @@ enum AvfxSchemaReader {
                 colorEnd: optionalColor(data?.child("ColE")), lineLength: curve(data?.child("Len")), lineLengthRandom: curve(data?.child("LenR")),
                 laserWidth: curve(data?.child("Wdt")), laserWidthRandom: curve(data?.child("WdtR")), fresnelType: data?.int("FrsT") ?? 0,
                 windmillUvType: data?.int("WUvT") ?? 0, ringWidth: curve(data?.child("WID")), ringWidthRandom: curve(data?.child("WIDR")),
-                ringFan: data?.float("RF", 1) ?? 1, simple: p.bool("bSCt") ? simple(p.child("Smpl")) : nil, disc: type == 12 ? disc(data) : nil)
+                ringFan: data?.float("RF", 1) ?? 1, simple: p.bool("bSCt") ? simple(p.child("Smpl")) : nil, disc: type == 12 ? disc(data) : nil,
+                polyline: type == 6 ? polyline(data) : nil, softParticle: p.bool("DsSp"))
         }
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
             return RBinder(type: b.int("BnVr"), distance: b.child("Data")?.float("Dst") ?? 0, bindTargetPoint: props?.int("BPTP") ?? 0,
                            bindPointId: props?.int("BPID", -1) ?? -1)
         }
-        return REffectSchema(
+        var result = REffectSchema(
             revisedPosition: Vec3(root.float("RvPx"), root.float("RvPy"), root.float("RvPz")),
             revisedRotation: Vec3(root.float("RvRx"), root.float("RvRy"), root.float("RvRz")),
             revisedScale: Vec3(root.float("RvSx", 1), root.float("RvSy", 1), root.float("RvSz", 1)),
             revisedColor: Vec3(root.float("RvR", 1), root.float("RvG", 1), root.float("RvB", 1)),
             scheduler: scheduler, triggers: Array(triggers), timelines: timelines, emitters: emitters, particles: particles, binders: binders,
             models: root.childrenNamed("Modl"), textureCount: root.childrenNamed("Tex").count)
+        result.effectors = root.childrenNamed("Efct").enumerated().map { index, block in
+            let data = block.child("Data")
+            return REffector(index: index, type: block.int("EfVT"), loopStart: block.int("LpSt"), loopEnd: block.int("LpEd"),
+                             color: color(data?.child("Col")), distance: curve(data?.child("DstS")), attenuation: data?.int("Attn") ?? 0,
+                             position: curve3(data?.child("Pos")))
+        }
+        result.emitterEffectors = root.childrenNamed("Emit").map { $0.int("EfNo", -1) }
+        if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
+        return result
     }
 }

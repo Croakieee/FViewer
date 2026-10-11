@@ -227,4 +227,28 @@ extension EffectDocument {
         }
         return removed
     }
+
+    @discardableResult func mergeEffect(_ other: EffectDocument) throws -> (nodes: Int, timelines: Int) {
+        guard let root = avfxRoot, other.avfxRoot != nil else { throw AvfxError.malformed("Only .avfx effects can be merged") }
+        let timelines = Set(other.exportableNodes.filter { $0.tag == "TmLn" }.map(\.id))
+        guard !timelines.isEmpty else { throw AvfxError.malformed("\(other.title) has no timelines to merge") }
+        let before = root.childrenNamed("TmLn").count
+        undoManager.beginUndoGrouping()
+        defer { undoManager.endUndoGrouping() }
+        let count = try importNodes(other.exportNodes(timelines, withDependencies: true), legacy: false)
+        let after = root.childrenNamed("TmLn").count
+        if let scheduler = root.child("Schd"), after > before {
+            var records = scheduler.ownRecords("Item")
+            let template = records.first ?? defaultRecord("AvfxSchedulerItem")
+            for index in before..<after {
+                let record = template.map { $0.deepCopy() }
+                record.first { $0.tag == "bEna" }?.intValue = 1
+                record.first { $0.tag == "StTm" }?.intValue = 0
+                record.first { $0.tag == "TlNo" }?.intValue = index
+                records.append(record)
+            }
+            performStructural("Merge Effect") { scheduler.setOwnRecords("Item", records) }
+        }
+        return (count, after - before)
+    }
 }

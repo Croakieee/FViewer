@@ -8,6 +8,13 @@ struct CameraState {
     var viewportHeight: Float
 }
 
+struct LightDraw {
+    var position: Vec3
+    var color: Vec3
+    var distance: Float
+    var decay: Float
+}
+
 struct ParticleDraw {
     var particle: Int
     var geometry: RenderGeometry
@@ -28,7 +35,7 @@ struct ParticleDraw {
 }
 
 private enum ParticleKind {
-    static let powder = 1, windmill = 2, line = 3, laser = 4, model = 5, quad = 8, decal = 10, decalRing = 11, disc = 12, lightModel = 13
+    static let powder = 1, windmill = 2, line = 3, laser = 4, model = 5, polyline = 6, quad = 8, decal = 10, decalRing = 11, disc = 12, lightModel = 13
 }
 
 private enum Base {
@@ -175,6 +182,7 @@ final class ParticleInstance {
     let emitter: EmitterInstance
     let geometry: RenderGeometry?
     let cloud: SpriteCloud?
+    var trail: PolylineTrail?
     let seed: RandomSeed
     let emitterSeed: RandomSeed
     var age: Float = 0
@@ -265,6 +273,9 @@ final class AvfxSimulation {
     private var modelGeometry: [Int: RenderGeometry] = [:]
     private var emitPoints: [Int: [EmitPoint]] = [:]
 
+    var seed: UInt64 = 1
+    private(set) var clipLog: [(time: Float, type: String)] = []
+
     init(schema: REffectSchema) {
         self.schema = schema
     }
@@ -279,7 +290,8 @@ final class AvfxSimulation {
         killed = false
         time = 0
         sequence = 0
-        random = SeededRandom(seed: 1)
+        random = SeededRandom(seed: seed)
+        clipLog = []
     }
 
     func release() { released = true }
@@ -299,7 +311,9 @@ final class AvfxSimulation {
         step(frames)
         if pendingRestart {
             pendingRestart = false
+            let kept = Array(clipLog.suffix(200))
             restart()
+            clipLog = kept
         }
     }
 
@@ -325,6 +339,7 @@ final class AvfxSimulation {
     }
 
     private func runClip(_ clip: RClip) {
+        clipLog.append((time, clip.type))
         switch clip.type {
         case "ULLP": release()
         case "END ":
@@ -610,7 +625,8 @@ final class AvfxSimulation {
     }
 
     private func spawnParticle(_ ps: RParticle, _ item: REmitterItem, _ e: EmitterInstance, copyIndex: Int) -> ParticleInstance {
-        let shape = geometry(for: ps)
+        let trail = ps.type == ParticleKind.polyline ? ps.polyline.map { PolylineTrail($0) } : nil
+        let shape = trail?.geometry ?? geometry(for: ps)
         var cloud: SpriteCloud?
         if shape != nil, let simple = ps.simple, ps.type == ParticleKind.powder || ps.type == ParticleKind.line {
             cloud = SpriteCloud(anim: simple, points: simple.injectionPosition == 1 ? points(for: simple.injectionModel) : [],
@@ -619,6 +635,7 @@ final class AvfxSimulation {
         sequence += 1
         let p = ParticleInstance(schema: ps, item: item, emitter: e, geometry: shape, cloud: cloud, sequence: sequence, random: &random)
         p.copyIndex = copyIndex
+        p.trail = trail
         let point = e.nextPoint(&random)
         p.localFlight = p.withOptions && item.inheritPosition && item.influenceCoord != Influence.withOptionsNoPosition && point != nil
         if let point {
@@ -693,6 +710,30 @@ final class AvfxSimulation {
         case .timeline(let index): return chain.contains { $0.timeline == index }
         case nil: return true
         }
+    }
+
+    func lights(filter: VisibilityFilter = VisibilityFilter()) -> [LightDraw] {
+        var result: [LightDraw] = []
+        for e in emitters where e.schema.index < schema.emitterEffectors.count {
+            let index = schema.emitterEffectors[e.schema.index]
+            guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 0 else { continue }
+            if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
+            let effector = schema.effectors[index]
+            var age = e.age
+            if !released, effector.loopEnd > effector.loopStart, effector.loopStart >= 0, age >= Float(effector.loopEnd) {
+                let span = Float(effector.loopEnd - effector.loopStart)
+                age = Float(effector.loopStart) + (age - Float(effector.loopStart)).truncatingRemainder(dividingBy: span)
+            }
+            let t = CurveTime(age)
+            let color = Eval.color(effector.color, t, e.seed)
+            let peak = max(color.x, color.y, color.z, 1e-6)
+            let strength = peak * max(0, color.w) * fade
+            guard strength > 0 else { continue }
+            result.append(LightDraw(position: Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1)),
+                                    color: Vec3(color.x, color.y, color.z) / peak * strength, distance: Eval.curve(effector.distance, t, 0),
+                                    decay: Float(effector.attenuation + 1)))
+        }
+        return result
     }
 
     func emitterMarkers() -> [(index: Int, world: Mat4, points: [Vec3])] {
@@ -808,6 +849,25 @@ final class AvfxSimulation {
                 } else {
                     continue
                 }
+            }
+
+            if let trail = p.trail, let line = s.polyline {
+                if line.createType == 1 {
+                    trail.historyFrames = Float(line.pointCount) / 2
+                    trail.record(p.totalAge, Math3D.position(m))
+                } else {
+                    let length = Eval.curve(line.length, t, 1)
+                    let count = max(2, line.pointCount)
+                    trail.setPoints((0..<count).map { Math3D.point(m, Vec3(0, length * Float($0) / Float(count - 1), 0)) })
+                }
+                guard trail.drawable else { continue }
+                func tint(_ c: RColor?) -> Vec4 { c.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1) }
+                trail.build(camera: camera.position, width: Eval.curve(line.width, t, 1), begin: Eval.curve(line.widthBegin, t, 1),
+                            center: Eval.curve(line.widthCenter, t, 1), end: Eval.curve(line.widthEnd, t, 1),
+                            colors: PolylineColors(begin: tint(line.colorBegin), center: tint(line.colorCenter), end: tint(line.colorEnd),
+                                                   edgeBegin: tint(line.colorEdgeBegin), edgeCenter: tint(line.colorEdgeCenter),
+                                                   edgeEnd: tint(line.colorEdgeEnd)))
+                m = matrix_identity_float4x4
             }
 
             var color = Eval.color(s.color, t, p.seed)

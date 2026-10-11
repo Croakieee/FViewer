@@ -298,4 +298,101 @@ extension AppModel {
         try? FileManager.default.removeItem(at: url)
         objectWillChange.send()
     }
+
+    func repeatTimelineItems(_ timeline: AvfxBlock, in document: EffectDocument?) {
+        guard let document else { return }
+        let span = document.timelineSpan(timeline)
+        let alert = NSAlert()
+        alert.messageText = "Repeat Timeline Items"
+        let copies = NSTextField(frame: NSRect(x: 70, y: 30, width: 90, height: 22))
+        copies.stringValue = "1"
+        let period = NSTextField(frame: NSRect(x: 70, y: 0, width: 90, height: 22))
+        period.stringValue = "\(max(span, 1))"
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 170, height: 54))
+        for (text, y) in [("Copies", 32.0), ("Every", 2.0)] {
+            let label = NSTextField(labelWithString: text)
+            label.frame = NSRect(x: 0, y: y, width: 64, height: 18)
+            label.alignment = .right
+            box.addSubview(label)
+        }
+        box.addSubview(copies)
+        box.addSubview(period)
+        alert.accessoryView = box
+        alert.addButton(withTitle: "Repeat")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = copies
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let added = document.repeatItems(timeline, copies: min(max(copies.integerValue, 0), 64), period: max(period.integerValue, 0))
+        notice = added == 0 ? "Nothing to repeat" : "Added \(added) timeline item\(added == 1 ? "" : "s")"
+    }
+
+    @discardableResult func exportAllTextures(of document: EffectDocument, into folder: URL) -> (written: Int, missing: [String]) {
+        var written = 0
+        var missing: [String] = []
+        var seen: Set<String> = []
+        for slot in document.textureSlots where seen.insert(slot.path).inserted {
+            guard let data = pngData(for: slot.path) else {
+                missing.append(slot.path)
+                continue
+            }
+            let name = ((slot.path as NSString).lastPathComponent as NSString).deletingPathExtension
+            do {
+                try data.write(to: freeURL(folder, name.isEmpty ? "texture" : name, "png"), options: .atomic)
+                written += 1
+            } catch {
+                missing.append(slot.path)
+            }
+        }
+        return (written, missing)
+    }
+
+    func exportAllTextures() {
+        guard let document, let folder = chooseFolder("Export All Textures as PNG") else { return }
+        let result = exportAllTextures(of: document, into: folder)
+        notice = "Exported \(result.written) texture\(result.written == 1 ? "" : "s") as PNG" + (result.missing.isEmpty ? "" : " · \(result.missing.count) skipped")
+    }
+
+    func openDropped(_ urls: [URL]) -> Bool {
+        var handled = false
+        for url in urls {
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) else { continue }
+            let ext = url.pathExtension.lowercased()
+            if isFolder.boolValue {
+                setLibrary(url)
+                handled = true
+            } else if ext == "avfx" || ext == "json" {
+                open(url)
+                handled = true
+            } else if ext == "vfxedit" || ext == "vfxedit2" {
+                importFromNodeLibrary(url)
+                handled = true
+            } else if ext == "tmb" || ext == "pap" {
+                if let data = try? Data(contentsOf: url) { listEffects(of: data, title: url.lastPathComponent) }
+                handled = true
+            } else if ext == "fvworkspace", libraryRoot != nil {
+                openWorkspace(url)
+                handled = true
+            }
+        }
+        return handled
+    }
+
+    func mergeEffectPanel() {
+        guard let document, document.format == .avfx else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Merge Effect"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Merge"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let result = try document.mergeEffect(try EffectDocument(url: url))
+            notice = "Merged \(url.lastPathComponent): \(result.nodes) node\(result.nodes == 1 ? "" : "s"), \(result.timelines) timeline\(result.timelines == 1 ? "" : "s") scheduled"
+        } catch {
+            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
 }

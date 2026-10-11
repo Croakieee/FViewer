@@ -21,6 +21,7 @@ final class AppModel: ObservableObject {
     @Published var effectShading = 0
     @Published var showEmitters = false
     @Published var showBindPoints = true
+    @Published var showFloor = false
     @Published var viewportBackground = 0
     @Published var highlightSelection = true
     @Published var gameRoot: URL?
