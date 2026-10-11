@@ -74,7 +74,12 @@ struct FieldControl: View {
                             document.commit(field, from: .double(old), to: .double(new))
                         })
         case .bool:
-            CheckBox(isOn: value == .bool(true), label: label ?? "") { document.commit(field, from: value, to: .bool($0)) }
+            let unset: Bool = { if case .int = value { return true }; return false }()
+            CheckBox(isOn: value == .bool(true), label: label ?? "", mixed: unset) { _ in
+                let next: FieldValue = unset ? .bool(true) : value == .bool(true) ? .bool(false) : field.triState ? .int(255) : .bool(true)
+                document.commit(field, from: value, to: next)
+            }
+            .help(unset ? "Not set in the file. Click cycles: not set → on → off" : field.triState ? "Click cycles: on → off → not set" : "")
         case .choice(let choices):
             ChoiceField(choices: choices, value: Int(value.number)) { document.commit(field, from: value, to: .int($0)) }
         case .text:
@@ -99,7 +104,33 @@ struct FieldControl: View {
 struct FieldRows: View {
     @ObservedObject var document: EffectDocument
     let fields: [PropField]
+    var nodeID = ""
     @Environment(\.labelWidth) private var labelWidth
+
+    private func changed(_ field: PropField) -> Bool { !nodeID.isEmpty && document.isChanged(field, in: nodeID) }
+
+    @ViewBuilder private func resetMenu(_ field: PropField) -> some View {
+        if changed(field), let before = document.originalValue(of: field, in: nodeID) {
+            Button("Reset to Original (\(document.describe(before)))") { document.commit(field, from: field.read(), to: before) }
+        }
+        if let unassign = field.unassign { Button("Remove from File", role: .destructive, action: unassign) }
+    }
+
+    private func label(_ text: String, _ field: PropField?) -> some View {
+        let isChanged = field.map(changed) ?? false
+        let before = isChanged ? field.flatMap { document.originalValue(of: $0, in: nodeID) } : nil
+        var help = field.map { "\($0.label) [\($0.tag)]" } ?? text
+        if isChanged { help += " · was " + (before.map(document.describe) ?? "not in the file") }
+        return HStack(spacing: 4) {
+            Spacer(minLength: 0)
+            if isChanged { ChangeDot(added: before == nil) }
+            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : Theme.text).lineLimit(1)
+        }
+        .frame(width: labelWidth, height: 20)
+        .help(help)
+        .contentShape(Rectangle())
+        .contextMenu { if let field { resetMenu(field) } }
+    }
 
     var body: some View {
         ForEach(FieldRowItem.group(fields)) { item in
@@ -107,15 +138,10 @@ struct FieldRows: View {
             case .single(let field):
                 HStack(spacing: 8) {
                     if case .bool = field.kind {
-                        Color.clear.frame(width: labelWidth, height: 1)
+                        label("", field)
                         FieldControl(document: document, field: field, label: field.label)
                     } else {
-                        Text(field.label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
-                            .frame(width: labelWidth, alignment: .trailing).help("\(field.label) [\(field.tag)]")
-                            .contentShape(Rectangle())
-                            .contextMenu {
-                                if let unassign = field.unassign { Button("Remove Field from File", role: .destructive, action: unassign) }
-                            }
+                        label(field.label, field)
                         FieldControl(document: document, field: field)
                     }
                     if let animate = field.animate {
@@ -126,12 +152,16 @@ struct FieldRows: View {
                 }
             case .vector(let prefix, let parts):
                 HStack(alignment: .top, spacing: 8) {
-                    Text(prefix).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
-                        .frame(width: labelWidth, height: 20, alignment: .trailing)
+                    label(prefix, nil)
                     VStack(spacing: 1) {
                         ForEach(Array(parts.enumerated()), id: \.element.id) { index, field in
-                            FieldControl(document: document, field: field, label: String(field.label.suffix(1)), roundTop: index == 0,
-                                         roundBottom: index == parts.count - 1)
+                            HStack(spacing: 4) {
+                                FieldControl(document: document, field: field, label: String(field.label.suffix(1)), roundTop: index == 0,
+                                             roundBottom: index == parts.count - 1)
+                                if changed(field) {
+                                    ChangeDot().frame(width: 10, height: 20).contentShape(Rectangle()).contextMenu { resetMenu(field) }
+                                }
+                            }
                         }
                     }
                 }
@@ -271,7 +301,7 @@ struct InspectorView: View {
             }
             ForEach(sections) { section in
                 Panel(title: section.title, trailing: "\(section.fields.count)") {
-                    FieldRows(document: document, fields: section.fields)
+                    FieldRows(document: document, fields: section.fields, nodeID: node.id)
                 }
             }
             if !missingFields.isEmpty {
@@ -312,6 +342,11 @@ struct InspectorView: View {
         .menuIndicator(.hidden)
     }
 
+    private func curveChanged(_ group: CurveGroup) -> Bool {
+        guard let id = document.selectionID, document.changes.contains(id) else { return false }
+        return group.channels.contains { channel in document.originalKeys(group: group.id, channel: channel.id, in: id) != channel.read() }
+    }
+
     private func curveRow(_ group: CurveGroup) -> some View {
         let active = document.activeCurveID == group.id
         let keyCount = group.channels.map { $0.read().count }.max() ?? 0
@@ -322,7 +357,8 @@ struct InspectorView: View {
                 }
             }
             .frame(width: 18, alignment: .leading)
-            Text(group.title).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
+            Text(group.title).font(Theme.font).foregroundStyle(curveChanged(group) ? Theme.changed : Theme.text).lineLimit(1)
+            if curveChanged(group) { ChangeDot() }
             Spacer(minLength: 4)
             Text("\(keyCount) keys").font(Theme.small).foregroundStyle(Theme.dim)
             if let remove = group.remove {

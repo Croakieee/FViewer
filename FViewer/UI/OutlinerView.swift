@@ -83,6 +83,7 @@ struct OutlinerView: View {
 
     private func rowView(_ row: FlatRow, striped: Bool) -> some View {
         let node = row.node
+        let changes = document.changes
         let selected = document.selectionID == node.id
         return HStack(spacing: 4) {
             Color.clear.frame(width: CGFloat(row.depth) * 14)
@@ -102,6 +103,7 @@ struct OutlinerView: View {
             .frame(width: 10)
             Image(systemName: node.symbol).font(.system(size: 10)).foregroundStyle(node.tint.color).frame(width: 16)
             Text(node.title).font(Theme.font).foregroundStyle(selected ? .white : Theme.text).lineLimit(1)
+            if changes.contains(node.id) { ChangeDot(added: changes.added.contains(node.id)) }
             Spacer(minLength: 4)
             Text(node.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
             if let key = node.visibility {

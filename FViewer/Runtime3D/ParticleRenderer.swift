@@ -241,8 +241,14 @@ final class ParticleRenderer {
         encoder.setTriangleFillMode(.fill)
     }
 
+    func drawHighlight(_ encoder: MTLRenderCommandEncoder, draws: [ParticleDraw], particles: [RParticle], view: Mat4, projection: Mat4, camera: Vec3,
+                       color: Vec4) {
+        drawPass(encoder, draws: draws, particles: particles, view: view, projection: projection, camera: camera, wire: true, wireColor: color)
+        encoder.setTriangleFillMode(.fill)
+    }
+
     private func drawPass(_ encoder: MTLRenderCommandEncoder, draws: [ParticleDraw], particles: [RParticle], view: Mat4, projection: Mat4,
-                          camera: Vec3, wire: Bool) {
+                          camera: Vec3, wire: Bool, wireColor: Vec4? = nil) {
         frameIndex += 1
         encoder.setFrontFacing(.counterClockwise)
         encoder.setTriangleFillMode(wire ? .lines : .fill)
@@ -272,7 +278,7 @@ final class ParticleRenderer {
             u.misc.z = draw.paletteOffset
             u.cameraPosition = Vec4(camera.x, camera.y, camera.z, 1)
             if wire {
-                u.debugColor = ParticleRenderer.debugColor(draw.particle)
+                u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle)
                 u.misc.w = 0
                 encoder.setRenderPipelineState(pipelines[0])
                 encoder.setDepthStencilState(depthStates[0])

@@ -11,7 +11,7 @@ extension EffectDocument {
 
     static let addableKinds: [(tag: String, title: String, template: String)] = [
         ("TmLn", "Timeline", "timeline"), ("Emit", "Emitter", "emitter"), ("Ptcl", "Particle", "particle"), ("Efct", "Effector", "effector"),
-        ("Bind", "Binder", "binder"), ("Tex", "Texture", ""),
+        ("Bind", "Binder", "binder"), ("Tex", "Texture", ""), ("Modl", "Model", ""),
     ]
 
     func addTopLevel(_ tag: String) {
@@ -19,15 +19,22 @@ extension EffectDocument {
         let block: AvfxBlock?
         if tag == "Tex" {
             block = AvfxBlock(tag: "Tex", data: Array("vfx/common/texture/new_texture.atex".utf8) + [0])
+        } else if tag == "Modl" {
+            block = AvfxBlock(tag: "Modl", children: [])
         } else {
             block = AvfxBlock.template(kind.template)
         }
         guard let block else { return }
-        performStructural("Add " + kind.title) { root.insertTopLevel(block) }
+        performStructural("Add " + kind.title) {
+            root.insertTopLevel(block)
+            for reference in EffectDocument.nodeReferences(block) where reference.get() >= root.childrenNamed(reference.target).count {
+                reference.set(-1)
+            }
+        }
         selectionID = "avfx/\(tag)/\(root.childrenNamed(tag).count - 1)"
     }
 
-    private static let references: [String: [(owner: String, list: String?, part: String?, field: String)]] = [
+    static let referenceTable: [String: [(owner: String, list: String?, part: String?, field: String)]] = [
         "Emit": [("TmLn", "Item", nil, "EmNo"), ("Emit", "ItEm", nil, "TgtB")],
         "Ptcl": [("Emit", "ItPr", nil, "TgtB")],
         "TmLn": [("Schd", "Item", nil, "TlNo"), ("Schd", "Trgr", nil, "TlNo")],
@@ -38,8 +45,8 @@ extension EffectDocument {
         "Modl": [("Emit", nil, "Data", "MdNo"), ("Ptcl", nil, "Data", "MNO"), ("Ptcl", nil, "Smpl", "IJMN"), ("Ptcl", nil, "Smpl", "VBMN")],
     ]
 
-    private func remapReferences(_ root: AvfxBlock, tag: String, removed: Int) {
-        for reference in EffectDocument.references[tag] ?? [] {
+    func remapReferences(_ root: AvfxBlock, tag: String, removed: Int) {
+        for reference in EffectDocument.referenceTable[tag] ?? [] {
             for owner in root.childrenNamed(reference.owner) {
                 if let list = reference.list {
                     for record in owner.ownRecords(list) {
@@ -111,6 +118,72 @@ extension EffectDocument {
             let list = particle.children ?? []
             let position = (list.lastIndex { $0.tag == "UvSt" }).map { $0 + 1 } ?? list.firstIndex { $0.tag == "Data" } ?? list.count
             particle.insert(set, at: position)
+        }
+    }
+
+    func dataBlock(forClass cls: String) -> AvfxBlock? {
+        guard let fields = catalog.classes[cls] else { return nil }
+        var children: [AvfxBlock] = []
+        for field in fields {
+            let reference = ["MdNo", "MNO", "IJMN", "VBMN", "TxNo"].contains(field.tag)
+            switch field.baseType {
+            case "AvfxInt", "AvfxBool", "AvfxEnum", "AvfxFlag": children.append(AvfxBlock.leaf(field.tag, int: reference ? -1 : 0))
+            case "AvfxFloat", "AvfxRadians": children.append(AvfxBlock.leaf(field.tag, float: 0))
+            case "AvfxIntList": children.append(AvfxBlock(tag: field.tag, data: [255]))
+            default: break
+            }
+        }
+        return AvfxBlock(tag: "Data", children: children)
+    }
+
+    func applyType(_ typeField: AvfxBlock, ownerClass: String?, value: Int) {
+        guard let owner = typeField.parent, let ownerClass, let info = AvfxCatalog.dataTypes[ownerClass] else {
+            typeField.intValue = value
+            return
+        }
+        guard typeField.intValue != value else { return }
+        typeField.intValue = value
+        var list = owner.children ?? []
+        var position = list.firstIndex { $0.tag == "Data" }
+        list.removeAll { $0.tag == "Data" }
+        owner.children = list
+        let name = catalog.enumCaseName(info.enumName, value)?.replacingOccurrences(of: "_Variable", with: "") ?? ""
+        guard let data = dataBlock(forClass: info.prefix + name) else { return }
+        if position == nil, owner.tag == "Ptcl" {
+            position = (list.lastIndex { $0.tag == "UvSt" }).map { $0 + 1 } ?? list.firstIndex { ["TC1", "TC2", "TC3", "TC4", "TD", "TN", "TR", "TP"].contains($0.tag) }
+        }
+        owner.insert(data, at: position ?? list.count)
+    }
+
+    func applyMesh(_ mesh: GltfMesh, to model: AvfxBlock, emitPoints: Bool) throws {
+        guard !mesh.positions.isEmpty else { throw AvfxError.malformed("The file has no vertices") }
+        guard mesh.positions.count <= 65535 else {
+            throw AvfxError.malformed("\(mesh.positions.count) vertices: an effect model can hold at most 65535")
+        }
+        let order = ["VNum", "VEmt", "VDrw", "VIdx"]
+        func set(_ tag: String, _ data: [UInt8]) {
+            if let existing = model.child(tag) {
+                existing.data = data
+                return
+            }
+            let list = model.children ?? []
+            let rank = order.firstIndex(of: tag) ?? order.count
+            let position = list.firstIndex { (order.firstIndex(of: $0.tag) ?? -1) > rank } ?? list.count
+            model.insert(AvfxBlock(tag: tag, data: data), at: position)
+        }
+        if emitPoints {
+            let data = Gltf.emitData(mesh)
+            performStructural("Import Emit Points") {
+                set("VNum", data.order)
+                set("VEmt", data.points)
+            }
+        } else {
+            guard mesh.indices.count >= 3 else { throw AvfxError.malformed("The file has no triangles") }
+            let data = Gltf.vertexData(mesh)
+            performStructural("Import Model") {
+                set("VDrw", data.vertices)
+                set("VIdx", data.indices)
+            }
         }
     }
 
@@ -239,8 +312,37 @@ extension EffectDocument {
             }
             actions.append(NodeAction(id: node.id + "!del", title: "Delete", symbol: "trash", destructive: true) { [weak self] in self?.deleteTopLevel(block) })
         }
+        if parent === avfxRoot, EffectDocument.exchangeTags.contains(block.tag) {
+            actions.append(NodeAction(id: node.id + "!export", title: "Export…", symbol: "square.and.arrow.up") { [weak self] in
+                self?.exportRequest = [node.id]
+            })
+        }
+        if block.tag == "Modl" {
+            actions.insert(NodeAction(id: node.id + "!gltfout", title: "Export glTF…", symbol: "square.and.arrow.up") {
+                AppDelegate.model?.exportModel(block, name: node.title.replacingOccurrences(of: " ", with: "_"))
+            }, at: 0)
+            actions.insert(NodeAction(id: node.id + "!emitin", title: "Import Emit Points…", symbol: "dot.squareshape") {
+                AppDelegate.model?.importModel(block, emitPoints: true)
+            }, at: 0)
+            actions.insert(NodeAction(id: node.id + "!gltfin", title: "Import glTF…", symbol: "square.and.arrow.down") {
+                AppDelegate.model?.importModel(block, emitPoints: false)
+            }, at: 0)
+        }
+        if block.tag == "Tex", block.children == nil {
+            actions.insert(NodeAction(id: node.id + "!png", title: "Export PNG…", symbol: "photo") { AppDelegate.model?.exportTexture(block.stringValue) }, at: 0)
+            actions.insert(NodeAction(id: node.id + "!replace", title: "Replace Image…", symbol: "arrow.triangle.2.circlepath") {
+                AppDelegate.model?.replaceTexture(block)
+            }, at: 0)
+        }
         if block.tag == "Ptcl" {
             actions.insert(NodeAction(id: node.id + "!uv", title: "Add UV Set", symbol: "square.grid.2x2") { [weak self] in self?.addUvSet(block) }, at: 0)
+        }
+        for child in block.children ?? [] {
+            guard let target = EffectDocument.indexListTarget(child, cls: cls), child.data.count < 255 else { continue }
+            let title = target == "Tex" ? "Add Mask Texture" : "Add Model Slot"
+            actions.append(NodeAction(id: node.id + "!list" + child.tag, title: title, symbol: "plus") { [weak self] in
+                self?.performStructural(title) { child.data.append(255) }
+            })
         }
         if block.tag == "TmLn" {
             actions.insert(NodeAction(id: node.id + "!clip", title: "Add Clip", symbol: "scissors") { [weak self] in self?.addClip(block) }, at: 0)

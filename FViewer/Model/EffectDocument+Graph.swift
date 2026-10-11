@@ -21,6 +21,8 @@ struct GraphEdge: Identifiable {
     var label = ""
     var dashed = false
     var remove: (() -> Void)?
+    var accepts: [String] = []
+    var retarget: ((Int, String) -> Void)?
 }
 
 struct EffectGraph {
@@ -71,16 +73,22 @@ extension EffectDocument {
             for (i, record) in scheduler.ownRecords("Item").enumerated() {
                 let target = record.first { $0.tag == "TlNo" }?.intValue ?? -1
                 guard target >= 0, target < timelines.count else { continue }
-                graph.edges.append(GraphEdge(id: "\(id)>item\(i)", from: id, to: "avfx/TmLn/\(target)",
-                                             label: "frame \(record.first { $0.tag == "StTm" }?.intValue ?? 0)") { [weak self] in
+                var edge = GraphEdge(id: "\(id)>item\(i)", from: id, to: "avfx/TmLn/\(target)",
+                                     label: "frame \(record.first { $0.tag == "StTm" }?.intValue ?? 0)") { [weak self] in
                     self?.changeRecords(scheduler, list: "Item", title: "Remove Link") { if i < $0.count { $0.remove(at: i) } }
-                })
+                }
+                edge.accepts = ["avfx/TmLn/"]
+                edge.retarget = recordRetarget(scheduler, "Item", i, "TlNo")
+                graph.edges.append(edge)
             }
             var seen: Set<Int> = []
             for (i, record) in scheduler.ownRecords("Trgr").enumerated() {
                 let target = record.first { $0.tag == "TlNo" }?.intValue ?? -1
                 guard target >= 0, target < timelines.count, seen.insert(target).inserted else { continue }
-                graph.edges.append(GraphEdge(id: "\(id)>trigger\(i)", from: id, to: "avfx/TmLn/\(target)", label: "trigger \(i)", dashed: true))
+                var edge = GraphEdge(id: "\(id)>trigger\(i)", from: id, to: "avfx/TmLn/\(target)", label: "trigger \(i)", dashed: true)
+                edge.accepts = ["avfx/TmLn/"]
+                edge.retarget = recordRetarget(scheduler, "Trgr", i, "TlNo")
+                graph.edges.append(edge)
             }
         }
         for (t, timeline) in timelines.enumerated() {
@@ -93,13 +101,16 @@ extension EffectDocument {
                 guard target >= 0, target < emitters.count else { continue }
                 let start = record.first { $0.tag == "StTm" }?.intValue ?? 0
                 let end = record.first { $0.tag == "EdTm" }?.intValue ?? 0
-                graph.edges.append(GraphEdge(id: "\(id)>item\(i)", from: id, to: "avfx/Emit/\(target)", label: "\(start)–\(end)") { [weak self] in
+                var edge = GraphEdge(id: "\(id)>item\(i)", from: id, to: "avfx/Emit/\(target)", label: "\(start)–\(end)") { [weak self] in
                     self?.changeRecords(timeline, list: "Item", title: "Remove Link") { if i < $0.count { $0.remove(at: i) } }
-                })
+                }
+                edge.accepts = ["avfx/Emit/"]
+                edge.retarget = recordRetarget(timeline, "Item", i, "EmNo")
+                graph.edges.append(edge)
             }
             let binder = timeline.int("BnNo", -1)
             if binder >= 0, binder < root.childrenNamed("Bind").count {
-                graph.edges.append(GraphEdge(id: "\(id)>binder", from: id, to: "avfx/Bind/\(binder)", dashed: true))
+                graph.edges.append(fieldEdge(id: "\(id)>binder", from: id, to: "avfx/Bind/\(binder)", label: "", field: timeline.child("BnNo"), accepts: "avfx/Bind/"))
             }
         }
         for (e, emitter) in emitters.enumerated() {
@@ -114,24 +125,31 @@ extension EffectDocument {
                 let target = record.first { $0.tag == "TgtB" }?.intValue ?? -1
                 guard target >= 0, target < particles.count else { continue }
                 let count = record.first { $0.tag == "CrCn" }?.intValue ?? 1
-                graph.edges.append(GraphEdge(id: "\(id)>particle\(i)", from: id, to: "avfx/Ptcl/\(target)", label: count > 1 ? "×\(count)" : "") { [weak self] in
+                var edge = GraphEdge(id: "\(id)>particle\(i)", from: id, to: "avfx/Ptcl/\(target)", label: count > 1 ? "×\(count)" : "") { [weak self] in
                     self?.changeRecords(emitter, list: "ItPr", title: "Remove Link") { if i < $0.count { $0.remove(at: i) } }
-                })
+                }
+                edge.accepts = ["avfx/Ptcl/"]
+                edge.retarget = recordRetarget(emitter, "ItPr", i, "TgtB")
+                graph.edges.append(edge)
             }
             for (i, record) in emitterRecords.enumerated() {
                 let target = record.first { $0.tag == "TgtB" }?.intValue ?? -1
                 guard target >= 0, target < emitters.count else { continue }
                 let count = record.first { $0.tag == "CrCn" }?.intValue ?? 1
-                graph.edges.append(GraphEdge(id: "\(id)>emitter\(i)", from: id, to: "avfx/Emit/\(target)", label: count > 1 ? "×\(count)" : "") { [weak self] in
+                var edge = GraphEdge(id: "\(id)>emitter\(i)", from: id, to: "avfx/Emit/\(target)", label: count > 1 ? "×\(count)" : "") { [weak self] in
                     self?.changeRecords(emitter, list: "ItEm", title: "Remove Link") { if i < $0.count { $0.remove(at: i) } }
-                })
+                }
+                edge.accepts = ["avfx/Emit/"]
+                edge.retarget = recordRetarget(emitter, "ItEm", i, "TgtB")
+                graph.edges.append(edge)
             }
             let effector = emitter.int("EfNo", -1)
             if effector >= 0, effector < root.childrenNamed("Efct").count {
-                graph.edges.append(GraphEdge(id: "\(id)>effector", from: id, to: "avfx/Efct/\(effector)", dashed: true))
+                graph.edges.append(fieldEdge(id: "\(id)>effector", from: id, to: "avfx/Efct/\(effector)", label: "", field: emitter.child("EfNo"), accepts: "avfx/Efct/"))
             }
             if emitter.int("EVT") == 5, let model = emitter.child("Data")?.int("MdNo", -1), model >= 0 {
-                graph.edges.append(GraphEdge(id: "\(id)>model", from: id, to: "avfx/Modl/\(model)", label: "emit points", dashed: true))
+                graph.edges.append(fieldEdge(id: "\(id)>model", from: id, to: "avfx/Modl/\(model)", label: "emit points", field: emitter.child("Data")?.child("MdNo"),
+                                             accepts: "avfx/Modl/"))
             }
         }
         let texturePaths = root.childrenNamed("Tex").map(\.stringValue)
@@ -146,15 +164,23 @@ extension EffectDocument {
                 guard let block = particle.child(layer), block.int("bEna") != 0, let index = block.child("TxNo") else { continue }
                 let texture = index.intValue
                 guard texture >= 0, texture < texturePaths.count else { continue }
-                graph.edges.append(GraphEdge(id: "\(id)>\(layer)", from: id, to: "avfx/Tex/\(texture)", label: layer) { [weak self] in
-                    self?.performStructural("Remove Link") { index.intValue = -1 }
-                })
+                var edge = fieldEdge(id: "\(id)>\(layer)", from: id, to: "avfx/Tex/\(texture)", label: layer, field: index, accepts: "avfx/Tex/")
+                edge.dashed = false
+                graph.edges.append(edge)
             }
             if let data = particle.child("Data") {
                 var model = data.int("MNO", -1)
                 if let list = data.child("MdNo"), let first = list.data.first { model = first == 255 ? -1 : Int(first) }
                 if model >= 0, [5, 13].contains(particle.int("PrVT")) {
-                    graph.edges.append(GraphEdge(id: "\(id)>model", from: id, to: "avfx/Modl/\(model)", label: "mesh", dashed: true))
+                    var edge = GraphEdge(id: "\(id)>model", from: id, to: "avfx/Modl/\(model)", label: "mesh", dashed: true)
+                    edge.accepts = ["avfx/Modl/"]
+                    edge.retarget = { [weak self] target, _ in
+                        self?.performStructural("Relink Model") {
+                            if let list = data.child("MdNo"), list.children == nil, !list.data.isEmpty { list.data[0] = UInt8(truncatingIfNeeded: target) }
+                            data.child("MNO")?.intValue = target
+                        }
+                    }
+                    graph.edges.append(edge)
                 }
             }
         }
@@ -178,6 +204,26 @@ extension EffectDocument {
                                          tint: .effector, symbol: "lightbulb", column: particleColumn, hasOutput: false))
         }
         return graph
+    }
+
+    private func recordRetarget(_ owner: AvfxBlock, _ list: String, _ index: Int, _ field: String) -> (Int, String) -> Void {
+        { [weak self] target, _ in
+            self?.changeRecords(owner, list: list, title: "Relink") { records in
+                guard index < records.count else { return }
+                let copy = records[index].map { $0.deepCopy() }
+                copy.first { $0.tag == field }?.intValue = target
+                records[index] = copy
+            }
+        }
+    }
+
+    private func fieldEdge(id: String, from: String, to: String, label: String, field: AvfxBlock?, accepts: String) -> GraphEdge {
+        var edge = GraphEdge(id: id, from: from, to: to, label: label, dashed: true)
+        guard let field, field.children == nil, field.data.count >= 4 else { return edge }
+        edge.remove = { [weak self] in self?.performStructural("Remove Link") { field.intValue = -1 } }
+        edge.accepts = [accepts]
+        edge.retarget = { [weak self] target, _ in self?.performStructural("Relink") { field.intValue = target } }
+        return edge
     }
 
     private func pixiGraph(_ root: JSONNode) -> EffectGraph {
@@ -222,8 +268,14 @@ extension EffectDocument {
             graph.nodes.append(GraphNode(id: id, title: "Timeline \(t)", lines: lines, tint: .timeline, symbol: "film", column: 0, visibility: .timeline(t)))
             for (i, item) in items.enumerated() {
                 guard let target = item["emitter"]?.string.flatMap({ emitterIndex[$0] }) else { continue }
-                graph.edges.append(GraphEdge(id: "\(id)>\(i)", from: id, to: "json/emitters/\(target)",
-                                             label: item["start"]?.number.map { "frame " + JSONNode.format($0) } ?? "", remove: removal(timeline["items"], i)))
+                var edge = GraphEdge(id: "\(id)>\(i)", from: id, to: "json/emitters/\(target)",
+                                     label: item["start"]?.number.map { "frame " + JSONNode.format($0) } ?? "", remove: removal(timeline["items"], i))
+                edge.accepts = ["json/emitters/"]
+                edge.retarget = { [weak self] index, _ in
+                    guard index < emitters.count, let name = emitters[index]["id"]?.string else { return }
+                    self?.performStructural("Relink") { item.set("emitter", JSONNode(.string(name))) }
+                }
+                graph.edges.append(edge)
             }
         }
         for (e, emitter) in emitters.enumerated() {
@@ -239,7 +291,15 @@ extension EffectDocument {
                 if let name = item["particle"]?.string, let index = particleIndex[name] { target = "json/particles/\(index)" }
                 guard let target else { continue }
                 let label = item["repeat"]?.bool == true ? "every " + JSONNode.format(item["interval"]?.number ?? 1) : ""
-                graph.edges.append(GraphEdge(id: "\(id)>\(i)", from: id, to: target, label: label, remove: removal(emitter["items"], i)))
+                var edge = GraphEdge(id: "\(id)>\(i)", from: id, to: target, label: label, remove: removal(emitter["items"], i))
+                let key = item["emitter"] != nil ? "emitter" : "particle"
+                edge.accepts = [key == "emitter" ? "json/emitters/" : "json/particles/"]
+                edge.retarget = { [weak self] index, _ in
+                    let list = key == "emitter" ? emitters : particles
+                    guard index < list.count, let name = list[index]["id"]?.string else { return }
+                    self?.performStructural("Relink") { item.set(key, JSONNode(.string(name))) }
+                }
+                graph.edges.append(edge)
             }
         }
         var textures: [String] = []
@@ -250,15 +310,21 @@ extension EffectDocument {
             graph.nodes.append(GraphNode(id: id, title: particle["id"]?.string ?? "Particle \(p)",
                                          lines: [shape + " · " + (particle["blend"]?.string ?? "normal"), life.map { "Life " + JSONNode.format($0) } ?? "Life —"],
                                          tint: .particle, symbol: "circle.hexagongrid", column: particleColumn, visibility: .particle(p)))
-            var used: [(String, String)] = []
-            if let texture = particle["texture"]?.string { used.append((texture, "base")) }
+            var used: [(String, String, JSONNode)] = []
+            if let texture = particle["texture"]?.string { used.append((texture, "base", particle)) }
             for (i, layer) in (particle["layers"]?.elements ?? []).enumerated() {
-                if let texture = layer["texture"]?.string { used.append((texture, "layer \(i + 1)")) }
+                if let texture = layer["texture"]?.string { used.append((texture, "layer \(i + 1)", layer)) }
             }
-            if let texture = particle["distortion"]?["texture"]?.string { used.append((texture, "distortion")) }
+            if let holder = particle["distortion"], let texture = holder["texture"]?.string { used.append((texture, "distortion", holder)) }
             for (i, entry) in used.enumerated() {
                 if !textures.contains(entry.0) { textures.append(entry.0) }
-                graph.edges.append(GraphEdge(id: "\(id)>tex\(i)", from: id, to: "tex:" + entry.0, label: entry.1))
+                var edge = GraphEdge(id: "\(id)>tex\(i)", from: id, to: "tex:" + entry.0, label: entry.1)
+                let holder = entry.2
+                edge.accepts = ["tex:"]
+                edge.retarget = { [weak self] _, target in
+                    self?.performStructural("Relink Texture") { holder.set("texture", JSONNode(.string(String(target.dropFirst(4))))) }
+                }
+                graph.edges.append(edge)
             }
         }
         for name in textures {
@@ -270,6 +336,16 @@ extension EffectDocument {
 
     private func index(_ id: String, _ prefix: String) -> Int? {
         id.hasPrefix(prefix) ? Int(id.dropFirst(prefix.count)) : nil
+    }
+
+    func canRetarget(_ edge: GraphEdge, to target: String) -> Bool {
+        edge.retarget != nil && target != edge.to && target != edge.from && edge.accepts.contains { target.hasPrefix($0) }
+    }
+
+    func retarget(_ edge: GraphEdge, to target: String) {
+        guard canRetarget(edge, to: target), let retarget = edge.retarget else { return }
+        let index = Int(target.split(separator: "/").last ?? "") ?? 0
+        retarget(index, target)
     }
 
     func canConnect(from: String, to: String) -> Bool {
@@ -381,6 +457,8 @@ extension EffectDocument {
                     },
                     write: { value in
                         let target = Float(value.number / scale)
+                        let current = block.child(group.tag)?.child(axis)?.curveKeys.first?.z ?? group.fallback
+                        if abs(Double(current) * scale - value.number) < 1e-9 || target == current { return }
                         var holder = block.child(group.tag)
                         if holder == nil {
                             let created = AvfxBlock.curveAxes(tag: group.tag, axes: ["X", "Y", "Z"], value: group.fallback)

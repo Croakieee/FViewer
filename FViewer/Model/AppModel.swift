@@ -21,6 +21,10 @@ final class AppModel: ObservableObject {
     @Published var effectShading = 0
     @Published var showEmitters = false
     @Published var showBindPoints = true
+    @Published var viewportBackground = 0
+    @Published var highlightSelection = true
+
+    static let backgrounds: [(name: String, value: Double)] = [("Dark Grey", 0.24), ("Black", 0.02), ("Mid Grey", 0.5), ("Light", 0.82)]
 
     private var documents: [URL: EffectDocument] = [:]
     private var textureFiles: [String: URL] = [:]
@@ -33,6 +37,7 @@ final class AppModel: ObservableObject {
     private var textureAddress: [String: (u: String, v: String)] = [:]
     private(set) var libraryToken = 0
     private var documentSink: AnyCancellable?
+    private var avfxMeshes: (document: UUID, revision: Int, meshes: [(id: String, mesh: MeshData)])?
     private static let bookmarkKey = "libraryBookmark"
 
     init() {
@@ -106,7 +111,9 @@ final class AppModel: ObservableObject {
                           let text = String(data: data, encoding: .utf8), text.contains("\"emitters\""), text.contains("\"particles\"") {
                     found.append(LibraryFile(url: url, folder: folder))
                 }
-            default: break
+            default:
+                let name = url.lastPathComponent.lowercased()
+                if name.hasPrefix("~"), name.count >= 9, textureFiles[name] == nil { textureFiles[name] = url }
             }
         }
         files = found.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
@@ -198,28 +205,237 @@ final class AppModel: ObservableObject {
         }
     }
 
+    @Published var notice: String?
+    @Published var modExport = false
+
+    func isCustomTexture(_ path: String) -> Bool {
+        guard let url = textureURL(path) else { return false }
+        let lower = path.lowercased()
+        let parts = lower.split(separator: "/").map(String.init)
+        guard parts.count >= 2 else { return true }
+        let tail = parts.suffix(2).joined(separator: "/")
+        return !url.path.lowercased().hasSuffix("/" + tail)
+    }
+
+    func modArchive(_ mod: ModDescription, effectPath: String, textures: [String]) throws -> Data {
+        guard let document, document.format == .avfx else { throw AvfxError.malformed("Only .avfx effects can be exported as a mod") }
+        if let problem = PenumbraExport.problem(in: effectPath) { throw AvfxError.malformed(problem) }
+        var files: [(gamePath: String, data: [UInt8])] = [(effectPath, [UInt8](document.serializedData()))]
+        for path in textures.sorted() {
+            guard let url = textureURL(path) else { throw AvfxError.malformed("\(path) was not found in the open folder") }
+            if url.pathExtension.lowercased() == "png" { throw AvfxError.malformed("\(path) resolves to a PNG; convert it with Replace Image first") }
+            files.append((path, [UInt8](try Data(contentsOf: url))))
+        }
+        return Data(PenumbraExport.archive(mod, files: files))
+    }
+
+    func exportMod(_ mod: ModDescription, effectPath: String, textures: [String]) {
+        do {
+            let data = try modArchive(mod, effectPath: effectPath, textures: textures)
+            let panel = NSSavePanel()
+            panel.title = "Export Penumbra Mod"
+            panel.nameFieldStringValue = mod.name + ".pmp"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            notice = "Mod written to \(url.lastPathComponent)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func importNodesPanel() {
+        guard let document, document.format == .avfx else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import Nodes"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Import"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let count = try document.importNodes(Data(contentsOf: url), legacy: url.pathExtension.lowercased() == "vfxedit")
+            notice = "Imported \(count) node\(count == 1 ? "" : "s") from \(url.lastPathComponent)"
+        } catch {
+            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func exportNodes(_ ids: Set<String>, withDependencies: Bool) {
+        guard let document, !ids.isEmpty else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export Nodes"
+        panel.nameFieldStringValue = "ExportedVfx.vfxedit2"
+        panel.directoryURL = document.url.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try document.exportNodes(ids, withDependencies: withDependencies).write(to: url, options: .atomic)
+            notice = "Exported to \(url.lastPathComponent)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func cleanUp() {
+        guard let document else { return }
+        let count = document.cleanUp()
+        notice = count == 0 ? "Nothing to clean up: every node is in use" : "Removed \(count) unused node\(count == 1 ? "" : "s")"
+    }
+
+    private func freeURL(_ directory: URL, _ name: String, _ ext: String) -> URL {
+        var base = name
+        var candidate = directory.appendingPathComponent(base).appendingPathExtension(ext)
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            base += EffectDocument.editSuffix
+            candidate = directory.appendingPathComponent(base).appendingPathExtension(ext)
+        }
+        return candidate
+    }
+
+    func textureData(from source: URL) throws -> (data: Data, ext: String) {
+        let ext = source.pathExtension.lowercased()
+        if ext == "atex" || ext == "tex" {
+            let data = try Data(contentsOf: source)
+            _ = try Atex.decode([UInt8](data))
+            return (data, ext)
+        }
+        guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil),
+              let pixels = AtexWriter.rgba(from: image) else {
+            throw AvfxError.malformed("\(source.lastPathComponent) is not an image this app can read")
+        }
+        return (Data(AtexWriter.encode(width: pixels.width, height: pixels.height, rgba: pixels.pixels)), "atex")
+    }
+
+    func installTexture(from source: URL, for block: AvfxBlock, in document: EffectDocument) throws -> URL {
+        guard block.tag == "Tex", block.children == nil else { throw AvfxError.malformed("Select a texture node first") }
+        let converted = try textureData(from: source)
+        let directory = document.url.deletingLastPathComponent()
+        let destination = freeURL(directory, source.deletingPathExtension().lastPathComponent, converted.ext)
+        try converted.data.write(to: destination, options: .atomic)
+        let old = block.stringValue
+        let folder = (old as NSString).deletingLastPathComponent
+        let path = folder.isEmpty ? destination.lastPathComponent : folder + "/" + destination.lastPathComponent
+        document.perform("Replace Texture", { block.stringValue = path }, revert: { block.stringValue = old })
+        textureFiles[destination.lastPathComponent.lowercased()] = destination
+        imageCache = [:]
+        decodedCache = [:]
+        libraryToken += 1
+        objectWillChange.send()
+        return destination
+    }
+
+    func replaceTexture(_ block: AvfxBlock) {
+        guard let document else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Replace Texture"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Replace"
+        panel.message = "Choose a PNG, JPEG, TIFF, .atex or .tex file. A new texture file is written next to the effect; game files are never changed."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let written = try installTexture(from: url, for: block, in: document)
+            notice = "Texture written to \(written.lastPathComponent)"
+        } catch {
+            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    func pngData(for path: String) -> Data? {
+        guard let image = image(for: path) else { return nil }
+        return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+    }
+
+    func exportTexture(_ path: String) {
+        guard let data = pngData(for: path) else {
+            errorMessage = "\((path as NSString).lastPathComponent) was not found in the open folder, so there is nothing to export"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Export Texture"
+        panel.nameFieldStringValue = ((path as NSString).lastPathComponent as NSString).deletingPathExtension + ".png"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try data.write(to: url, options: .atomic)
+            notice = "Exported \(url.lastPathComponent)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func exportModel(_ block: AvfxBlock, name: String) {
+        let mesh = Gltf.mesh(from: block)
+        guard !mesh.positions.isEmpty else {
+            errorMessage = "This model has no vertices to export"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Export Model"
+        panel.nameFieldStringValue = name + ".glb"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Data(Gltf.glb(mesh, name: name)).write(to: url, options: .atomic)
+            notice = "Exported \(mesh.positions.count) vertices to \(url.lastPathComponent)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func importModel(_ block: AvfxBlock, emitPoints: Bool) {
+        guard let document else { return }
+        let panel = NSOpenPanel()
+        panel.title = emitPoints ? "Import Emit Points" : "Import Model"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Import"
+        panel.message = "Choose a .glb or .gltf file"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let mesh = try Gltf.load(url)
+            try document.applyMesh(mesh, to: block, emitPoints: emitPoints)
+            var text = emitPoints ? "Imported \(mesh.positions.count) emit points" : "Imported \(mesh.positions.count) vertices, \(mesh.indices.count / 3) triangles"
+            if !mesh.notes.isEmpty { text += " · " + mesh.notes.joined(separator: " · ") }
+            notice = text
+        } catch {
+            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
     func isDirty(_ url: URL) -> Bool { documents[url]?.isDirty ?? false }
 
     func save() {
         guard let document else { return }
+        let old = document.url
         do {
             try document.save()
+            moved(document, from: old)
         } catch {
             saveAs()
         }
     }
 
+    private func moved(_ document: EffectDocument, from old: URL) {
+        guard document.url != old else { return }
+        documents[old] = nil
+        documents[document.url] = document
+        notice = "Saved as \(document.url.lastPathComponent). The original \(old.lastPathComponent) is untouched"
+        if let root = libraryRoot, document.url.path.hasPrefix(root.path) { setLibrary(root) }
+    }
+
     func saveAs() {
         guard let document else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = document.url.lastPathComponent
+        panel.nameFieldStringValue = document.saveDestination.lastPathComponent
         panel.directoryURL = document.url.deletingLastPathComponent()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let old = document.url
             try document.save(to: url)
-            documents[old] = nil
-            documents[url] = document
+            moved(document, from: old)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -232,7 +448,10 @@ final class AppModel: ObservableObject {
             let suffix = parts[start...].joined(separator: "/")
             if let hit = texturePaths.first(where: { $0.key == suffix || $0.key.hasSuffix("/" + suffix) })?.value { return hit }
         }
-        return textureFiles[(lower as NSString).lastPathComponent]
+        let file = (lower as NSString).lastPathComponent
+        if let hit = textureFiles[file] { return hit }
+        let hashed = String(format: "~%08x", ~ZipWriter.crc32(Array(file.utf8)))
+        return textureFiles[hashed] ?? textureFiles.first { ($0.key as NSString).deletingPathExtension == hashed }?.value
     }
 
     func image(for path: String) -> CGImage? {
@@ -283,7 +502,10 @@ final class AppModel: ObservableObject {
 
     func meshes(for document: EffectDocument) -> [(id: String, mesh: MeshData)] {
         if let root = document.avfxRoot {
-            return root.childrenNamed("Modl").enumerated().map { ("avfx/Modl/\($0.offset)", MeshData.fromAvfx($0.element)) }
+            if let cached = avfxMeshes, cached.document == document.id, cached.revision == document.revision { return cached.meshes }
+            let meshes = root.childrenNamed("Modl").enumerated().map { (id: "avfx/Modl/\($0.offset)", mesh: MeshData.fromAvfx($0.element)) }
+            avfxMeshes = (document.id, document.revision, meshes)
+            return meshes
         }
         return document.modelNames.compactMap { name in
             guard let url = modelFiles[name.lowercased()] else { return nil }

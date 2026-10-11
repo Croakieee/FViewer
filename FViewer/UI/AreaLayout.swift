@@ -59,10 +59,6 @@ struct WindowConfigurator: NSViewRepresentable {
     private func configure(_ view: NSView, _ coordinator: Coordinator) {
         guard !coordinator.done, let window = view.window else { return }
         coordinator.done = true
-        window.collectionBehavior.insert(.fullScreenPrimary)
         if let screen = window.screen ?? NSScreen.main { window.setFrame(screen.visibleFrame, display: true) }
-        if !window.styleMask.contains(.fullScreen), !CommandLine.arguments.contains("--windowed") {
-            window.toggleFullScreen(nil)
-        }
     }
 }

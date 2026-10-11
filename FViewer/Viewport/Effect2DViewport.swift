@@ -196,6 +196,7 @@ struct Effect2DViewport: NSViewRepresentable {
     let document: EffectDocument
     let app: AppModel
     let shading: Int
+    var background = 0
 
     func makeCoordinator() -> Effect2DRenderer { Effect2DRenderer(device: MTLCreateSystemDefaultDevice()) }
 
@@ -213,6 +214,8 @@ struct Effect2DViewport: NSViewRepresentable {
     }
 
     func updateNSView(_ view: Effect2DMTKView, context: Context) {
+        let shade = background == 0 ? 0.075 : AppModel.backgrounds[min(max(background, 0), AppModel.backgrounds.count - 1)].value
+        view.clearColor = MTLClearColor(red: shade, green: shade, blue: shade + (background == 0 ? 0.025 : 0), alpha: 1)
         context.coordinator.document = document
         context.coordinator.app = app
         context.coordinator.shading = shading

@@ -12,6 +12,10 @@ private struct GraphRange: Equatable {
     var v1: Double = 1.2
 }
 
+enum KeyClipboard {
+    static var entries: [(name: String, keys: [CurveKeyPoint])] = []
+}
+
 private final class GroupCache {
     var key = ""
     var group: CurveGroup?
@@ -24,6 +28,7 @@ private enum GraphDrag {
     case keys(origin: [String: [CurveKeyPoint]], selected: [String: Set<Int>], restore: [String: () -> Void])
     case handle(key: KeyRef, outgoing: Bool, restore: () -> Void)
     case box(additive: Bool)
+    case idle
 }
 
 struct CurveEditorView: View {
@@ -45,6 +50,9 @@ struct CurveEditorView: View {
 
     @State private var cache = GroupCache()
     @State private var dragActive = false
+    @State private var aim: (key: KeyRef, outgoing: Bool, reach: CGFloat)?
+    @State private var ghost: [String: [CurveKeyPoint]] = [:]
+    @State private var ghostStamp = 0
     @State private var lastDrag: DragGesture.Value?
     @GestureState private var pressing = false
     @State private var lastClick: (time: Date, point: CGPoint) = (.distantPast, .zero)
@@ -76,33 +84,48 @@ struct CurveEditorView: View {
     private func fit(_ group: CurveGroup?, selectedOnly: Bool = false) {
         guard let group else { return }
         var keys: [CurveKeyPoint] = []
+        var low = 0.0, high = 1.0
+        var seeded = false
+        func include(_ value: Double) {
+            if selectedOnly && !seeded {
+                low = value
+                high = value
+                seeded = true
+            } else {
+                low = min(low, value)
+                high = max(high, value)
+            }
+        }
         for channel in visibleChannels(group) {
             let all = channel.read()
             if selectedOnly {
-                keys.append(contentsOf: all.enumerated().filter { selection.contains(KeyRef(channel: channel.id, index: $0.offset)) }.map(\.element))
+                let picked = all.enumerated().filter { selection.contains(KeyRef(channel: channel.id, index: $0.offset)) }.map(\.element)
+                keys.append(contentsOf: picked)
+                picked.forEach { include($0.value) }
             } else {
                 keys.append(contentsOf: all)
+                guard let first = all.first, let last = all.last else { continue }
+                all.forEach { include($0.value) }
+                let span = max(last.time - first.time, 1)
+                for step in 0...100 { include(CurveMath.sample(all, at: first.time + span * Double(step) / 100)) }
             }
         }
-        guard let first = keys.first else {
+        guard !keys.isEmpty else {
             if !selectedOnly { range = GraphRange() }
             return
         }
-        var t0 = first.time, t1 = first.time, v0 = first.value, v1 = first.value
-        for key in keys {
-            t0 = min(t0, key.time)
-            t1 = max(t1, key.time)
-            v0 = min(v0, key.value)
-            v1 = max(v1, key.value)
+        var t0 = 0.0
+        var t1 = max(10, keys.map(\.time).max() ?? 10)
+        if selectedOnly {
+            t0 = keys.map(\.time).min() ?? 0
+            t1 = max(t0 + 10, keys.map(\.time).max() ?? 10)
         }
-        if !selectedOnly { t0 = min(t0, 0) }
-        if t1 - t0 < 10 { t1 = t0 + (selectedOnly ? 10 : 30) }
-        if v1 - v0 < 1e-6 {
-            v0 -= 0.5
-            v1 += 0.5
+        if high - low < 1e-6 {
+            low -= 0.5
+            high += 0.5
         }
-        let tp = (t1 - t0) * 0.08, vp = (v1 - v0) * 0.18
-        range = GraphRange(t0: t0 - tp, t1: t1 + tp, v0: v0 - vp, v1: v1 + vp)
+        let tp = (t1 - t0) * 0.05, vp = (high - low) * 0.1
+        range = GraphRange(t0: t0 - tp, t1: t1 + tp, v0: low - vp, v1: high + vp)
     }
 
     private func gridStep(_ span: Double, target: Double) -> Double {
@@ -112,22 +135,39 @@ struct CurveEditorView: View {
         return (ratio < 1.5 ? 1 : ratio < 3.5 ? 2 : ratio < 7.5 ? 5 : 10) * power
     }
 
-    private func handlePoints(_ keys: [CurveKeyPoint], _ i: Int) -> (incoming: (Double, Double)?, outgoing: (Double, Double)?) {
-        guard i < keys.count else { return (nil, nil) }
+    private func rate(_ keys: [CurveKeyPoint], _ i: Int) -> (rate: Double, scale: Double) {
+        let before: Double? = i >= 1 ? keys[i].time - keys[i - 1].time : nil
+        let after: Double? = i + 1 < keys.count ? keys[i + 1].time - keys[i].time : nil
+        let scale: Double
+        if let before, let after {
+            scale = 2 / max(1e-6, before + after)
+        } else {
+            scale = 1 / max(1e-6, before ?? after ?? 1)
+        }
+        return (CurveMath.tangent(keys, i) * scale, scale)
+    }
+
+    private func handlePoints(_ keys: [CurveKeyPoint], _ i: Int, channel: String) -> (incoming: CGPoint?, outgoing: CGPoint?) {
+        guard i < keys.count, keys[i].interpolation == CurveKeyPoint.spline else { return (nil, nil) }
         let key = keys[i]
-        var incoming: (Double, Double)?
-        var outgoing: (Double, Double)?
-        if i + 1 < keys.count, key.interpolation == CurveKeyPoint.spline {
-            let span = keys[i + 1].time - key.time
-            let before: Double? = i >= 1 ? key.time - keys[i - 1].time : nil
-            let slope = CurveMath.tangent(keys, i) * CurveMath.tangentScale(span, before)
-            outgoing = (key.time + span / 3, key.value + slope / 3)
+        let perFrame = size.width / CGFloat(max(range.t1 - range.t0, 1e-9))
+        let perValue = (size.height - top) / CGFloat(max(range.v1 - range.v0, 1e-9))
+        let dx = perFrame, dy = -CGFloat(rate(keys, i).rate) * perValue
+        let length = max(hypot(dx, dy), 1e-6)
+        let origin = CGPoint(x: x(key.time), y: y(key.value))
+        func reach(_ outgoing: Bool) -> CGFloat {
+            if let aim, aim.key == KeyRef(channel: channel, index: i), aim.outgoing == outgoing { return aim.reach }
+            return 40
+        }
+        var incoming: CGPoint?
+        var outgoing: CGPoint?
+        if i + 1 < keys.count {
+            let d = reach(true)
+            outgoing = CGPoint(x: origin.x + dx / length * d, y: origin.y + dy / length * d)
         }
         if i >= 1, keys[i - 1].interpolation == CurveKeyPoint.spline {
-            let span = key.time - keys[i - 1].time
-            let after: Double? = i + 1 < keys.count ? keys[i + 1].time - key.time : nil
-            let slope = CurveMath.tangent(keys, i) * CurveMath.tangentScale(span, after)
-            incoming = (key.time - span / 3, key.value - slope / 3)
+            let d = reach(false)
+            incoming = CGPoint(x: origin.x - dx / length * d, y: origin.y - dy / length * d)
         }
         return (incoming, outgoing)
     }
@@ -155,6 +195,7 @@ struct CurveEditorView: View {
         }
         .background(Color(white: 0.157))
         .onChange(of: group?.id, initial: true) { _, _ in
+            ghost = [:]
             selection = []
             activeKey = nil
             activeChannel = nil
@@ -168,17 +209,60 @@ struct CurveEditorView: View {
         return graph
     }
 
+    private func summary(_ group: CurveGroup) -> String {
+        let keys = visibleChannels(group).flatMap { $0.read() }
+        guard let low = keys.map(\.value).min(), let high = keys.map(\.value).max() else { return "no keys" }
+        return "\(keys.count) key\(keys.count == 1 ? "" : "s") · \(String(format: "%.2f", low))…\(String(format: "%.2f", high))"
+    }
+
+    private func parameterPicker(_ current: CurveGroup?) -> some View {
+        let node = document.selectedNode
+        let groups = node.map { document.curveGroups(for: $0) } ?? []
+        let constants = node.map { document.sections(for: $0).flatMap(\.fields).filter { $0.animate != nil } } ?? []
+        let missing = node.map { document.missingCurves(for: $0) } ?? []
+        return Menu {
+            ForEach(groups) { group in
+                Button((group.id == current?.id ? "✓ " : "") + group.title) { document.activeCurveID = group.id }
+            }
+            if !constants.isEmpty {
+                Divider()
+                ForEach(constants) { field in Button("Animate " + field.label) { field.animate?() } }
+            }
+            if !missing.isEmpty {
+                Divider()
+                Menu("Add Curve") { ForEach(missing) { curve in Button(curve.title) { curve.create() } } }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(current?.title ?? "Parameter").font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+        .help("Every animated parameter of the selected node. A plain number turns into keys the first time it is animated")
+    }
+
     private var channelList: some View {
         ScrollView {
             VStack(spacing: 0) {
                 if let group {
+                    parameterPicker(group)
                     HStack {
-                        Text(group.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                        Text(summary(group)).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
                         Spacer()
                         Text(group.isAngle ? "degrees" : "").font(Theme.small).foregroundStyle(Theme.dim)
                     }
                     .padding(.horizontal, 6)
-                    .frame(height: 22)
+                    .frame(height: 16)
                     ForEach(group.channels) { channel in
                         let active = (activeChannel ?? visibleChannels(group).first?.id) == channel.id
                         HStack(spacing: 5) {
@@ -190,6 +274,10 @@ struct CurveEditorView: View {
                                 }
                             RoundedRectangle(cornerRadius: 2).fill(channel.color).frame(width: 10, height: 10)
                             Text(channel.name).font(Theme.font).foregroundStyle(active ? .white : Theme.text).lineLimit(1)
+                            if let node = document.selectionID, document.changes.contains(node),
+                               document.originalKeys(group: group.id, channel: channel.id, in: node) != channel.read() {
+                                ChangeDot()
+                            }
                             Spacer(minLength: 0)
                             Text("\(channel.read().count)").font(Theme.small).foregroundStyle(Theme.dim)
                         }
@@ -206,14 +294,15 @@ struct CurveEditorView: View {
                         .help("Click: make active · Double-click: show only this channel")
                     }
                 } else {
-                    Text("Pick a curve under Properties → Animation").font(Theme.font).foregroundStyle(Theme.dim).padding(8)
+                    parameterPicker(nil)
+                    Text("Pick a parameter above, or a curve under Properties → Animation").font(Theme.font).foregroundStyle(Theme.dim).padding(8)
                 }
             }
         }
     }
 
     private var graph: some View {
-        let redrawTriggers = (range, selection, hidden, boxStart, boxEnd, measured, activeChannel, dragActive, document.revision)
+        let redrawTriggers = (range, selection, hidden, boxStart, boxEnd, measured, activeChannel, dragActive, document.revision, ghostStamp)
         if case .box = drag { _ = redrawTriggers }
         return Canvas { context, canvasSize in
             _ = redrawTriggers
@@ -264,18 +353,84 @@ struct CurveEditorView: View {
                     started[part] = true
                     px += 2
                 }
+                if let node = document.selectionID, let was = document.originalKeys(group: group.id, channel: channel.id, in: node), was != keys, !was.isEmpty,
+                   ghost[channel.id] == nil || ghost[channel.id] == keys {
+                    var old = Path()
+                    var gx: CGFloat = 0
+                    var begun = false
+                    while gx <= canvasSize.width {
+                        let point = CGPoint(x: gx, y: y(CurveMath.sampleExtended(was, at: time(gx), pre: extrapolation.pre, post: extrapolation.post)))
+                        if begun { old.addLine(to: point) } else { old.move(to: point) }
+                        begun = true
+                        gx += 2
+                    }
+                    context.stroke(old, with: .color(Theme.changed.opacity(0.45)), style: StrokeStyle(lineWidth: 1, dash: [1, 3]))
+                    for key in was {
+                        context.stroke(Path(ellipseIn: CGRect(x: x(key.time) - 2.5, y: y(key.value) - 2.5, width: 5, height: 5)),
+                                       with: .color(Theme.changed.opacity(0.55)), lineWidth: 1)
+                    }
+                }
+                if let previous = ghost[channel.id], previous != keys, !previous.isEmpty {
+                    var old = Path()
+                    var gx: CGFloat = 0
+                    var begun = false
+                    while gx <= canvasSize.width {
+                        let point = CGPoint(x: gx, y: y(CurveMath.sampleExtended(previous, at: time(gx), pre: extrapolation.pre, post: extrapolation.post)))
+                        if begun { old.addLine(to: point) } else { old.move(to: point) }
+                        begun = true
+                        gx += 2
+                    }
+                    context.stroke(old, with: .color(Color.white.opacity(0.38)), style: StrokeStyle(lineWidth: 1.2, dash: [2, 3]))
+                    for key in previous {
+                        let dot = CGRect(x: x(key.time) - 3, y: y(key.value) - 3, width: 6, height: 6)
+                        context.stroke(Path(ellipseIn: dot), with: .color(Color.white.opacity(0.45)), lineWidth: 1)
+                    }
+                    for (i, key) in keys.enumerated() where selection.contains(KeyRef(channel: channel.id, index: i)) {
+                        let was = previous.min { abs($0.time - key.time) + abs($0.value - key.value) * 0.001 < abs($1.time - key.time) + abs($1.value - key.value) * 0.001 }
+                        let old = i < previous.count && previous.count == keys.count ? previous[i] : was
+                        guard let old, old != key else { continue }
+                        var link = Path()
+                        link.move(to: CGPoint(x: x(old.time), y: y(old.value)))
+                        link.addLine(to: CGPoint(x: x(key.time), y: y(key.value)))
+                        context.stroke(link, with: .color(Color(red: 1, green: 0.63, blue: 0.16).opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [1, 2]))
+                        let delta = key.value - old.value
+                        var text = "F \(JSONNode.format(key.time))  \(String(format: "%.3f", key.value))"
+                        if abs(delta) > 1e-6 { text += String(format: "  %@%.3f", delta >= 0 ? "+" : "−", abs(delta)) }
+                        if key.time != old.time { text += "  \(key.time > old.time ? "+" : "−")\(JSONNode.format(abs(key.time - old.time)))f" }
+                        if key.time == old.time, key.value == old.value {
+                            text = String(format: "in %.3f → %.3f   out %.3f → %.3f", old.tangentIn, key.tangentIn, old.tangentOut, key.tangentOut)
+                        }
+                        let label = context.resolve(Text(text).font(Theme.small).foregroundStyle(.white))
+                        let box = label.measure(in: CGSize(width: 260, height: 20))
+                        var origin = CGPoint(x: x(key.time) + 10, y: y(key.value) - box.height - 8)
+                        origin.x = min(max(origin.x, 2), canvasSize.width - box.width - 10)
+                        origin.y = max(origin.y, top + 2)
+                        context.fill(Path(roundedRect: CGRect(x: origin.x - 4, y: origin.y - 2, width: box.width + 8, height: box.height + 4), cornerRadius: 3),
+                                     with: .color(Color.black.opacity(0.78)))
+                        context.draw(label, at: CGPoint(x: origin.x, y: origin.y), anchor: .topLeading)
+                    }
+                }
                 context.stroke(before, with: .color(channel.color.opacity(0.4)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
                 context.stroke(after, with: .color(channel.color.opacity(0.4)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
                 context.stroke(inside, with: .color(channel.color), lineWidth: 1.6)
-                for (i, key) in keys.enumerated() where selection.contains(KeyRef(channel: channel.id, index: i)) && channel.colorComponent == nil {
-                    let handles = handlePoints(keys, i)
+                for (i, key) in keys.enumerated() where channel.colorComponent == nil {
+                    let handles = handlePoints(keys, i, channel: channel.id)
+                    let chosen = selection.contains(KeyRef(channel: channel.id, index: i))
                     for handle in [handles.incoming, handles.outgoing].compactMap({ $0 }) {
                         var line = Path()
                         line.move(to: CGPoint(x: x(key.time), y: y(key.value)))
-                        line.addLine(to: CGPoint(x: x(handle.0), y: y(handle.1)))
-                        context.stroke(line, with: .color(Color(red: 1, green: 0.63, blue: 0.16).opacity(0.9)), lineWidth: 1)
-                        let dot = CGRect(x: x(handle.0) - 3.5, y: y(handle.1) - 3.5, width: 7, height: 7)
-                        context.fill(Path(ellipseIn: dot), with: .color(Color(red: 1, green: 0.63, blue: 0.16)))
+                        line.addLine(to: handle)
+                        let tint = chosen ? Color(red: 1, green: 0.63, blue: 0.16) : Color(white: 0.62)
+                        context.stroke(line, with: .color(tint.opacity(0.9)), lineWidth: 1)
+                        context.fill(Path(CGRect(x: handle.x - 3, y: handle.y - 3, width: 6, height: 6)), with: .color(chosen ? tint : Color(white: 0.86)))
+                    }
+                    if let aim, aim.key == KeyRef(channel: channel.id, index: i) {
+                        let label = context.resolve(Text(String(format: "key %d   in %.3f   out %.3f", i, key.tangentIn, key.tangentOut)).font(Theme.small).foregroundStyle(.white))
+                        let box = label.measure(in: CGSize(width: 260, height: 20))
+                        let at = CGPoint(x: min(max(x(key.time) + 12, 2), canvasSize.width - box.width - 10), y: max(y(key.value) + 10, top + 2))
+                        context.fill(Path(roundedRect: CGRect(x: at.x - 4, y: at.y - 2, width: box.width + 8, height: box.height + 4), cornerRadius: 3),
+                                     with: .color(Color.black.opacity(0.78)))
+                        context.draw(label, at: at, anchor: .topLeading)
                     }
                 }
                 for (i, key) in keys.enumerated() {
@@ -375,6 +530,12 @@ struct CurveEditorView: View {
                 fit(group, selectedOnly: !selection.isEmpty)
             case "i":
                 insertAtPlayhead()
+            case "c":
+                guard press.modifiers.contains(.command) else { return .ignored }
+                copyKeys()
+            case "v":
+                guard press.modifiers.contains(.command) else { return .ignored }
+                pasteKeys()
             default: return .ignored
             }
             return .handled
@@ -421,10 +582,10 @@ struct CurveEditorView: View {
         guard let group else { return nil }
         for channel in visibleChannels(group) where channel.colorComponent == nil {
             let keys = channel.read()
-            for ref in selection where ref.channel == channel.id {
-                let handles = handlePoints(keys, ref.index)
-                if let h = handles.outgoing, hypot(x(h.0) - point.x, y(h.1) - point.y) < 8 { return (ref, true) }
-                if let h = handles.incoming, hypot(x(h.0) - point.x, y(h.1) - point.y) < 8 { return (ref, false) }
+            for index in keys.indices {
+                let handles = handlePoints(keys, index, channel: channel.id)
+                if let h = handles.outgoing, hypot(h.x - point.x, h.y - point.y) < 9 { return (KeyRef(channel: channel.id, index: index), true) }
+                if let h = handles.incoming, hypot(h.x - point.x, h.y - point.y) < 9 { return (KeyRef(channel: channel.id, index: index), false) }
             }
         }
         return nil
@@ -442,30 +603,62 @@ struct CurveEditorView: View {
             }
             selected[ref.channel, default: []].insert(ref.index)
         }
+        ghost = origin
         drag = .keys(origin: origin, selected: selected, restore: restore)
     }
 
     private func handleDrag(_ gesture: DragGesture.Value) {
         if case .none = drag {
             focused = true
-            let shift = NSEvent.modifierFlags.contains(.shift)
+            ghost = [:]
+            ghostStamp += 1
+            let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
+            let shift = flags.contains(.shift), command = flags.contains(.command), option = flags.contains(.option)
             if gesture.startLocation.y < rulerHeight {
                 drag = .scrub
             } else if let (ref, outgoing) = hitHandle(gesture.startLocation), let channel = channel(ref.channel) {
+                ghost = [channel.id: channel.read()]
+                aim = (ref, outgoing, 40)
+                activeKey = ref
+                activeChannel = ref.channel
+                if !selection.contains(ref) { selection = [ref] }
                 drag = .handle(key: ref, outgoing: outgoing, restore: channel.snapshot())
-            } else if let hit = hitKey(gesture.startLocation) {
-                if shift {
-                    if selection.contains(hit) { selection.remove(hit) } else { selection.insert(hit) }
-                } else if !selection.contains(hit) {
-                    selection = [hit]
-                }
-                activeKey = hit
+            } else if let hit = hitKey(gesture.startLocation), let channel = channel(hit.channel) {
                 activeChannel = hit.channel
-                beginKeyDrag()
+                if option {
+                    if channel.read().count > 1 {
+                        change(channel, "Delete Keyframe") { keys in if hit.index < keys.count { keys.remove(at: hit.index) } }
+                        selection = []
+                        activeKey = nil
+                    }
+                    drag = .idle
+                } else if shift, channel.colorComponent == nil {
+                    change(channel, "Toggle Spline") { keys in
+                        guard hit.index < keys.count else { return }
+                        if keys[hit.index].interpolation == CurveKeyPoint.spline {
+                            keys[hit.index].interpolation = CurveKeyPoint.linear
+                        } else {
+                            keys[hit.index].interpolation = CurveKeyPoint.spline
+                            keys[hit.index].tangentIn = 1
+                            keys[hit.index].tangentOut = 1
+                        }
+                    }
+                    selection = [hit]
+                    activeKey = hit
+                    drag = .idle
+                } else {
+                    if command {
+                        if selection.contains(hit) { selection.remove(hit) } else { selection.insert(hit) }
+                    } else if !selection.contains(hit) {
+                        selection = [hit]
+                    }
+                    activeKey = hit
+                    beginKeyDrag()
+                }
             } else {
                 boxStart = gesture.startLocation
                 boxEnd = gesture.startLocation
-                drag = .box(additive: shift)
+                drag = .box(additive: command || shift)
             }
         }
         switch drag {
@@ -476,12 +669,12 @@ struct CurveEditorView: View {
             guard dragActive else { return }
             let dt = (Double(gesture.translation.width / max(size.width, 1)) * (range.t1 - range.t0)).rounded()
             var dv = -Double(gesture.translation.height / max(size.height - top, 1)) * (range.v1 - range.v0)
-            let flags = NSEvent.modifierFlags
+            let flags = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags
             if flags.contains(.control) {
                 let step = gridStep(range.v1 - range.v0, target: Double(size.height) / 40) / 10
                 dv = (dv / step).rounded() * step
             }
-            let lockTime = flags.contains(.option)
+            let lockTime = false
             var nextSelection: Set<KeyRef> = []
             for (id, keys) in origin {
                 guard let channel = channel(id) else { continue }
@@ -490,7 +683,7 @@ struct CurveEditorView: View {
                     guard marks.contains(index) else { return (key, false) }
                     var next = key
                     if !lockTime { next.time = max(0, key.time + dt) }
-                    next.value = key.value + dv
+                    next.value = dv == 0 ? key.value : ((key.value + dv) * 1000).rounded() / 1000
                     if channel.clampUnit { next.value = min(max(next.value, 0), 1) }
                     return (next, true)
                 }
@@ -511,24 +704,31 @@ struct CurveEditorView: View {
             var keys = channel.read()
             guard ref.index < keys.count else { return }
             let key = keys[ref.index]
+            let origin = CGPoint(x: x(key.time), y: y(key.value))
+            let px = gesture.location.x - origin.x, py = gesture.location.y - origin.y
+            aim = (ref, outgoing, max(12, hypot(px, py)))
+            let frames = Double(px / max(size.width, 1)) * (range.t1 - range.t0)
+            if (outgoing && frames <= 0.01) || (!outgoing && frames >= -0.01) {
+                ghostStamp += 1
+                return
+            }
+            let values = -Double(py / max(size.height - top, 1)) * (range.v1 - range.v0)
             let parts = CurveMath.tangentParts(keys, ref.index)
-            let target = value(gesture.location.y)
-            if outgoing, ref.index + 1 < keys.count, abs(parts.toNext) > 1e-9 {
-                let span = keys[ref.index + 1].time - key.time
-                let before: Double? = ref.index >= 1 ? key.time - keys[ref.index - 1].time : nil
-                let tangent = (target - key.value) * 3 / CurveMath.tangentScale(span, before)
-                keys[ref.index].tangentOut = (2 * tangent - key.tangentIn * parts.fromPrevious) / parts.toNext
-            } else if !outgoing, ref.index >= 1, abs(parts.fromPrevious) > 1e-9 {
-                let span = key.time - keys[ref.index - 1].time
-                let after: Double? = ref.index + 1 < keys.count ? keys[ref.index + 1].time - key.time : nil
-                let tangent = (key.value - target) * 3 / CurveMath.tangentScale(span, after)
-                keys[ref.index].tangentIn = (2 * tangent - key.tangentOut * parts.toNext) / parts.fromPrevious
+            let slope = values / frames / rate(keys, ref.index).scale
+            func rounded(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+            func solveOut() { keys[ref.index].tangentOut = rounded((2 * slope - key.tangentIn * parts.fromPrevious) / parts.toNext) }
+            func solveIn() { keys[ref.index].tangentIn = rounded((2 * slope - key.tangentOut * parts.toNext) / parts.fromPrevious) }
+            if outgoing {
+                if abs(parts.toNext) > 1e-9 { solveOut() } else if abs(parts.fromPrevious) > 1e-9 { solveIn() }
+            } else {
+                if abs(parts.fromPrevious) > 1e-9 { solveIn() } else if abs(parts.toNext) > 1e-9 { solveOut() }
             }
             channel.write(keys)
+            ghostStamp += 1
             document.liveChanged()
         case .box:
             boxEnd = gesture.location
-        case .none: break
+        case .none, .idle: break
         }
     }
 
@@ -570,6 +770,7 @@ struct CurveEditorView: View {
         }
         drag = .none
         dragActive = false
+        aim = nil
     }
 
     private func change(_ channel: CurveChannel, _ title: String, _ edit: (inout [CurveKeyPoint]) -> Void) {
@@ -613,18 +814,21 @@ struct CurveEditorView: View {
 
     private func addKey(at location: CGPoint) {
         guard location.y > top, let channel = currentChannel() else { return }
-        insertKey(channel, at: max(0, time(location.x).rounded()))
+        let t = max(0, time(location.x).rounded())
+        var v = (value(location.y) * 1000).rounded() / 1000
+        if channel.clampUnit { v = min(max(v, 0), 1) }
+        insertKey(channel, at: t, value: v)
     }
 
     private func insertAtPlayhead() {
         if let channel = currentChannel() { insertKey(channel, at: clock.time.rounded()) }
     }
 
-    private func insertKey(_ channel: CurveChannel, at t: Double) {
+    private func insertKey(_ channel: CurveChannel, at t: Double, value fixed: Double? = nil) {
         let existing = channel.read()
         if existing.contains(where: { $0.time == t }) { return }
         let extrapolation = channel.extrapolation()
-        let v = existing.isEmpty ? 0 : CurveMath.sampleExtended(existing, at: t, pre: extrapolation.pre, post: extrapolation.post)
+        let v = fixed ?? (existing.isEmpty ? 0 : CurveMath.sampleExtended(existing, at: t, pre: extrapolation.pre, post: extrapolation.post))
         change(channel, "Insert Keyframe") { keys in
             let interpolation = keys.last(where: { $0.time <= t })?.interpolation ?? keys.first?.interpolation ?? CurveKeyPoint.linear
             keys.append(CurveKeyPoint(time: t, value: v, interpolation: interpolation, tangentOut: 1, tangentIn: 1))
@@ -635,6 +839,71 @@ struct CurveEditorView: View {
             selection = [ref]
             activeKey = ref
         }
+    }
+
+    private func resetCurve() {
+        guard let group, let node = document.selectionID else { return }
+        var before: [() -> Void] = []
+        var after: [() -> Void] = []
+        for channel in group.channels {
+            guard let was = document.originalKeys(group: group.id, channel: channel.id, in: node), was != channel.read() else { continue }
+            before.append(channel.snapshot())
+            channel.write(was)
+            after.append(channel.snapshot())
+        }
+        guard !before.isEmpty else { return }
+        document.registerUndo("Reset Curve", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        selection = []
+        activeKey = nil
+    }
+
+    private func copyKeys() {
+        guard let group, !selection.isEmpty else { return }
+        var copied: [(name: String, keys: [CurveKeyPoint])] = []
+        for channel in group.channels {
+            let all = channel.read()
+            let picked = all.enumerated().filter { selection.contains(KeyRef(channel: channel.id, index: $0.offset)) }.map(\.element)
+            if !picked.isEmpty { copied.append((channel.name, picked)) }
+        }
+        let start = copied.flatMap(\.keys).map(\.time).min() ?? 0
+        KeyClipboard.entries = copied.map { entry in
+            (entry.name, entry.keys.map { key in
+                var shifted = key
+                shifted.time -= start
+                return shifted
+            })
+        }
+    }
+
+    private func pasteKeys() {
+        guard let group, !KeyClipboard.entries.isEmpty else { return }
+        let at = clock.time.rounded()
+        var before: [() -> Void] = []
+        var after: [() -> Void] = []
+        var pasted: Set<KeyRef> = []
+        for entry in KeyClipboard.entries {
+            let target = group.channels.first { $0.name == entry.name && !hidden.contains($0.id) }
+                ?? (KeyClipboard.entries.count == 1 ? currentChannel() : nil)
+            guard let target else { continue }
+            before.append(target.snapshot())
+            var keys = target.read()
+            let times = Set(entry.keys.map { $0.time + at })
+            keys.removeAll { times.contains($0.time) }
+            for key in entry.keys {
+                var placed = key
+                placed.time += at
+                if target.clampUnit { placed.value = min(max(placed.value, 0), 1) }
+                keys.append(placed)
+            }
+            keys.sort { $0.time < $1.time }
+            target.write(keys)
+            after.append(target.snapshot())
+            for (index, key) in target.read().enumerated() where times.contains(key.time) { pasted.insert(KeyRef(channel: target.id, index: index)) }
+        }
+        guard !before.isEmpty else { return }
+        document.registerUndo("Paste Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        selection = pasted
+        activeKey = pasted.first
     }
 
     private func deleteSelected() {
@@ -724,6 +993,10 @@ struct CurveEditorView: View {
                     HeaderButton(symbol: "plus", help: "Insert Keyframe at the playhead (I) — or double-click the graph") { insertAtPlayhead() }
                     HeaderButton(symbol: "trash", help: "Delete Keyframes (X)") { deleteSelected() }
                     HeaderButton(symbol: "checklist", help: "Select All (A) · Deselect (⌥A)") { selectAll() }
+                    HeaderButton(symbol: "arrow.uturn.backward", help: "Reset this curve to how it was when the file was opened") { resetCurve() }
+                    SoloButton(document: document)
+                    HeaderButton(symbol: "doc.on.doc", help: "Copy the selected keyframes (⌘C)") { copyKeys() }
+                    HeaderButton(symbol: "doc.on.clipboard", help: "Paste keyframes at the playhead (⌘V)") { pasteKeys() }
                     Spacer()
                 }
                 .padding(.horizontal, 6)
@@ -766,7 +1039,7 @@ struct CurveEditorView: View {
                     if !group.settings.isEmpty {
                         Panel(title: group.title) { CompactFields(document: document, fields: group.settings) }
                     }
-                    Text("Drag keys to move · ⇧ click adds to selection · drag empty space to box-select · ⌃ snaps values · ⌥ keeps the frame · scroll pans · ⌘ scroll or pinch zooms")
+                    Text("Drag a key to move it · double-click empty space: new key there · ⌥ click a key: delete · ⇧ click a key: linear ↔ spline · drag a square handle to aim the tangent · ⌘ click adds to the selection · drag empty space to box-select · ⌃ snaps values · scroll pans · ⌘ scroll or pinch zooms")
                         .font(Theme.small).foregroundStyle(Theme.dim).padding(.horizontal, 10).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

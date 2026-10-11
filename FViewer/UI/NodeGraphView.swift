@@ -23,6 +23,7 @@ struct NodeGraphView: View {
     @State private var panOrigin: CGSize?
     @State private var wire: (from: String, point: CGPoint)?
     @State private var selectedEdge: String?
+    @State private var rewire: (edge: GraphEdge, point: CGPoint)?
     @State private var loadedDocument: UUID?
     @GestureState private var pressing = false
     @FocusState private var focused: Bool
@@ -101,7 +102,7 @@ struct NodeGraphView: View {
                             gx += spacing
                         }
                     }
-                    for edge in graph.edges {
+                    for edge in graph.edges where rewire?.edge.id != edge.id {
                         guard let from = positions[edge.from], let to = positions[edge.to] else { continue }
                         let a = screen(outputPoint(from)), b = screen(inputPoint(to))
                         let selected = selectedEdge == edge.id
@@ -121,6 +122,9 @@ struct NodeGraphView: View {
                     if let wire, let from = positions[wire.from] {
                         context.stroke(curve(screen(outputPoint(from)), wire.point), with: .color(.white), style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
                     }
+                    if let rewire, let from = positions[rewire.edge.from] {
+                        context.stroke(curve(screen(outputPoint(from)), rewire.point), with: .color(Theme.changed), style: StrokeStyle(lineWidth: 2.5, dash: [5, 3]))
+                    }
                 }
                 .background(ScrollMonitor(
                     onScroll: { delta, flags, point in
@@ -136,10 +140,26 @@ struct NodeGraphView: View {
                 .gesture(DragGesture(minimumDistance: 2)
                     .updating($pressing) { _, state, _ in state = true }
                     .onChanged { drag in
+                        if panOrigin == nil, rewire == nil, let edge = edgeHit(graph, positions, at: drag.startLocation), edge.retarget != nil {
+                            rewire = (edge, drag.location)
+                            selectedEdge = edge.id
+                            focused = true
+                        }
+                        if let active = rewire {
+                            rewire = (active.edge, drag.location)
+                            return
+                        }
                         if panOrigin == nil { panOrigin = offset }
                         if let origin = panOrigin { offset = CGSize(width: origin.width + drag.translation.width, height: origin.height + drag.translation.height) }
                     }
-                    .onEnded { _ in panOrigin = nil })
+                    .onEnded { drag in
+                        if let active = rewire, let hit = nodeHit(graph, positions, at: drag.location) {
+                            document.retarget(active.edge, to: hit.id)
+                            selectedEdge = nil
+                        }
+                        rewire = nil
+                        panOrigin = nil
+                    })
                 .onTapGesture { location in
                     focused = true
                     selectedEdge = edgeHit(graph, positions, at: location)?.id
@@ -168,7 +188,7 @@ struct NodeGraphView: View {
                             self.selectedEdge = nil
                         }
                     }
-                    Text("Drag a socket to another node to link · click a link and press X to remove · drag nodes to arrange")
+                    Text("Drag a link onto another node to switch it · drag a socket to a node to add a link · click a link and press X to remove it · drag nodes to arrange")
                         .font(Theme.small).foregroundStyle(Theme.dim)
                 }
                 .padding(6)
@@ -197,6 +217,7 @@ struct NodeGraphView: View {
                     panOrigin = nil
                     dragOrigin = nil
                     wire = nil
+                    rewire = nil
                 }
             }
             .onAppear {
@@ -238,11 +259,18 @@ struct NodeGraphView: View {
     private func nodeView(_ node: GraphNode, graph: EffectGraph, positions: [String: CGPoint]) -> some View {
         let selected = document.selectionID == node.id
         let hidden = node.visibility.map { document.hidden.contains($0) } ?? false
-        let target = wire.flatMap { w in nodeHit(graph, positions, at: w.point)?.id == node.id && document.canConnect(from: w.from, to: node.id) ? true : nil } ?? false
+        let linking = wire.flatMap { w in nodeHit(graph, positions, at: w.point)?.id == node.id && document.canConnect(from: w.from, to: node.id) ? true : nil } ?? false
+        let relinking = rewire.map { document.canRetarget($0.edge, to: node.id) } ?? false
+        let aimed = rewire.map { nodeHit(graph, positions, at: $0.point)?.id == node.id } ?? false
+        let target = linking || (relinking && aimed)
         return VStack(spacing: 0) {
             HStack(spacing: 5) {
                 Image(systemName: node.symbol).font(.system(size: 9)).foregroundStyle(.black.opacity(0.75))
                 Text(node.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.black.opacity(0.85)).lineLimit(1)
+                if document.changes.contains(node.id) {
+                    Circle().fill(Color.white).overlay(Circle().stroke(Color.black.opacity(0.6), lineWidth: 1)).frame(width: 6, height: 6)
+                        .help("Changed since the file was opened")
+                }
                 Spacer(minLength: 0)
                 if let key = node.visibility {
                     Image(systemName: hidden ? "eye.slash" : "eye").font(.system(size: 9)).foregroundStyle(.black.opacity(0.7))
@@ -276,7 +304,8 @@ struct NodeGraphView: View {
         .frame(width: NodeMetrics.width, height: NodeMetrics.height(node), alignment: .top)
         .background(Color(white: 0.19))
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(target ? Color.green : selected ? Color.white : Color.black.opacity(0.6), lineWidth: target || selected ? 2 : 1))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(target ? Color.green : relinking ? Theme.changed.opacity(0.8) : selected ? Color.white : Color.black.opacity(0.6),
+                                                           lineWidth: target || selected || relinking ? 2 : 1))
         .overlay(alignment: .topLeading) {
             Circle().fill(Color(white: 0.75)).overlay(Circle().stroke(Color.black, lineWidth: 1)).frame(width: 10, height: 10)
                 .offset(x: -5, y: NodeMetrics.header / 2 - 5)

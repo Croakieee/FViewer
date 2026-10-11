@@ -48,10 +48,16 @@ struct TopBar: View {
                 Divider()
                 Button("Save") { app.save() }.disabled(app.document == nil)
                 Button("Save As…") { app.saveAs() }.disabled(app.document == nil)
+                Divider()
+                Button("Import Nodes…") { app.importNodesPanel() }.disabled(app.document?.format != .avfx)
+                Button("Export Nodes…") { app.document?.exportRequest = [] }.disabled(app.document?.format != .avfx)
+                Button("Export Penumbra Mod…") { app.modExport = true }.disabled(app.document?.format != .avfx)
             }
             menuButton("Edit") {
                 Button("Undo") { app.document?.undo() }.disabled(app.document?.undoManager.canUndo != true)
                 Button("Redo") { app.document?.redo() }.disabled(app.document?.undoManager.canRedo != true)
+                Divider()
+                Button("Clean Up Unused Nodes") { app.cleanUp() }.disabled(app.document?.format != .avfx)
             }
             Spacer()
             if let document = app.document {
@@ -165,6 +171,12 @@ struct ContentView: View {
         .background(Theme.window)
         .background(WindowConfigurator())
         .preferredColorScheme(.dark)
+        .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {
+            if let document = app.document { ExportNodesSheet(document: document, selected: document.exportRequest ?? []) }
+        }
+        .sheet(isPresented: $app.modExport) {
+            if let document = app.document { ExportModSheet(document: document).environmentObject(app) }
+        }
         .alert("Error", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
             Button("OK") { app.errorMessage = nil }
         } message: {
@@ -204,6 +216,7 @@ struct ContentView: View {
             hint("Scroll / Pinch", "orbit / zoom")
             hint("Drag a field", "change value, ⇧ for precision")
             Spacer()
+            if let notice = app.notice { Text(notice).font(Theme.small).foregroundStyle(Theme.text) }
             if let document = app.document {
                 Text(document.undoManager.canUndo ? "Undo: \(document.undoManager.undoActionName)" : "").font(Theme.small).foregroundStyle(Theme.dim)
             }

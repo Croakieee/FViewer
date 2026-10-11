@@ -43,11 +43,30 @@ struct AxisGizmo: View {
     }
 }
 
+struct SoloButton: View {
+    @ObservedObject var document: EffectDocument
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "play.circle").font(.system(size: 11))
+            Text("Solo").font(Theme.font)
+        }
+        .foregroundStyle(Theme.text)
+        .padding(.horizontal, 7)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(document.soloPreview ? Theme.changed.opacity(0.75) : Color(white: 0.22)))
+        .contentShape(Rectangle())
+        .onTapGesture { document.setSolo(!document.soloPreview) }
+        .help("Play only the selected emitter or particle, looping over the frames where it is alive. Edits show up on the next loop")
+    }
+}
+
 struct ViewportPanel: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
     @State private var camera = ViewportCamera()
     @State private var framedKey = ""
+    @State private var effectView: (yaw: Float, pitch: Float, distance: Float, target: SIMD3<Float>)?
 
     private var scene: ViewportScene {
         var scene = ViewportScene()
@@ -56,6 +75,7 @@ struct ViewportPanel: View {
         scene.showEmitters = app.showEmitters
         scene.showBindPoints = app.showBindPoints
         scene.filter = document.visibilityFilter
+        scene.highlight = app.highlightSelection ? document.visibilityKey(forNodeID: document.selectionID) : nil
         let selected = document.selectionID ?? ""
         var key = "\(document.id)|\(document.revision)|\(app.viewportMode)|"
         let meshes = app.meshes(for: document)
@@ -97,8 +117,13 @@ struct ViewportPanel: View {
     }
 
     private var isolateButton: some View {
-        HeaderButton(symbol: "scope", active: document.isolateSelection, help: "Isolate the selected timeline, emitter or particle") {
-            document.isolateSelection.toggle()
+        HStack(spacing: 1) {
+            HeaderButton(symbol: "sparkle.magnifyingglass", active: app.highlightSelection,
+                         help: "Outline the selected emitter or particle in the playing effect") { app.highlightSelection.toggle() }
+            HeaderButton(symbol: "scope", active: document.isolateSelection, help: "Isolate the selected timeline, emitter or particle") {
+                document.isolateSelection.toggle()
+            }
+            SoloButton(document: document)
         }
     }
 
@@ -127,10 +152,13 @@ struct ViewportPanel: View {
                     visibilityNote
                     Spacer()
                     Text("Drag: pan · Pinch or ⌘ Scroll: zoom · Double-click: reset").font(Theme.small).foregroundStyle(Theme.dim)
+                    HeaderButton(symbol: "circle.lefthalf.filled", help: "Cycle the background") {
+                        app.viewportBackground = (app.viewportBackground + 1) % AppModel.backgrounds.count
+                    }
                     isolateButton
                     shadingButtons
                 }
-                Effect2DViewport(document: document, app: app, shading: app.effectShading)
+                Effect2DViewport(document: document, app: app, shading: app.effectShading, background: app.viewportBackground)
             }
         } else {
             viewport3D
@@ -145,6 +173,10 @@ struct ViewportPanel: View {
                     Button("Right") { camera.setView(yaw: .pi / 2, pitch: 0) }
                     Button("Top") { camera.setView(yaw: 0, pitch: 1.55) }
                     Button("Frame All") { frameAll() }
+                    Divider()
+                    ForEach(Array(AppModel.backgrounds.enumerated()), id: \.offset) { index, entry in
+                        Button((app.viewportBackground == index ? "✓ " : "") + "Background: " + entry.name) { app.viewportBackground = index }
+                    }
                 } label: {
                     Text("View").font(Theme.font).foregroundStyle(Theme.text).padding(.horizontal, 6).frame(height: 20)
                 }
@@ -172,7 +204,7 @@ struct ViewportPanel: View {
                 }
             }
             ZStack(alignment: .topLeading) {
-                MetalViewport(camera: camera, scene: scene, document: document, app: app)
+                MetalViewport(camera: camera, scene: scene, document: document, app: app, background: app.viewportBackground)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("User Perspective").font(.system(size: 11, weight: .medium))
                     Text(document.selectedNode.map { "\(document.title) | \($0.title)" } ?? document.title).font(Theme.small)
@@ -186,10 +218,20 @@ struct ViewportPanel: View {
         }
         .onAppear { frameAll() }
         .onChange(of: document.selectionID) { _, _ in
+            let preview = !scene.showEffect
+            if preview, effectView == nil { effectView = (camera.yaw, camera.pitch, camera.distance, camera.target) }
             let key = scene.meshes.count.description + (scene.texture == nil ? "" : "t") + (document.selectionID ?? "")
             if key != framedKey, scene.texture != nil || document.selectionID?.contains("Modl") == true {
                 framedKey = key
                 frameAll()
+            }
+            if !preview, let saved = effectView {
+                camera.yaw = saved.yaw
+                camera.pitch = saved.pitch
+                camera.distance = saved.distance
+                camera.target = saved.target
+                effectView = nil
+                framedKey = ""
             }
         }
         .onChange(of: document.id) { _, _ in frameAll() }

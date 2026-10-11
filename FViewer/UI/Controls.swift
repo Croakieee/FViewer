@@ -131,6 +131,7 @@ struct NumberField: View {
 struct CheckBox: View {
     let isOn: Bool
     let label: String
+    var mixed = false
     let action: (Bool) -> Void
     @State private var hovering = false
 
@@ -139,6 +140,7 @@ struct CheckBox: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 3).fill(isOn ? Theme.accent : hovering ? Theme.field.opacity(1.25) : Theme.field)
                 if isOn { Image(systemName: "checkmark").font(.system(size: 8, weight: .heavy)).foregroundStyle(.white) }
+                if mixed { Image(systemName: "minus").font(.system(size: 8, weight: .heavy)).foregroundStyle(Theme.dim) }
             }
             .frame(width: 14, height: 14)
             Text(label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)

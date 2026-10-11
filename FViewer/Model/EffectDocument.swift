@@ -17,13 +17,20 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published private(set) var revision = 0
     @Published private(set) var outline: [OutlineNode] = []
     @Published var selectionID: String? {
-        didSet { if selectionID != oldValue { activeCurveID = nil } }
+        didSet {
+            guard selectionID != oldValue else { return }
+            activeCurveID = nil
+            if soloPreview { applySolo() }
+        }
     }
+    @Published var soloPreview = false
+    var savedEnd: Double?
+    var savedIsolate = false
     @Published var activeCurveID: String?
     let clock = PlaybackClock()
     @Published var isDirty = false
+    @Published var exportRequest: Set<String>?
     private(set) var roundTripExact: Bool?
-    private var backedUp = false
     let undoManager: UndoManager = {
         let manager = UndoManager()
         manager.groupsByEvent = false
@@ -51,6 +58,26 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
         rebuildOutline()
         selectionID = outline.first?.id
+        original = EffectDocument(shadowOf: self)
+    }
+
+    private init(shadowOf source: EffectDocument) {
+        url = source.url
+        format = source.format
+        avfxRoot = source.avfxRoot?.deepCopy()
+        jsonRoot = source.jsonRoot?.deepCopy()
+        rebuildOutline()
+    }
+
+    private(set) var original: EffectDocument?
+    var originalFields: [String: [String: FieldValue]] = [:]
+    private var changeCache: (revision: Int, set: ChangeSet)?
+
+    var changes: ChangeSet {
+        if let cached = changeCache, cached.revision == revision { return cached.set }
+        let fresh = computeChanges()
+        changeCache = (revision, fresh)
+        return fresh
     }
 
     var title: String { url.lastPathComponent }
@@ -64,15 +91,22 @@ final class EffectDocument: ObservableObject, Identifiable {
         return Data((jsonRoot?.serialized() ?? "").utf8)
     }
 
+    static let editSuffix = "F"
+
+    var isEditedCopy: Bool { url.deletingPathExtension().lastPathComponent.hasSuffix(EffectDocument.editSuffix) }
+
+    var saveDestination: URL {
+        if isEditedCopy { return url }
+        let name = url.deletingPathExtension().lastPathComponent + EffectDocument.editSuffix
+        return url.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(url.pathExtension)
+    }
+
     func save(to target: URL? = nil) throws {
-        let destination = target ?? url
-        let payload = serializedData()
-        if destination == url, !backedUp, FileManager.default.fileExists(atPath: url.path) {
-            let backup = url.appendingPathExtension("bak")
-            if !FileManager.default.fileExists(atPath: backup.path) { try? FileManager.default.copyItem(at: url, to: backup) }
-            backedUp = true
+        let destination = target ?? saveDestination
+        if destination.standardizedFileURL == url.standardizedFileURL, !isEditedCopy {
+            throw AvfxError.malformed("Original files are never overwritten. Choose another name")
         }
-        try payload.write(to: destination, options: .atomic)
+        try serializedData().write(to: destination, options: .atomic)
         url = destination
         isDirty = false
     }

@@ -43,6 +43,7 @@ struct PropField: Identifiable {
     let write: ((FieldValue) -> Void)?
     var animate: (() -> Void)?
     var unassign: (() -> Void)? = nil
+    var triState = false
 }
 
 struct PropSection: Identifiable {

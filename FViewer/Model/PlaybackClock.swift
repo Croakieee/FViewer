@@ -6,12 +6,15 @@ final class PlaybackClock: ObservableObject {
     @Published var playing = true
     @Published var loop = true
     @Published var status = ""
+    @Published var endFrame: Double?
+    @Published var startFrame: Double = 0
+    @Published var speed: Double = 1
     var releaseTime: Double?
     var triggers: [(time: Double, index: Int)] = []
     var restartToken = 0
 
     func rewind() {
-        time = 0
+        time = startFrame
         releaseTime = nil
         triggers = []
         restartToken += 1
@@ -27,9 +30,9 @@ final class PlaybackClock: ObservableObject {
 
     func advance(_ seconds: Double, duration: Double, finished: Bool, held: Bool) {
         guard playing else { return }
-        let next = time + min(seconds, 0.1) * 30
-        let ended = finished && next > 2
-        let overrun = !held && next > duration + 150
+        let next = time + min(seconds, 0.1) * 30 * speed
+        let ended = endFrame == nil && finished && next > 2 && !held
+        let overrun = next >= (endFrame ?? max(duration, 1))
         if ended || overrun {
             if loop {
                 rewind()

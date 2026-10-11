@@ -250,13 +250,31 @@ extension EffectDocument {
         let label = def?.name ?? block.tag
         let base = def?.baseType ?? (block.data.count == 4 ? "AvfxInt" : "")
         if AvfxCatalog.typeTags.contains(block.tag), let enumName = def?.enumName {
-            return PropField(id: id, label: label, tag: block.tag, kind: .info,
-                             read: { [catalog] in .text(catalog.enumCaseName(enumName, block.intValue) ?? "\(block.intValue)") }, write: nil)
+            let choices = (catalog.enums[enumName] ?? []).map { FieldChoice(name: $0.name, value: $0.value) }
+            return PropField(id: id, label: label, tag: block.tag, kind: .choice(choices), read: { .int(block.intValue) },
+                             write: { [weak self] in if case .int(let v) = $0 { self?.applyType(block, ownerClass: cls, value: v) } })
         }
         switch base {
         case "AvfxBool":
-            return PropField(id: id, label: label, tag: block.tag, kind: .bool, read: { .bool(block.intValue == 1) },
-                             write: { if case .bool(let v) = $0 { block.intValue = v ? 1 : 0 } })
+            var field = PropField(id: id, label: label, tag: block.tag, kind: .bool,
+                             read: {
+                                 guard let first = block.data.first else { return .bool(false) }
+                                 return first == 1 ? .bool(true) : first == 0 ? .bool(false) : .int(Int(first))
+                             },
+                             write: { value in
+                                 guard !block.data.isEmpty else { return }
+                                 let byte: UInt8
+                                 switch value {
+                                 case .bool(let on): byte = on ? 1 : 0
+                                 case .int(let raw): byte = UInt8(truncatingIfNeeded: raw)
+                                 default: return
+                                 }
+                                 if block.data[0] == byte { return }
+                                 block.data[0] = byte
+                                 for i in 1..<block.data.count { block.data[i] = 0 }
+                             })
+            field.triState = block.data.count == 1
+            return field
         case "AvfxEnum":
             let choices = (catalog.enums[def?.enumName ?? ""] ?? []).map { FieldChoice(name: $0.name, value: $0.value) }
             return PropField(id: id, label: label, tag: block.tag, kind: .choice(choices), read: { .int(block.intValue) },
@@ -291,13 +309,40 @@ extension EffectDocument {
 
     private func avfxFields(_ blocks: [AvfxBlock], cls: String?, id: String, list: String? = nil) -> [PropField] {
         var seen: [String: Int] = [:]
-        return blocks.compactMap { block in
+        return blocks.flatMap { block -> [PropField] in
             let n = seen[block.tag, default: 0]
             seen[block.tag] = n + 1
-            guard var field = avfxField(block, cls: cls, id: "\(id)#\(block.tag)\(n)", list: list) else { return nil }
+            if list == nil, let target = EffectDocument.indexListTarget(block, cls: cls) { return indexListFields(block, target: target, id: id) }
+            guard var field = avfxField(block, cls: cls, id: "\(id)#\(block.tag)\(n)", list: list) else { return [] }
             if list == nil, field.write != nil, let parent = block.parent, !AvfxCatalog.typeTags.contains(block.tag) {
                 let label = field.label
                 field.unassign = { [weak self] in self?.removeChild(block, from: parent, title: "Remove " + label) }
+            }
+            return [field]
+        }
+    }
+
+    static func indexListTarget(_ block: AvfxBlock, cls: String?) -> String? {
+        guard block.children == nil else { return nil }
+        if block.tag == "TLst" { return "Tex" }
+        if block.tag == "MdNo", cls?.hasPrefix("AvfxParticleData") == true { return "Modl" }
+        return nil
+    }
+
+    private func indexListFields(_ block: AvfxBlock, target: String, id: String) -> [PropField] {
+        let choices = referenceChoices(tag: target == "Tex" ? "TxNo" : "MdNo", cls: target == "Tex" ? nil : "AvfxEmitterDataModel", list: nil) ?? []
+        let title = target == "Tex" ? "Mask Texture" : "Model"
+        return block.data.indices.map { position in
+            var field = PropField(id: "\(id)#\(block.tag)@\(position)", label: "\(title) \(position + 1)", tag: block.tag, kind: .choice(choices),
+                                  read: { position < block.data.count && block.data[position] != 255 ? .int(Int(block.data[position])) : .int(-1) },
+                                  write: {
+                                      guard case .int(let v) = $0, position < block.data.count else { return }
+                                      block.data[position] = v < 0 ? 255 : UInt8(truncatingIfNeeded: v)
+                                  })
+            if block.data.count > 1 {
+                field.unassign = { [weak self] in
+                    self?.performStructural("Remove \(title) \(position + 1)") { if position < block.data.count { block.data.remove(at: position) } }
+                }
             }
             return field
         }

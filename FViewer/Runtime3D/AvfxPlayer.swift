@@ -40,10 +40,12 @@ final class AvfxPlayer {
         let clock = document.clock
         clock.advance(elapsed, duration: duration, finished: simulation.finished, held: simulation.held)
         let target = Float(clock.time)
-        if target < simulation.time - 0.01 { rewindSimulation() }
+        if target < simulation.time - 0.01 || (!clock.playing && abs(simulation.time - target) > 0.001) { rewindSimulation() }
         var guardCount = 0
-        while simulation.time + stepFrames <= target + 0.001 && guardCount < 6000 {
+        while simulation.time < target - 0.001 && guardCount < 6000 {
             guardCount += 1
+            let step = clock.playing ? stepFrames : min(stepFrames, target - simulation.time)
+            if clock.playing && simulation.time + stepFrames > target + 0.001 { break }
             if let release = clock.releaseTime, !appliedRelease, Double(simulation.time) >= release {
                 appliedRelease = true
                 simulation.release()
@@ -52,7 +54,7 @@ final class AvfxPlayer {
                 simulation.trigger(clock.triggers[appliedTriggers].index)
                 appliedTriggers += 1
             }
-            simulation.advance(stepFrames)
+            simulation.advance(step)
         }
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1

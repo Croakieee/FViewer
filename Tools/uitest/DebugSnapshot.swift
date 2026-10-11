@@ -143,7 +143,7 @@ enum DebugDriver {
 
     static func dump(_ label: String) {
         guard let doc = app?.document else { log.append("\(label): no document"); return }
-        log.append("== \(label) sel=\(doc.selectionID ?? "-") curve=\(doc.activeCurveID ?? "-") t=\(doc.clock.time) playing=\(doc.clock.playing) dirty=\(doc.isDirty) undo=\(doc.undoManager.canUndo ? doc.undoManager.undoActionName : "-") tab=\(app?.bottomTab ?? -1) hidden=\(doc.hidden.count) E=\(doc.avfxRoot?.childrenNamed("Emit").count ?? -1) P=\(doc.avfxRoot?.childrenNamed("Ptcl").count ?? -1) file=\(doc.title) exact=\(String(describing: doc.roundTripExact))")
+        log.append("== \(label) sel=\(doc.selectionID ?? "-") curve=\(doc.activeCurveID ?? "-") t=\(doc.clock.time) playing=\(doc.clock.playing) dirty=\(doc.isDirty) undo=\(doc.undoManager.canUndo ? doc.undoManager.undoActionName : "-") tab=\(app?.bottomTab ?? -1) changes=\(doc.changes.modified.sorted().prefix(8))+\(doc.changes.added.count) hidden=\(doc.hidden.count) E=\(doc.avfxRoot?.childrenNamed("Emit").count ?? -1) P=\(doc.avfxRoot?.childrenNamed("Ptcl").count ?? -1) file=\(doc.title) notice=\(app?.notice ?? "-") exact=\(String(describing: doc.roundTripExact))")
         if let node = doc.selectedNode {
             for section in doc.sections(for: node) {
                 log.append("  [\(section.title)] " + section.fields.prefix(14).map { "\($0.label)=\($0.read())" }.joined(separator: "; "))
@@ -170,6 +170,7 @@ enum DebugDriver {
         var flags: NSEvent.ModifierFlags = []
         if parts.contains("shift") { flags.insert(.shift) }
         if parts.contains("cmd") { flags.insert(.command) }
+        if parts.contains("alt") { flags.insert(.option) }
         switch cmd {
         case "wait": delay = n(1)
         case "move": post(.mouseMoved, n(1), n(2))
@@ -180,9 +181,9 @@ enum DebugDriver {
             let count = max(Int(n(3)), 1)
             var queue: [String] = []
             for c in 1...count {
-                queue.append("rawdown \(n(1)) \(n(2)) \(c)")
+                queue.append("rawdown \(n(1)) \(n(2)) \(c) \(parts.dropFirst(3).joined(separator: " "))")
                 queue.append("wait 0.06")
-                queue.append("rawup \(n(1)) \(n(2)) \(c)")
+                queue.append("rawup \(n(1)) \(n(2)) \(c) \(parts.dropFirst(3).joined(separator: " "))")
                 queue.append("wait 0.06")
             }
             queue.append("wait 0.3")
@@ -261,6 +262,251 @@ enum DebugDriver {
                 let ok = (try? AvfxBlock.parseFile([UInt8](doc.serializedData()))) != nil
                 log.append("  tags(\(ok ? "reparse ok" : "REPARSE FAILED")): " + (block.children ?? []).map(\.tag).joined(separator: " "))
             }
+        case "export":
+            if let doc = app?.document {
+                let ids = Set(parts.dropFirst(3))
+                let picked = ids.contains("timelines") ? Set(doc.exportableNodes.filter { $0.tag == "TmLn" }.map(\.id)) : ids.contains("lasttimeline") ? Set(doc.exportableNodes.filter { $0.tag == "TmLn" }.suffix(1).map(\.id)) : ids
+                let data = doc.exportNodes(picked, withDependencies: n(2) != 0)
+                try? data.write(to: URL(fileURLWithPath: dir + "/" + parts[1]))
+                log.append("  exported \(data.count) bytes, deps=\(doc.dependencies(of: picked).count)")
+            }
+        case "import":
+            if let doc = app?.document {
+                do {
+                    let count = try doc.importNodes(Data(contentsOf: URL(fileURLWithPath: dir + "/" + parts[1])), legacy: parts[1].hasSuffix(".vfxedit"))
+                    log.append("  imported \(count)")
+                } catch { log.append("  IMPORT FAILED \(error)") }
+            }
+            delay = 0.5
+        case "cleanup": log.append("  cleanup removed \(app?.document?.cleanUp() ?? -1)"); delay = 0.4
+        case "write": if let doc = app?.document { try? doc.serializedData().write(to: URL(fileURLWithPath: dir + "/" + parts[1])) }
+        case "refs":
+            if let doc = app?.document, let root = doc.avfxRoot {
+                var bad = 0, total = 0
+                for tag in ["Schd"] + EffectDocument.exchangeTags {
+                    for node in root.childrenNamed(tag) {
+                        for r in EffectDocument.nodeReferences(node) { total += 1; let v = r.get(); if v >= root.childrenNamed(r.target).count || v < -1 { bad += 1 } }
+                    }
+                }
+                let reparsed = (try? AvfxBlock.parseFile([UInt8](doc.serializedData()))) != nil
+                log.append("  refs total=\(total) bad=\(bad) reparse=\(reparsed) unused=\(doc.unusedNodes.map(\.id))")
+            }
+        case "sheetshot":
+            if let sheet = window()?.attachedSheet, let view = sheet.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: dir + "/" + parts[1] + ".png"))
+            } else { log.append("no sheet; windows=\(NSApp.windows.count)") }
+        case "endframe": app?.document?.clock.endFrame = n(1) > 0 ? n(1) : nil; delay = 0.3
+        case "play": app?.document?.clock.playing = true; delay = n(1)
+        case "installtex":
+            if let app, let doc = app.document, let node = doc.selectedNode, case .avfx(let block, _, _) = node.payload {
+                do { let u = try app.installTexture(from: URL(fileURLWithPath: (dir as NSString).deletingLastPathComponent + "/" + parts[1]), for: block, in: doc); log.append("  installed \(u.lastPathComponent) path=\(block.stringValue) info=\(app.image(for: block.stringValue).map { "\($0.width)x\($0.height)" } ?? "nil") \(app.textureDescription(block.stringValue))") } catch { log.append("  INSTALL FAILED \(error)") }
+            }
+            delay = 0.5
+        case "exportpng":
+            if let app, let doc = app.document, let node = doc.selectedNode, case .avfx(let block, _, _) = node.payload, let data = app.pngData(for: block.stringValue) { try? data.write(to: URL(fileURLWithPath: dir + "/" + parts[1])); log.append("  png \(data.count) bytes") } else { log.append("  NO PNG") }
+        case "check":
+            if let app, let doc = app.document {
+                var line = "CHECK \(doc.title) exact=\(doc.roundTripExact.map { "\($0)" } ?? "-") status=[\(doc.clock.status)] err=\(app.errorMessage ?? "-") t=\(Int(doc.clock.time)) rows=\(doc.sequencerRows.count) outline=\(doc.outline.count)"
+                if let root = doc.avfxRoot {
+                    var bad = 0
+                    for tag in ["Schd"] + EffectDocument.exchangeTags { for node in root.childrenNamed(tag) { for r in EffectDocument.nodeReferences(node) { let v = r.get(); if v >= root.childrenNamed(r.target).count || v < -1 { bad += 1 } } } }
+                    let all = Set(doc.exportableNodes.map(\.id))
+                    let exported = doc.exportNodes(all, withDependencies: true)
+                    let missingTex = doc.textureSlots.filter { app.textureURL($0.path) == nil }.count
+                    var sections = 0, curves = 0
+                    func walk(_ n: OutlineNode) { sections += doc.sections(for: n).flatMap(\.fields).count; curves += doc.curveGroups(for: n).count; _ = doc.missingFields(for: n); _ = doc.missingCurves(for: n); n.children.forEach(walk) }
+                    doc.outline.forEach(walk)
+                    line += " badrefs=\(bad) export=\(exported.count) missingTex=\(missingTex)/\(doc.textureSlots.count) fields=\(sections) curves=\(curves) graph=\(doc.graph.nodes.count)/\(doc.graph.edges.count) same=\(doc.roundTripExact == true ? Data(root.serialized()) == (try? Data(contentsOf: doc.url)) : false)"
+                } else {
+                    var sections = 0, curves = 0
+                    func walk(_ n: OutlineNode) { sections += doc.sections(for: n).flatMap(\.fields).count; curves += doc.curveGroups(for: n).count; n.children.forEach(walk) }
+                    doc.outline.forEach(walk)
+                    let missing = doc.textureSlots.filter { app.textureURL($0.path) == nil }.map(\.name)
+                    line += " fields=\(sections) curves=\(curves) missingTex=\(missing) graph=\(doc.graph.nodes.count)/\(doc.graph.edges.count)"
+                }
+                log.append(line)
+            } else { log.append("CHECK no document err=\(app?.errorMessage ?? "-")") }
+        case "selftest":
+            if let doc = app?.document {
+                func bytes() -> Data { doc.avfxRoot.map { Data($0.serialized()) } ?? Data((doc.jsonRoot?.serialized() ?? "").utf8) }
+                let original = bytes()
+                let clean = doc.snapshot()
+                var ids: [String] = []
+                func collect(_ n: OutlineNode) { ids.append(n.id); n.children.forEach(collect) }
+                doc.outline.forEach(collect)
+                var fields = 0, channels = 0
+                var badFields: [String] = [], badChannels: [String] = []
+                func reset() { doc.registerUndo("x", since: clean); doc.undo(); doc.rebuildOutline() }
+                for id in ids {
+                    guard let n = doc.node(id) else { continue }
+                    let count = doc.sections(for: n).flatMap(\.fields).count
+                    for index in 0..<count {
+                        guard let node = doc.node(id) else { break }
+                        let list = doc.sections(for: node).flatMap(\.fields)
+                        guard index < list.count, let write = list[index].write else { continue }
+                        fields += 1
+                        let value = list[index].read()
+                        write(value)
+                        if bytes() != original { badFields.append("\(id) \(list[index].label)=\(value)"); reset() }
+                    }
+                    let groups = doc.curveGroups(for: n).count
+                    for g in 0..<groups {
+                        let channelCount = doc.node(id).map { doc.curveGroups(for: $0) }.map { g < $0.count ? $0[g].channels.count : 0 } ?? 0
+                        for c in 0..<channelCount {
+                            guard let node = doc.node(id) else { break }
+                            let all = doc.curveGroups(for: node)
+                            guard g < all.count, c < all[g].channels.count else { continue }
+                            let channel = all[g].channels[c]
+                            channels += 1
+                            let keys = channel.read()
+                            channel.write(keys)
+                            if bytes() != original { badChannels.append("\(all[g].id) \(channel.name) n=\(keys.count)"); reset() }
+                        }
+                    }
+                }
+                log.append("SELFTEST \(doc.title) fields=\(fields) channels=\(channels) badFields(\(badFields.count))=\(badFields.prefix(4)) badChannels(\(badChannels.count))=\(badChannels.prefix(4)) clean=\(bytes() == original)")
+            }
+        case "stress":
+            if let doc = app?.document, doc.avfxRoot != nil {
+                func bytes() -> Data { doc.serializedData() }
+                func health() -> String? {
+                    guard let root = doc.avfxRoot, let parsed = try? AvfxBlock.parseFile([UInt8](bytes())) else { return "reparse failed" }
+                    for tag in ["Schd"] + EffectDocument.exchangeTags { for node in root.childrenNamed(tag) { for r in EffectDocument.nodeReferences(node) { let v = r.get(); if v >= root.childrenNamed(r.target).count || v < -1 { return "bad ref \(tag)->\(r.target) \(v)" } } } }
+                    let counts = ["TlCn": "TmLn", "EmCn": "Emit", "PrCn": "Ptcl", "EfCn": "Efct", "BdCn": "Bind", "TxCn": "Tex", "MdCn": "Modl"]
+                    for (field, tag) in counts where parsed.int(field) != parsed.childrenNamed(tag).count { return "count \(field)=\(parsed.int(field)) vs \(parsed.childrenNamed(tag).count)" }
+                    _ = AvfxSimulation(schema: AvfxSchemaReader.read(parsed))
+                    return nil
+                }
+                let original = bytes()
+                var problems: [String] = []
+                var ops = 0
+                for id in doc.exportableNodes.map(\.id) {
+                    guard let node = doc.exportableNodes.first(where: { $0.id == id }) else { continue }
+                    if node.tag != "Modl" {
+                        doc.duplicateTopLevel(node.block); ops += 1
+                        if let h = health() { problems.append("dup \(id): \(h)") }
+                        doc.undo()
+                    }
+                    if let fresh = doc.exportableNodes.first(where: { $0.id == id }) {
+                        doc.deleteTopLevel(fresh.block); ops += 1
+                        if let h = health() { problems.append("del \(id): \(h)") }
+                        let sim = AvfxSimulation(schema: AvfxSchemaReader.read(doc.avfxRoot!))
+                        sim.restart()
+                        for _ in 0..<80 { sim.advance(0.5) }
+                        doc.undo()
+                    }
+                    if bytes() != original { problems.append("undo mismatch after \(id)"); break }
+                }
+                for tag in ["TmLn", "Emit", "Ptcl", "Efct", "Bind", "Tex"] { doc.addTopLevel(tag); ops += 1; if let h = health() { problems.append("add \(tag): \(h)") } }
+                for _ in 0..<6 { doc.undo() }
+                log.append("STRESS \(doc.title) ops=\(ops) problems=\(problems.prefix(5)) restored=\(bytes() == original)")
+            }
+        case "jsonstress":
+            if let doc = app?.document, doc.jsonRoot != nil {
+                func text() -> String { doc.jsonRoot?.serialized() ?? "" }
+                let original = text()
+                var ids: [String] = []
+                func collect(_ n: OutlineNode) { if !n.actions.isEmpty { ids.append(n.id) }; n.children.forEach(collect) }
+                doc.outline.forEach(collect)
+                var ops = 0
+                var problems: [String] = []
+                for id in ids {
+                    let titles = doc.node(id)?.actions.map(\.title) ?? []
+                    for title in titles {
+                        guard let action = doc.node(id)?.actions.first(where: { $0.title == title }) else { continue }
+                        let before = doc.undoManager.canUndo
+                        action.perform(); ops += 1
+                        if (try? JSONParser.parse(Data(text().utf8))) == nil { problems.append("\(id) \(title): invalid json") }
+                        if doc.undoManager.canUndo && (!before || doc.undoManager.undoActionName != "") { doc.undo() }
+                        if text() != original { problems.append("\(id) \(title): undo mismatch"); doc.undo() }
+                        if text() != original { break }
+                    }
+                    if text() != original { break }
+                }
+                log.append("JSONSTRESS \(doc.title) nodes=\(ids.count) ops=\(ops) problems=\(problems.prefix(4)) restored=\(text() == original)")
+            }
+        case "mod":
+            if let app, let doc = app.document {
+                do {
+                    let textures = doc.textureSlots.filter { app.isCustomTexture($0.path) }.map(\.path)
+                    let data = try app.modArchive(ModDescription(name: "Test Mod", author: "me"), effectPath: PenumbraExport.guessEffectPath(doc), textures: textures)
+                    try data.write(to: URL(fileURLWithPath: dir + "/" + parts[1]))
+                    log.append("MOD \(data.count) bytes path=\(PenumbraExport.guessEffectPath(doc)) custom=\(textures)")
+                } catch { log.append("MOD FAILED \(error)") }
+            }
+        case "modsheet": app?.modExport = true; delay = 1.0
+        case "cmdkey":
+            if let w = window() {
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    if let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [.command], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, characters: parts[1], charactersIgnoringModifiers: parts[1], isARepeat: false, keyCode: 0) { w.sendEvent(e) }
+                }
+            }
+            delay = 0.4
+        case "speed": app?.document?.clock.speed = n(1)
+        case "background": app?.viewportBackground = Int(n(1)); delay = 0.4
+        case "clip": log.append("  clipboard=\(KeyClipboard.entries.map { "\($0.name):\($0.keys.map(\.time))" })")
+        case "rewirestress":
+            if let doc = app?.document {
+                func bytes() -> Data { doc.avfxRoot != nil ? doc.serializedData() : Data((doc.jsonRoot?.serialized() ?? "").utf8) }
+                let original = bytes()
+                var ops = 0, skipped = 0
+                var problems: [String] = []
+                for id in doc.graph.edges.map(\.id) {
+                    let graph = doc.graph
+                    guard let edge = graph.edges.first(where: { $0.id == id }) else { continue }
+                    guard let target = graph.nodes.first(where: { doc.canRetarget(edge, to: $0.id) })?.id else { skipped += 1; continue }
+                    doc.retarget(edge, to: target); ops += 1
+                    let after = doc.graph
+                    if !after.edges.contains(where: { $0.from == edge.from && $0.to == target }) { problems.append("\(id) -> \(target): edge missing") }
+                    if doc.avfxRoot != nil {
+                        if (try? AvfxBlock.parseFile([UInt8](bytes()))) == nil { problems.append("\(id): reparse failed") }
+                    } else if (try? JSONParser.parse(bytes())) == nil { problems.append("\(id): invalid json") }
+                    doc.undo()
+                    if bytes() != original { problems.append("\(id): undo mismatch"); break }
+                }
+                log.append("REWIRE \(doc.title) edges=\(doc.graph.edges.count) ops=\(ops) skipped=\(skipped) problems=\(problems.prefix(4)) restored=\(bytes() == original)")
+            }
+        case "solo":
+            if let doc = app?.document { doc.setSolo(n(1) != 0); log.append("  solo=\(doc.soloPreview) range=\(doc.clock.startFrame)…\(String(describing: doc.clock.endFrame)) isolate=\(doc.isolateSelection) t=\(doc.clock.time) playing=\(doc.clock.playing)") }
+            delay = 0.4
+        case "time": if let doc = app?.document { log.append("  t=\(doc.clock.time) range=\(doc.clock.startFrame)…\(String(describing: doc.clock.endFrame))") }
+        case "highlight": app?.highlightSelection = n(1) != 0; delay = 0.3
+        case "edges": if let doc = app?.document { log.append("  edges: " + doc.graph.edges.filter { $0.from.hasPrefix(parts[1]) }.map { "\($0.from)>\($0.to)" }.joined(separator: " ") + " undo=\(doc.undoManager.canUndo ? doc.undoManager.undoActionName : "-")") }
+        case "gltftest":
+            if let doc = app?.document, let root = doc.avfxRoot {
+                var lines: [String] = []
+                for (i, model) in root.childrenNamed("Modl").enumerated() {
+                    let before = (model.child("VDrw")?.data ?? [], model.child("VIdx")?.data ?? [])
+                    let mesh = Gltf.mesh(from: model)
+                    let url = URL(fileURLWithPath: dir + "/model\(i).glb")
+                    do {
+                        try Data(Gltf.glb(mesh, name: "Model \(i)")).write(to: url)
+                        let loaded = try Gltf.load(url)
+                        let data = Gltf.vertexData(loaded)
+                        var vertexDiff = 0, worst = 0
+                        if data.vertices.count == before.0.count { for k in data.vertices.indices where data.vertices[k] != before.0[k] { vertexDiff += 1; worst = max(worst, abs(Int(data.vertices[k]) - Int(before.0[k]))) } } else { vertexDiff = -1 }
+                        lines.append("m\(i): v=\(mesh.positions.count) tri=\(mesh.indices.count / 3) vertexBytesDiff=\(vertexDiff)/\(before.0.count) worst=\(worst) indicesSame=\(data.indices == before.1) notes=\(loaded.notes)")
+                        if i == 0 {
+                            try doc.applyMesh(loaded, to: model, emitPoints: false)
+                            try doc.applyMesh(loaded, to: model, emitPoints: true)
+                            let ok = (try? AvfxBlock.parseFile([UInt8](doc.serializedData()))) != nil
+                            lines.append("apply: reparse=\(ok) tags=\((model.children ?? []).map(\.tag)) emit=\((model.child("VEmt")?.data.count ?? 0) / 28)")
+                            doc.undo(); doc.undo()
+                        }
+                    } catch { lines.append("m\(i): FAILED \(error)") }
+                }
+                log.append("GLTF \(doc.title) " + lines.joined(separator: " | "))
+            }
+        case "gltfload":
+            do {
+                let mesh = try Gltf.load(URL(fileURLWithPath: (dir as NSString).deletingLastPathComponent + "/" + parts[1]))
+                log.append("GLTFLOAD \(parts[1]) v=\(mesh.positions.count) idx=\(mesh.indices) n0=\(mesh.normals.first ?? .zero) t0=\(mesh.tangents.first ?? .zero) uv=\(mesh.uvs[0]) notes=\(mesh.notes)")
+                if let doc = app?.document, let root = doc.avfxRoot {
+                    doc.addTopLevel("Modl")
+                    if let model = root.childrenNamed("Modl").last { try doc.applyMesh(mesh, to: model, emitPoints: false); log.append("  applied: models=\(root.childrenNamed("Modl").count) bytes=\(model.child("VDrw")?.data.count ?? 0) reparse=\((try? AvfxBlock.parseFile([UInt8](doc.serializedData()))) != nil) MdCn=\((try? AvfxBlock.parseFile([UInt8](doc.serializedData())))?.int("MdCn") ?? -1)") }
+                }
+            } catch { log.append("GLTFLOAD FAILED \(error)") }
         case "shot":
             if let w = window(), let view = w.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: rep)

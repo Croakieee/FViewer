@@ -52,6 +52,7 @@ struct ViewportScene {
     var showEmitters = false
     var showBindPoints = false
     var filter = VisibilityFilter()
+    var highlight: VisibilityKey?
     var texture: CGImage?
     var shading = 1
     var revision = 0
@@ -94,6 +95,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var showEmitters = false
     private var showBindPoints = false
     private var filter = VisibilityFilter()
+    private var highlight: VisibilityKey?
+    private var highlightDraws: [ParticleDraw] = []
     private var particleRenderer: ParticleRenderer?
     private var player: AvfxPlayer?
     private var effectTextures: [String: LoadedTexture] = [:]
@@ -237,6 +240,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             particleRenderer?.reset()
         }
         let draws = player.frame(elapsed: elapsed, camera: state, filter: filter)
+        highlightDraws = []
+        if let highlight, filter.isolated == nil, effectShading == 0, let simulation = player.simulation {
+            highlightDraws = simulation.render(camera: state, filter: VisibilityFilter(hidden: filter.hidden, isolated: highlight))
+        }
         return (draws, player.simulation?.schema.particles ?? [])
     }
 
@@ -274,6 +281,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         showEmitters = scene.showEmitters
         showBindPoints = scene.showBindPoints
         filter = scene.filter
+        highlight = scene.highlight
         guard scene.revision != sceneRevision else { return }
         sceneRevision = scene.revision
         items = []
@@ -368,6 +376,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if let effect, let particleRenderer {
             particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: camera.eye,
                                   shading: effectShading)
+            if !highlightDraws.isEmpty {
+                particleRenderer.drawHighlight(encoder, draws: highlightDraws, particles: effect.particles, view: viewMatrix, projection: projection,
+                                               camera: camera.eye, color: SIMD4(1.0, 0.72, 0.28, 0.5))
+            }
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentSamplerState(sampler, index: 0)
             encoder.setCullMode(.none)
@@ -463,6 +475,7 @@ struct MetalViewport: NSViewRepresentable {
     let scene: ViewportScene
     let document: EffectDocument
     let app: AppModel
+    var background = 0
 
     func makeCoordinator() -> ViewportRenderer? { ViewportRenderer(camera: camera) }
 
@@ -483,6 +496,8 @@ struct MetalViewport: NSViewRepresentable {
     }
 
     func updateNSView(_ view: ViewportMTKView, context: Context) {
+        let shade = AppModel.backgrounds[min(max(background, 0), AppModel.backgrounds.count - 1)].value
+        view.clearColor = MTLClearColor(red: shade, green: shade, blue: shade, alpha: 1)
         context.coordinator?.document = document
         context.coordinator?.app = app
         context.coordinator?.update(scene)
