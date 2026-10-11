@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		4E87B0013080000000F9F69E /* VfxCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4E87B0033080000000F9F69E /* VfxCore */; };
+		4E87B0023080000000F9F69E /* VfxMetal in Frameworks */ = {isa = PBXBuildFile; productRef = 4E87B0043080000000F9F69E /* VfxMetal */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		4E87A46B307BDFDF00F9F69E /* FViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +28,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4E87B0013080000000F9F69E /* VfxCore in Frameworks */,
+				4E87B0023080000000F9F69E /* VfxMetal in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +72,8 @@
 			);
 			name = FViewer;
 			packageProductDependencies = (
+				4E87B0033080000000F9F69E /* VfxCore */,
+				4E87B0043080000000F9F69E /* VfxMetal */,
 			);
 			productName = FViewer;
 			productReference = 4E87A46B307BDFDF00F9F69E /* FViewer.app */;
@@ -94,6 +103,9 @@
 			);
 			mainGroup = 4E87A462307BDFDF00F9F69E;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4E87B0053080000000F9F69E /* XCLocalSwiftPackageReference "Packages/VfxRuntime" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 4E87A46C307BDFDF00F9F69E /* Products */;
 			projectDirPath = "";
@@ -325,6 +337,24 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4E87B0053080000000F9F69E /* XCLocalSwiftPackageReference "Packages/VfxRuntime" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/VfxRuntime;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4E87B0033080000000F9F69E /* VfxCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VfxCore;
+		};
+		4E87B0043080000000F9F69E /* VfxMetal */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VfxMetal;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 4E87A463307BDFDF00F9F69E /* Project object */;
 }

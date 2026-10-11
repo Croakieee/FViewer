@@ -5,9 +5,11 @@ enum FieldValue: Equatable {
     case double(Double)
     case bool(Bool)
     case text(String)
+    case color(Double, Double, Double, Double)
 
     var number: Double {
         switch self {
+        case .color(let r, _, _, _): return r
         case .int(let v): return Double(v)
         case .double(let v): return v
         case .bool(let v): return v ? 1 : 0
@@ -24,6 +26,7 @@ enum FieldKind {
     case choice([FieldChoice])
     case text
     case info
+    case color(alpha: Bool)
 }
 
 struct FieldChoice: Hashable {
@@ -38,6 +41,8 @@ struct PropField: Identifiable {
     let kind: FieldKind
     let read: () -> FieldValue
     let write: ((FieldValue) -> Void)?
+    var animate: (() -> Void)?
+    var unassign: (() -> Void)? = nil
 }
 
 struct PropSection: Identifiable {
@@ -54,6 +59,9 @@ struct CurveChannel: Identifiable {
     let write: ([CurveKeyPoint]) -> Void
     let snapshot: () -> () -> Void
     var settings: [PropField] = []
+    var extrapolation: () -> (pre: Int, post: Int) = { (0, 0) }
+    var colorComponent: Int?
+    var clampUnit = false
 }
 
 struct CurveGroup: Identifiable {
@@ -63,6 +71,34 @@ struct CurveGroup: Identifiable {
     let isAngle: Bool
     var channels: [CurveChannel]
     var settings: [PropField]
+    var remove: (() -> Void)?
+}
+
+struct MissingCurve: Identifiable {
+    let id: String
+    let title: String
+    let create: () -> Void
+}
+
+enum VisibilityKey: Hashable {
+    case timeline(Int)
+    case emitter(Int)
+    case particle(Int)
+}
+
+struct VisibilityFilter: Equatable {
+    var hidden: Set<VisibilityKey> = []
+    var isolated: VisibilityKey?
+
+    var isEmpty: Bool { hidden.isEmpty && isolated == nil }
+}
+
+struct NodeAction: Identifiable {
+    let id: String
+    let title: String
+    let symbol: String
+    var destructive = false
+    let perform: () -> Void
 }
 
 enum NodeTint {
@@ -100,6 +136,8 @@ final class OutlineNode: Identifiable {
     var tint: NodeTint
     var children: [OutlineNode] = []
     var payload: NodePayload
+    var visibility: VisibilityKey?
+    var actions: [NodeAction] = []
 
     init(id: String, title: String, detail: String = "", symbol: String, tint: NodeTint, payload: NodePayload) {
         self.id = id
@@ -120,6 +158,9 @@ struct SequencerRow: Identifiable {
     let tint: NodeTint
     let depth: Int
     let nodeID: String?
+    var base: Double = 0
+    var startField: PropField?
+    var endField: PropField?
 }
 
 struct TextureSlot: Identifiable {

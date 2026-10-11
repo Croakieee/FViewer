@@ -6,8 +6,8 @@ import simd
 final class ViewportCamera: ObservableObject {
     @Published var yaw: Float = 0.7
     @Published var pitch: Float = 0.45
-    @Published var distance: Float = 6
-    @Published var target = SIMD3<Float>(0, 0.8, 0)
+    @Published var distance: Float = 8
+    @Published var target = SIMD3<Float>(0, 1, 0)
 
     var eye: SIMD3<Float> {
         target + distance * SIMD3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
@@ -31,8 +31,8 @@ final class ViewportCamera: ObservableObject {
 
     func frame(_ bounds: (min: SIMD3<Float>, max: SIMD3<Float>)?) {
         guard let bounds else {
-            target = SIMD3(0, 0.8, 0)
-            distance = 6
+            target = SIMD3(0, 1, 0)
+            distance = 8
             return
         }
         target = (bounds.min + bounds.max) / 2
@@ -47,6 +47,11 @@ final class ViewportCamera: ObservableObject {
 
 struct ViewportScene {
     var meshes: [(mesh: MeshData, highlighted: Bool)] = []
+    var showEffect = true
+    var effectShading = 0
+    var showEmitters = false
+    var showBindPoints = false
+    var filter = VisibilityFilter()
     var texture: CGImage?
     var shading = 1
     var revision = 0
@@ -84,6 +89,19 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var grid: [DrawItem] = []
     private var items: [DrawItem] = []
     private var sceneRevision = -1
+    private var showEffect = true
+    private var effectShading = 0
+    private var showEmitters = false
+    private var showBindPoints = false
+    private var filter = VisibilityFilter()
+    private var particleRenderer: ParticleRenderer?
+    private var player: AvfxPlayer?
+    private var effectTextures: [String: LoadedTexture] = [:]
+    private var texturePaths: [String] = []
+    private var libraryToken = -1
+    private var lastFrame = CACurrentMediaTime()
+    weak var document: EffectDocument?
+    weak var app: AppModel?
 
     init?(camera: ViewportCamera) {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { return nil }
@@ -140,6 +158,86 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         white = device.makeTexture(descriptor: whiteDescriptor)
         white?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: [UInt8](repeating: 255, count: 4), bytesPerRow: 4)
         buildGrid()
+        particleRenderer = ParticleRenderer(device: device, pixelFormat: .bgra8Unorm, depthFormat: .depth32Float, sampleCount: 4)
+        particleRenderer?.textureProvider = { [weak self] index in self?.effectTexture(index) }
+    }
+
+    private func effectTexture(_ index: Int) -> LoadedTexture? {
+        guard index >= 0, index < texturePaths.count else { return nil }
+        let path = texturePaths[index]
+        if let cached = effectTextures[path] { return cached }
+        guard let decoded = app?.decodedTexture(for: path), let texture = ParticleRenderer.makeTexture(device, decoded) else { return nil }
+        let loaded = LoadedTexture(texture: texture, alphaOnly: decoded.alphaOnly)
+        effectTextures[path] = loaded
+        return loaded
+    }
+
+    private func overlayItems() -> [DrawItem] {
+        guard let simulation = player?.simulation, showEmitters || showBindPoints else { return [] }
+        var lines: [(SIMD3<Float>, SIMD4<Float>)] = []
+        var points: [MeshVertex] = []
+        if showEmitters {
+            for marker in simulation.emitterMarkers() {
+                let origin = Math3D.point(marker.world, .zero)
+                let colors: [SIMD4<Float>] = [SIMD4(0.95, 0.3, 0.3, 1), SIMD4(0.45, 0.85, 0.3, 1), SIMD4(0.3, 0.55, 1, 1)]
+                for (axis, color) in zip([SIMD3<Float>(1, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 0, 1)], colors) {
+                    let tip = origin + Math3D.direction(marker.world, axis) * 0.3
+                    lines.append((origin, color))
+                    lines.append((tip, color))
+                }
+                let tint = ParticleRenderer.debugColor(marker.index + 7)
+                points.append(MeshVertex(position: origin, normal: .zero, color: SIMD4(1, 1, 1, 1), uv: .zero))
+                for point in marker.points.prefix(400) {
+                    points.append(MeshVertex(position: Math3D.point(marker.world, point), normal: .zero, color: tint, uv: .zero))
+                }
+            }
+        }
+        if showBindPoints {
+            let color = SIMD4<Float>(1, 0.63, 0.16, 1)
+            for point in simulation.usedBindPoints {
+                for axis in [SIMD3<Float>(0.08, 0, 0), SIMD3(0, 0.08, 0), SIMD3(0, 0, 0.08)] {
+                    lines.append((point - axis, color))
+                    lines.append((point + axis, color))
+                }
+            }
+            let body = SIMD4<Float>(1, 1, 1, 0.35)
+            let figure: [(SIMD3<Float>, SIMD3<Float>)] = [
+                (SIMD3(0, 0, 0), SIMD3(0, 1.45, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(0.2, 1.42, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(-0.33, 0.78, 0)),
+                (SIMD3(0.2, 1.42, 0), SIMD3(0.33, 0.78, 0)), (SIMD3(-0.1, 0.95, 0), SIMD3(-0.1, 0, 0)), (SIMD3(0.1, 0.95, 0), SIMD3(0.1, 0, 0)),
+                (SIMD3(-0.1, 0.95, 0), SIMD3(0.1, 0.95, 0)),
+            ]
+            for segment in figure {
+                lines.append((segment.0, body))
+                lines.append((segment.1, body))
+            }
+            for i in 0..<16 {
+                let a = Float(i) / 16 * 2 * .pi, b = Float(i + 1) / 16 * 2 * .pi
+                lines.append((SIMD3(cos(a) * 0.12, 1.6 + sin(a) * 0.13, 0), body))
+                lines.append((SIMD3(cos(b) * 0.12, 1.6 + sin(b) * 0.13, 0), body))
+            }
+        }
+        var items: [DrawItem] = []
+        if let item = lineItem(lines) { items.append(item) }
+        if !points.isEmpty, let buffer = device.makeBuffer(bytes: points, length: MemoryLayout<MeshVertex>.stride * points.count) {
+            items.append(DrawItem(vertices: buffer, indices: nil, count: points.count, primitive: .point, tint: SIMD4(1, 1, 1, 1), lit: false,
+                                  textured: false, wire: false, pointSize: 6))
+        }
+        return items
+    }
+
+    private func effectDraws(elapsed: Double, camera state: CameraState) -> (draws: [ParticleDraw], particles: [RParticle])? {
+        guard showEffect, let document, document.format == .avfx else { return nil }
+        if player?.document !== document { player = AvfxPlayer(document: document) }
+        guard let player else { return nil }
+        let token = app?.libraryToken ?? 0
+        if player.schemaChanged || token != libraryToken {
+            if token != libraryToken { effectTextures = [:] }
+            libraryToken = token
+            texturePaths = document.textureSlots.map(\.path)
+            particleRenderer?.reset()
+        }
+        let draws = player.frame(elapsed: elapsed, camera: state, filter: filter)
+        return (draws, player.simulation?.schema.particles ?? [])
     }
 
     private func lineItem(_ points: [(SIMD3<Float>, SIMD4<Float>)]) -> DrawItem? {
@@ -171,6 +269,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     func update(_ scene: ViewportScene) {
+        showEffect = scene.showEffect
+        effectShading = scene.effectShading
+        showEmitters = scene.showEmitters
+        showBindPoints = scene.showBindPoints
+        filter = scene.filter
         guard scene.revision != sceneRevision else { return }
         sceneRevision = scene.revision
         items = []
@@ -233,6 +336,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let projection = ViewportRenderer.perspective(fovY: 0.75, aspect: aspect, near: max(camera.distance * 0.01, 0.01), far: 2000)
         let viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
         let viewProjection = projection * viewMatrix
+        let now = CACurrentMediaTime()
+        let elapsed = now - lastFrame
+        lastFrame = now
+        let forward = simd_normalize(camera.eye - camera.target)
+        let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
+        let cameraState = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: simd_cross(forward, right), z: forward),
+                                      fovY: 0.75, viewportHeight: Float(view.drawableSize.height))
+        let effect = effectDraws(elapsed: elapsed, camera: cameraState)
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
         encoder.setCullMode(.none)
@@ -252,6 +363,23 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 } else {
                     encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
                 }
+            }
+        }
+        if let effect, let particleRenderer {
+            particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: camera.eye,
+                                  shading: effectShading)
+            encoder.setRenderPipelineState(pipeline)
+            encoder.setFragmentSamplerState(sampler, index: 0)
+            encoder.setCullMode(.none)
+            for item in overlayItems() {
+                var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
+                                        options: SIMD4(0, 0, item.pointSize, 0))
+                encoder.setDepthStencilState(overlayDepthState)
+                encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
+                encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentTexture(white, index: 0)
+                encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
             }
         }
         encoder.endEncoding()
@@ -333,6 +461,8 @@ extension Notification.Name {
 struct MetalViewport: NSViewRepresentable {
     let camera: ViewportCamera
     let scene: ViewportScene
+    let document: EffectDocument
+    let app: AppModel
 
     func makeCoordinator() -> ViewportRenderer? { ViewportRenderer(camera: camera) }
 
@@ -346,11 +476,15 @@ struct MetalViewport: NSViewRepresentable {
         view.delegate = context.coordinator
         view.camera = camera
         view.preferredFramesPerSecond = 60
+        context.coordinator?.document = document
+        context.coordinator?.app = app
         context.coordinator?.update(scene)
         return view
     }
 
     func updateNSView(_ view: ViewportMTKView, context: Context) {
+        context.coordinator?.document = document
+        context.coordinator?.app = app
         context.coordinator?.update(scene)
     }
 }

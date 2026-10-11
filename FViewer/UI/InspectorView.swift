@@ -81,6 +81,14 @@ struct FieldControl: View {
             TextValueField(value: { if case .text(let s) = value { return s }; return "" }()) {
                 document.commit(field, from: value, to: .text($0))
             }
+        case .color(let alpha):
+            let current: SIMD4<Double> = { if case .color(let r, let g, let b, let a) = value { return SIMD4(r, g, b, a) }; return SIMD4(1, 1, 1, 1) }()
+            ColorField(color: current, alpha: alpha,
+                       onLive: { document.setLive(field, .color($0.x, $0.y, $0.z, $0.w)) },
+                       onCommit: { old, new in
+                           field.write?(.color(old.x, old.y, old.z, old.w))
+                           document.commit(field, from: .color(old.x, old.y, old.z, old.w), to: .color(new.x, new.y, new.z, new.w))
+                       })
         case .info:
             Text({ if case .text(let s) = value { return s }; return "\(value.number)" }())
                 .font(Theme.font).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).frame(height: 20)
@@ -91,6 +99,7 @@ struct FieldControl: View {
 struct FieldRows: View {
     @ObservedObject var document: EffectDocument
     let fields: [PropField]
+    @Environment(\.labelWidth) private var labelWidth
 
     var body: some View {
         ForEach(FieldRowItem.group(fields)) { item in
@@ -98,18 +107,27 @@ struct FieldRows: View {
             case .single(let field):
                 HStack(spacing: 8) {
                     if case .bool = field.kind {
-                        Color.clear.frame(width: 110, height: 1)
+                        Color.clear.frame(width: labelWidth, height: 1)
                         FieldControl(document: document, field: field, label: field.label)
                     } else {
                         Text(field.label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
-                            .frame(width: 110, alignment: .trailing).help("\(field.label) [\(field.tag)]")
+                            .frame(width: labelWidth, alignment: .trailing).help("\(field.label) [\(field.tag)]")
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                if let unassign = field.unassign { Button("Remove Field from File", role: .destructive, action: unassign) }
+                            }
                         FieldControl(document: document, field: field)
+                    }
+                    if let animate = field.animate {
+                        Image(systemName: "diamond").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                            .frame(width: 14, height: 20).contentShape(Rectangle())
+                            .onTapGesture(perform: animate).help("Animate this value with keyframes")
                     }
                 }
             case .vector(let prefix, let parts):
                 HStack(alignment: .top, spacing: 8) {
                     Text(prefix).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
-                        .frame(width: 110, height: 20, alignment: .trailing)
+                        .frame(width: labelWidth, height: 20, alignment: .trailing)
                     VStack(spacing: 1) {
                         ForEach(Array(parts.enumerated()), id: \.element.id) { index, field in
                             FieldControl(document: document, field: field, label: String(field.label.suffix(1)), roundTop: index == 0,
@@ -180,8 +198,9 @@ struct InspectorView: View {
             EditorHeader(symbol: "slider.horizontal.3", title: "Properties") { Spacer() }
             HStack(spacing: 0) {
                 VStack(spacing: 2) {
-                    tabButton(0, "wrench.adjustable", "Свойства")
-                    tabButton(1, "photo", "Текстуры")
+                    tabButton(0, "wrench.adjustable", "Properties")
+                    tabButton(1, "photo", "Textures")
+                    tabButton(2, "info.circle", "Effect Info")
                     Spacer()
                 }
                 .padding(.top, 6)
@@ -189,8 +208,9 @@ struct InspectorView: View {
                 .background(Color(white: 0.157))
                 ScrollView {
                     VStack(spacing: 6) {
-                        if tab == 0 { properties } else { textures }
+                        if tab == 0 { properties } else if tab == 1 { textures } else { info }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
                 }
                 .background(Theme.panel)
@@ -209,18 +229,43 @@ struct InspectorView: View {
             .help(help)
     }
 
+    private func actionButton(_ action: NodeAction) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: action.symbol).font(.system(size: 9))
+            Text(action.title).font(Theme.font)
+        }
+        .foregroundStyle(action.destructive ? Color(red: 1, green: 0.5, blue: 0.45) : Theme.text)
+        .padding(.horizontal, 8)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action.perform)
+    }
+
     @ViewBuilder private var properties: some View {
         if let node = document.selectedNode {
             let sections = document.sections(for: node)
             let curves = document.curveGroups(for: node)
+            let missing = document.missingCurves(for: node)
+            let missingFields = document.missingFields(for: node)
             HStack(spacing: 6) {
                 Image(systemName: node.symbol).foregroundStyle(node.tint.color)
                 Text(node.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
                 Text(node.detail).font(Theme.font).foregroundStyle(Theme.dim).lineLimit(1)
                 Spacer()
+                if let key = node.visibility {
+                    HeaderButton(symbol: document.hidden.contains(key) ? "eye.slash" : "eye", help: "Show or hide in the viewport") {
+                        document.toggleHidden(key)
+                    }
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
+            if !node.actions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) { ForEach(node.actions) { actionButton($0) } }.padding(.horizontal, 8)
+                }
+            }
             if let path = texturePath(for: node, sections: sections) {
                 Panel(title: "Preview") { TexturePreview(path: path) }
             }
@@ -229,18 +274,42 @@ struct InspectorView: View {
                     FieldRows(document: document, fields: section.fields)
                 }
             }
-            if !curves.isEmpty {
+            if !missingFields.isEmpty {
+                addMenu("Add Field", missingFields).padding(.horizontal, 14)
+            }
+            if !curves.isEmpty || !missing.isEmpty {
                 Panel(title: "Animation", trailing: "\(curves.count)") {
                     ForEach(curves) { group in curveRow(group) }
+                    if !missing.isEmpty { addMenu("Add Curve", missing) }
                 }
             }
-            if sections.isEmpty && curves.isEmpty {
-                Text("У этого узла нет собственных полей — выберите вложенный элемент.").font(Theme.font).foregroundStyle(Theme.dim)
+            if sections.isEmpty && curves.isEmpty && missing.isEmpty && node.actions.isEmpty {
+                Text("This node has no fields of its own. Select one of its children.").font(Theme.font).foregroundStyle(Theme.dim)
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
-            Text("Ничего не выбрано").font(Theme.font).foregroundStyle(Theme.dim).padding(10)
+            Text("Nothing selected").font(Theme.font).foregroundStyle(Theme.dim).padding(10)
         }
+    }
+
+    private func addMenu(_ title: String, _ items: [MissingCurve]) -> some View {
+        Menu {
+            ForEach(items) { item in Button(item.title) { item.create() } }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 9, weight: .bold))
+                Text(title).font(Theme.font)
+                Spacer()
+                Text("\(items.count) available").font(Theme.small).foregroundStyle(Theme.dim)
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 6)
+            .frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
     }
 
     private func curveRow(_ group: CurveGroup) -> some View {
@@ -255,8 +324,12 @@ struct InspectorView: View {
             .frame(width: 18, alignment: .leading)
             Text(group.title).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
             Spacer(minLength: 4)
-            Text("\(keyCount) кл.").font(Theme.small).foregroundStyle(Theme.dim)
-            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").font(.system(size: 9)).foregroundStyle(Theme.dim)
+            Text("\(keyCount) keys").font(Theme.small).foregroundStyle(Theme.dim)
+            if let remove = group.remove {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
+                    .frame(width: 14, height: 20).contentShape(Rectangle())
+                    .onTapGesture(perform: remove).help("Remove this curve from the file")
+            }
         }
         .padding(.horizontal, 6)
         .frame(height: 20)
@@ -271,7 +344,7 @@ struct InspectorView: View {
     @ViewBuilder private var textures: some View {
         let slots = document.textureSlots
         if slots.isEmpty {
-            Text("В эффекте нет текстур").font(Theme.font).foregroundStyle(Theme.dim).padding(10)
+            Text("This effect has no textures").font(Theme.font).foregroundStyle(Theme.dim).padding(10)
         }
         ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
             Panel(title: "\(index) · \(slot.name)") {
@@ -283,6 +356,27 @@ struct InspectorView: View {
                             tab = 0
                         }
                     }
+            }
+        }
+    }
+
+    @ViewBuilder private var info: some View {
+        ForEach(Array(document.report.enumerated()), id: \.offset) { _, section in
+            Panel(title: section.title) {
+                ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(Theme.font).foregroundStyle(Theme.text).frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        Panel(title: "Textures") {
+            ForEach(document.textureSlots) { slot in
+                HStack(spacing: 6) {
+                    Image(systemName: app.textureURL(slot.path) == nil ? "exclamationmark.triangle" : "checkmark.circle").font(.system(size: 10))
+                        .foregroundStyle(app.textureURL(slot.path) == nil ? Color.orange : Color.green)
+                    Text(slot.path).font(Theme.small).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.head)
+                    Spacer(minLength: 0)
+                }
             }
         }
     }

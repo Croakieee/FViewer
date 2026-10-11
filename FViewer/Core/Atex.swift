@@ -53,16 +53,16 @@ enum Atex {
     private static let header = 80
 
     static func decode(_ data: [UInt8]) throws -> DecodedTexture {
-        guard data.count >= header else { throw TexError.invalid("Файл текстуры слишком мал (\(data.count) байт)") }
+        guard data.count >= header else { throw TexError.invalid("Texture file is too small (\(data.count) bytes)") }
         let rawFormat = data.u32(4)
         let width = Int(data.u16(8))
         let height = Int(data.u16(10))
         let mips = Int(data[14] & 0x7f)
         let surface = Int(data.u32(28))
-        guard width > 0, height > 0 else { throw TexError.invalid("Нулевой размер текстуры") }
-        guard surface >= header, surface <= data.count else { throw TexError.invalid("Неверное смещение поверхности") }
+        guard width > 0, height > 0 else { throw TexError.invalid("Texture has zero size") }
+        guard surface >= header, surface <= data.count else { throw TexError.invalid("Invalid surface offset") }
         guard let format = TexFormat(rawValue: rawFormat) else {
-            throw TexError.invalid(String(format: "Неизвестный формат текстуры 0x%04x", rawFormat))
+            throw TexError.invalid(String(format: "Unknown texture format 0x%04x", rawFormat))
         }
         let bw = (width + 3) / 4, bh = (height + 3) / 4, px = width * height
         let need: Int
@@ -74,7 +74,7 @@ enum Atex {
         case .b8g8r8a8, .b8g8r8x8: need = px * 4
         }
         guard data.count - surface >= need else {
-            throw TexError.invalid("\(format.name) \(width)×\(height): нужно \(need) байт, есть \(data.count - surface)")
+            throw TexError.invalid("\(format.name) \(width)×\(height): needs \(need) bytes, has \(data.count - surface)")
         }
         var rgba = [UInt8](repeating: 0, count: px * 4)
         switch format {
@@ -111,7 +111,7 @@ enum Atex {
                 }
             }
         case .bc7:
-            throw TexError.invalid("BC7 пока не поддерживается")
+            blocks(&rgba, width, height, data, surface, 16) { b, o, out in Bc7.decode(b, o, &out) }
         default:
             uncompressed(&rgba, format, px, data, surface)
         }

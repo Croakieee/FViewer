@@ -17,6 +17,10 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var bottomTab = 0
     @Published var viewportMode = 0
+    @Published var bottomExpanded = false
+    @Published var effectShading = 0
+    @Published var showEmitters = false
+    @Published var showBindPoints = true
 
     private var documents: [URL: EffectDocument] = [:]
     private var textureFiles: [String: URL] = [:]
@@ -25,6 +29,9 @@ final class AppModel: ObservableObject {
     private var imageCache: [URL: CGImage] = [:]
     private var textureInfo: [URL: String] = [:]
     private var meshCache: [URL: MeshData] = [:]
+    private var decodedCache: [URL: DecodedTexture] = [:]
+    private var textureAddress: [String: (u: String, v: String)] = [:]
+    private(set) var libraryToken = 0
     private var documentSink: AnyCancellable?
     private static let bookmarkKey = "libraryBookmark"
 
@@ -38,6 +45,7 @@ final class AppModel: ObservableObject {
         if let flag = arguments.firstIndex(of: "--open"), flag + 1 < arguments.count {
             open(URL(fileURLWithPath: arguments[flag + 1]))
         }
+        AppDelegate.model = self
     }
 
     func chooseLibrary() {
@@ -45,8 +53,8 @@ final class AppModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Открыть папку"
-        panel.message = "Папка с эффектами и текстурами"
+        panel.prompt = "Open Folder"
+        panel.message = "Folder with effects and textures"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         if let bookmark = try? url.bookmarkData(options: .withSecurityScope) {
             UserDefaults.standard.set(bookmark, forKey: AppModel.bookmarkKey)
@@ -67,6 +75,7 @@ final class AppModel: ObservableObject {
         textureFiles = [:]
         texturePaths = [:]
         modelFiles = [:]
+        textureAddress = [:]
         var found: [LibraryFile] = []
         let skipped: Set<String> = ["node_modules", ".git", ".idea", "reference", "Dalamud-VFXEditor-main"]
         let rootPath = root.standardizedFileURL.path
@@ -89,7 +98,9 @@ final class AppModel: ObservableObject {
             case "png":
                 if textureFiles[base] == nil { textureFiles[base] = url }
             case "json":
-                if url.deletingLastPathComponent().lastPathComponent == "models" {
+                if url.lastPathComponent == "game-textures.json" {
+                    readTextureManifest(url)
+                } else if url.deletingLastPathComponent().lastPathComponent == "models" {
                     modelFiles[base] = url
                 } else if let data = try? Data(contentsOf: url), data.count < 2_000_000,
                           let text = String(data: data, encoding: .utf8), text.contains("\"emitters\""), text.contains("\"particles\"") {
@@ -101,7 +112,20 @@ final class AppModel: ObservableObject {
         files = found.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
         imageCache = [:]
         meshCache = [:]
+        decodedCache = [:]
+        libraryToken += 1
         objectWillChange.send()
+    }
+
+    private func readTextureManifest(_ url: URL) {
+        guard let data = try? Data(contentsOf: url), let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
+        for (name, entry) in manifest {
+            if let mode = entry["address"] as? String {
+                textureAddress[name.lowercased()] = (mode, mode)
+            } else if let modes = entry["address"] as? [String: String] {
+                textureAddress[name.lowercased()] = (modes["u"] ?? "repeat", modes["v"] ?? "repeat")
+            }
+        }
     }
 
     func openFilePanel() {
@@ -110,7 +134,7 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
-        panel.prompt = "Открыть"
+        panel.prompt = "Open"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url)
     }
@@ -123,6 +147,54 @@ final class AppModel: ObservableObject {
             documentSink = opened.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         } catch {
             errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    var dirtyDocuments: [EffectDocument] { documents.values.filter(\.isDirty).sorted { $0.title < $1.title } }
+
+    func confirmDiscardingChanges() -> Bool {
+        let dirty = dirtyDocuments
+        guard !dirty.isEmpty else { return true }
+        let alert = NSAlert()
+        alert.messageText = dirty.count == 1 ? "Save changes to \(dirty[0].title)?" : "Save changes to \(dirty.count) effects?"
+        alert.informativeText = dirty.count == 1 ? "Your changes will be lost if you don't save them."
+            : dirty.map(\.title).joined(separator: "\n") + "\n\nYour changes will be lost if you don't save them."
+        alert.addButton(withTitle: dirty.count == 1 ? "Save" : "Save All")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don't Save")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            for document in dirty {
+                do {
+                    try document.save()
+                } catch {
+                    errorMessage = "\(document.title): \(error.localizedDescription)"
+                    return false
+                }
+            }
+            return true
+        case .alertThirdButtonReturn: return true
+        default: return false
+        }
+    }
+
+    func newEffect(template: String) {
+        guard let source = Bundle.main.url(forResource: "template_" + template, withExtension: "avfx") else {
+            errorMessage = "The \(template) template is missing from the app bundle"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "New Effect"
+        panel.nameFieldStringValue = "new_effect.avfx"
+        panel.directoryURL = libraryRoot ?? document?.url.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try Data(contentsOf: source).write(to: url, options: .atomic)
+            documents[url] = nil
+            open(url)
+            if let root = libraryRoot, url.path.hasPrefix(root.path) { setLibrary(root) }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -185,9 +257,25 @@ final class AppModel: ObservableObject {
         return image
     }
 
+    func decodedTexture(for path: String) -> DecodedTexture? {
+        guard let url = textureURL(path) else { return nil }
+        if let cached = decodedCache[url] { return cached }
+        guard url.pathExtension.lowercased() != "png", let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data)) else {
+            return nil
+        }
+        decodedCache[url] = decoded
+        return decoded
+    }
+
+    func addressModes(for name: String) -> (u: String, v: String) {
+        textureAddress[name.lowercased()] ?? ("repeat", "repeat")
+    }
+
+    func pixiModelURL(_ name: String) -> URL? { modelFiles[name.lowercased()] }
+
     func textureDescription(_ path: String) -> String {
         guard let url = textureURL(path) else {
-            return libraryRoot == nil ? "Откройте папку с текстурами (⇧⌘O)" : "Файл не найден в открытой папке"
+            return libraryRoot == nil ? "Open the folder that holds the textures (⇧⌘O)" : "Not found in the open folder"
         }
         _ = image(for: path)
         return textureInfo[url] ?? ""

@@ -42,16 +42,38 @@ enum CurveMath {
         }
     }
 
-    private static func tangent(_ keys: [CurveKeyPoint], _ i: Int) -> Double {
+    static func tangentParts(_ keys: [CurveKeyPoint], _ i: Int) -> (fromPrevious: Double, toNext: Double) {
         let k = keys[i]
         let previous: CurveKeyPoint? = i > 0 ? keys[i - 1] : nil
         let next: CurveKeyPoint? = i + 1 < keys.count ? keys[i + 1] : nil
         let toNext = next.map { $0.value - k.value } ?? previous.map { k.value - $0.value } ?? 0
         let fromPrevious = previous.map { k.value - $0.value } ?? toNext
-        return 0.5 * k.tangentIn * fromPrevious + 0.5 * k.tangentOut * toNext
+        return (fromPrevious, toNext)
     }
 
-    private static func tangentScale(_ span: Double, _ other: Double?) -> Double {
+    static func tangent(_ keys: [CurveKeyPoint], _ i: Int) -> Double {
+        let parts = tangentParts(keys, i)
+        return 0.5 * keys[i].tangentIn * parts.fromPrevious + 0.5 * keys[i].tangentOut * parts.toNext
+    }
+
+    static func sampleExtended(_ keys: [CurveKeyPoint], at time: Double, pre: Int, post: Int) -> Double {
+        guard let first = keys.first, let last = keys.last, keys.count > 1 else { return keys.first?.value ?? 0 }
+        let duration = last.time - first.time
+        var t = time
+        var cycles = 0.0
+        if t < first.time, duration > 0, pre == 1 || pre == 2 {
+            cycles = ((t - first.time) / duration).rounded(.down)
+            t -= cycles * duration
+            if pre == 1 { cycles = 0 }
+        } else if t > last.time, duration > 0, post == 1 || post == 2 {
+            cycles = ((t - first.time) / duration).rounded(.down)
+            t -= cycles * duration
+            if post == 1 { cycles = 0 }
+        }
+        return sample(keys, at: t) + cycles * (last.value - first.value)
+    }
+
+    static func tangentScale(_ span: Double, _ other: Double?) -> Double {
         guard let other else { return 1 }
         return 2 * span / (span + other)
     }

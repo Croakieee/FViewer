@@ -1,27 +1,44 @@
 import SwiftUI
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static weak var model: AppModel?
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model = AppDelegate.model else { return .terminateNow }
+        return model.confirmDiscardingChanges() ? .terminateNow : .terminateCancel
+    }
+}
+
 @main
 struct FViewerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var app = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        Window("FViewer", id: "main") {
             ContentView()
                 .environmentObject(app)
-                .frame(minWidth: 1100, minHeight: 680)
+                .frame(minWidth: 960, minHeight: 600)
         }
+        .defaultLaunchBehavior(.presented)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Открыть файл…") { app.openFilePanel() }.keyboardShortcut("o")
-                Button("Открыть папку…") { app.chooseLibrary() }.keyboardShortcut("o", modifiers: [.command, .shift])
+                Menu("New Effect") {
+                    Button("Blank…") { app.newEffect(template: "blank") }.keyboardShortcut("n")
+                    Button("Weapon…") { app.newEffect(template: "weapon") }
+                }
+                Button("Open File…") { app.openFilePanel() }.keyboardShortcut("o")
+                Button("Open Folder…") { app.chooseLibrary() }.keyboardShortcut("o", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .saveItem) {
-                Button("Сохранить") { app.save() }.keyboardShortcut("s").disabled(app.document == nil)
-                Button("Сохранить как…") { app.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift]).disabled(app.document == nil)
+                Button("Save") { app.save() }.keyboardShortcut("s").disabled(app.document == nil)
+                Button("Save As…") { app.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift]).disabled(app.document == nil)
             }
             CommandGroup(replacing: .undoRedo) {
-                Button("Отменить") { app.document?.undo() }.keyboardShortcut("z")
-                Button("Повторить") { app.document?.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
+                Button("Undo") { app.document?.undo() }.keyboardShortcut("z")
+                Button("Redo") { app.document?.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
             }
         }
     }

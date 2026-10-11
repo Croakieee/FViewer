@@ -128,7 +128,7 @@ enum JSONParseError: LocalizedError {
     case syntax(String, Int)
     var errorDescription: String? {
         switch self {
-        case .syntax(let message, let offset): return "JSON: \(message) (позиция \(offset))"
+        case .syntax(let message, let offset): return "JSON: \(message) (offset \(offset))"
         }
     }
 }
@@ -141,7 +141,7 @@ struct JSONParser {
         var parser = JSONParser(s: [UInt8](data))
         let node = try parser.value()
         parser.skipSpace()
-        if parser.p != parser.s.count { throw JSONParseError.syntax("лишние данные после значения", parser.p) }
+        if parser.p != parser.s.count { throw JSONParseError.syntax("unexpected data after the value", parser.p) }
         return node
     }
 
@@ -154,7 +154,7 @@ struct JSONParser {
     private mutating func expect(_ c: UInt8) throws {
         skipSpace()
         guard p < s.count, s[p] == c else {
-            throw JSONParseError.syntax("ожидался символ «\(Character(UnicodeScalar(c)))»", p)
+            throw JSONParseError.syntax("expected \"\(Character(UnicodeScalar(c)))\"", p)
         }
         p += 1
     }
@@ -168,7 +168,7 @@ struct JSONParser {
 
     private mutating func value() throws -> JSONNode {
         skipSpace()
-        guard p < s.count else { throw JSONParseError.syntax("неожиданный конец", p) }
+        guard p < s.count else { throw JSONParseError.syntax("unexpected end of file", p) }
         switch s[p] {
         case UInt8(ascii: "{"):
             p += 1
@@ -206,14 +206,14 @@ struct JSONParser {
             let start = p
             while p < s.count, "+-0123456789.eE".utf8.contains(s[p]) { p += 1 }
             guard p > start, let n = Double(String(decoding: s[start..<p], as: UTF8.self)) else {
-                throw JSONParseError.syntax("неверное значение", start)
+                throw JSONParseError.syntax("invalid value", start)
             }
             return JSONNode(.number(n))
         }
     }
 
     private mutating func string() throws -> String {
-        guard p < s.count, s[p] == UInt8(ascii: "\"") else { throw JSONParseError.syntax("ожидалась строка", p) }
+        guard p < s.count, s[p] == UInt8(ascii: "\"") else { throw JSONParseError.syntax("expected a string", p) }
         p += 1
         var bytes: [UInt8] = []
         while p < s.count, s[p] != UInt8(ascii: "\"") {
@@ -227,7 +227,7 @@ struct JSONParser {
                 case UInt8(ascii: "f"): bytes.append(0x0c)
                 case UInt8(ascii: "u"):
                     guard p + 4 < s.count, let code = UInt32(String(decoding: s[p + 1...p + 4], as: UTF8.self), radix: 16),
-                          let scalar = UnicodeScalar(code) else { throw JSONParseError.syntax("неверная \\u-последовательность", p) }
+                          let scalar = UnicodeScalar(code) else { throw JSONParseError.syntax("invalid \\u escape", p) }
                     bytes.append(contentsOf: Array(String(Character(scalar)).utf8))
                     p += 4
                 default: bytes.append(s[p])
@@ -237,7 +237,7 @@ struct JSONParser {
             }
             p += 1
         }
-        guard p < s.count else { throw JSONParseError.syntax("строка не закрыта", p) }
+        guard p < s.count else { throw JSONParseError.syntax("unterminated string", p) }
         p += 1
         return String(decoding: bytes, as: UTF8.self)
     }

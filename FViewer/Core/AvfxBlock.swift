@@ -44,7 +44,7 @@ final class AvfxBlock: Identifiable {
     static func parseFile(_ bytes: [UInt8]) throws -> AvfxBlock {
         let top = try parse(bytes, 0, bytes.count)
         guard let root = top.first(where: { $0.tag == "AVFX" }), root.children != nil else {
-            throw AvfxError.malformed("В файле нет корневого блока AVFX")
+            throw AvfxError.malformed("The file has no AVFX root block")
         }
         return root
     }
@@ -56,7 +56,7 @@ final class AvfxBlock: Identifiable {
             let raw = Array(buf[p..<p + 4])
             let size = Int(buf.u32(p + 4))
             guard p + 8 + size <= end else {
-                throw AvfxError.malformed("Блок \(decodeTag(raw)) по смещению \(p) выходит за границы родителя")
+                throw AvfxError.malformed("Block \(decodeTag(raw)) at offset \(p) overruns its parent")
             }
             let tag = decodeTag(raw)
             if !binaryLeafTags.contains(tag), looksLikeBlocks(buf, p + 8, p + 8 + size) {

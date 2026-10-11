@@ -10,6 +10,7 @@ struct OutlinerView: View {
     @ObservedObject var document: EffectDocument
     @State private var collapsed: Set<String> = []
     @State private var filter = ""
+    @FocusState private var searching: Bool
 
     private var rows: [FlatRow] {
         var result: [FlatRow] = []
@@ -30,9 +31,25 @@ struct OutlinerView: View {
     var body: some View {
         VStack(spacing: 0) {
             EditorHeader(symbol: "list.bullet.indent", title: "Outliner") {
+                if document.format == .avfx {
+                    Menu {
+                        ForEach(EffectDocument.addableKinds, id: \.tag) { kind in
+                            Button(kind.title) { document.addTopLevel(kind.tag) }
+                        }
+                    } label: {
+                        Image(systemName: "plus").font(.system(size: 11)).foregroundStyle(Theme.text).frame(width: 24, height: 20)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Add")
+                }
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").font(.system(size: 9)).foregroundStyle(Theme.dim)
-                    TextField("", text: $filter).textFieldStyle(.plain).font(Theme.font).foregroundStyle(Theme.text)
+                    TextField("", text: $filter).textFieldStyle(.plain).font(Theme.font).foregroundStyle(Theme.text).focused($searching)
+                        .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { searching = false } }
                 }
                 .padding(.horizontal, 6)
                 .frame(height: 20)
@@ -87,12 +104,33 @@ struct OutlinerView: View {
             Text(node.title).font(Theme.font).foregroundStyle(selected ? .white : Theme.text).lineLimit(1)
             Spacer(minLength: 4)
             Text(node.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
+            if let key = node.visibility {
+                let hidden = document.hidden.contains(key)
+                Image(systemName: hidden ? "eye.slash" : "eye").font(.system(size: 9))
+                    .foregroundStyle(hidden ? Theme.dim.opacity(0.6) : Theme.text)
+                    .frame(width: 18, height: 20).contentShape(Rectangle())
+                    .onTapGesture { document.toggleHidden(key) }
+                    .help("Show or hide in the viewport")
+            }
         }
         .padding(.horizontal, 6)
         .frame(height: 20)
         .background(selected ? Theme.selection : striped ? Color.white.opacity(0.025) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture { document.selectionID = node.id }
+        .contextMenu {
+            if let key = node.visibility {
+                Button(document.hidden.contains(key) ? "Show" : "Hide") { document.toggleHidden(key) }
+                Button("Isolate") {
+                    document.selectionID = node.id
+                    document.isolateSelection = true
+                }
+                Divider()
+            }
+            ForEach(node.actions) { action in
+                Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform)
+            }
+        }
     }
 }
 
@@ -107,15 +145,15 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             EditorHeader(symbol: "folder", title: "File Browser") {
                 Spacer()
-                HeaderButton(symbol: "folder.badge.plus", help: "Открыть папку (⇧⌘O)") { app.chooseLibrary() }
-                HeaderButton(symbol: "doc.badge.plus", help: "Открыть файл (⌘O)") { app.openFilePanel() }
+                HeaderButton(symbol: "folder.badge.plus", help: "Open Folder (⇧⌘O)") { app.chooseLibrary() }
+                HeaderButton(symbol: "doc.badge.plus", help: "Open File (⌘O)") { app.openFilePanel() }
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if app.files.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Откройте папку с эффектами (.avfx, .json) и текстурами.").font(Theme.font).foregroundStyle(Theme.dim)
-                            Text("Открыть папку…").font(Theme.font).foregroundStyle(Theme.text)
+                            Text("Open a folder with effects (.avfx, .json) and textures.").font(Theme.font).foregroundStyle(Theme.dim)
+                            Text("Open Folder…").font(Theme.font).foregroundStyle(Theme.text)
                                 .padding(.horizontal, 10).frame(height: 22)
                                 .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field))
                                 .onTapGesture { app.chooseLibrary() }

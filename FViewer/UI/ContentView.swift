@@ -4,33 +4,30 @@ struct BottomEditors: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
 
+    private static let editors: [(title: String, symbol: String)] = [
+        ("Timeline", "timeline.selection"), ("Graph Editor", "point.topleft.down.to.point.bottomright.curvepath"),
+        ("Node Editor", "point.3.connected.trianglepath.dotted"),
+    ]
+
     var body: some View {
+        let current = min(max(app.bottomTab, 0), BottomEditors.editors.count - 1)
         VStack(spacing: 0) {
-            EditorHeader(symbol: app.bottomTab == 0 ? "timeline.selection" : "point.topleft.down.to.point.bottomright.curvepath",
-                         title: app.bottomTab == 0 ? "Timeline" : "Graph Editor") {
+            EditorHeader(symbol: BottomEditors.editors[current].symbol, title: BottomEditors.editors[current].title) {
                 HStack(spacing: 1) {
-                    tab(0, "Timeline")
-                    tab(1, "Graph Editor")
+                    ForEach(Array(BottomEditors.editors.enumerated()), id: \.offset) { index, editor in
+                        SegmentButton(title: editor.title, active: current == index) { app.bottomTab = index }
+                    }
                 }
                 Spacer()
+                HeaderButton(symbol: app.bottomExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                             active: app.bottomExpanded, help: "Maximize this editor over the viewport") { app.bottomExpanded.toggle() }
             }
-            if app.bottomTab == 0 {
-                SequencerView(document: document)
-            } else {
-                CurveEditorView(document: document)
+            switch current {
+            case 0: SequencerView(document: document, clock: document.clock)
+            case 1: CurveEditorView(document: document, clock: document.clock)
+            default: NodeGraphView(document: document).coordinateSpace(name: "graph")
             }
         }
-    }
-
-    private func tab(_ index: Int, _ title: String) -> some View {
-        Text(title)
-            .font(Theme.font)
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 10)
-            .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(app.bottomTab == index ? Theme.accent : Color(white: 0.22)))
-            .contentShape(Rectangle())
-            .onTapGesture { app.bottomTab = index }
     }
 }
 
@@ -41,16 +38,20 @@ struct TopBar: View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles").foregroundStyle(NodeTint.particle.color)
             Text("FViewer").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
-            menuButton("Файл") {
-                Button("Открыть файл…") { app.openFilePanel() }
-                Button("Открыть папку…") { app.chooseLibrary() }
+            menuButton("File") {
+                Menu("New Effect") {
+                    Button("Blank…") { app.newEffect(template: "blank") }
+                    Button("Weapon…") { app.newEffect(template: "weapon") }
+                }
+                Button("Open File…") { app.openFilePanel() }
+                Button("Open Folder…") { app.chooseLibrary() }
                 Divider()
-                Button("Сохранить") { app.save() }.disabled(app.document == nil)
-                Button("Сохранить как…") { app.saveAs() }.disabled(app.document == nil)
+                Button("Save") { app.save() }.disabled(app.document == nil)
+                Button("Save As…") { app.saveAs() }.disabled(app.document == nil)
             }
-            menuButton("Правка") {
-                Button("Отменить") { app.document?.undo() }.disabled(app.document?.undoManager.canUndo != true)
-                Button("Повторить") { app.document?.redo() }.disabled(app.document?.undoManager.canRedo != true)
+            menuButton("Edit") {
+                Button("Undo") { app.document?.undo() }.disabled(app.document?.undoManager.canUndo != true)
+                Button("Redo") { app.document?.redo() }.disabled(app.document?.undoManager.canRedo != true)
             }
             Spacer()
             if let document = app.document {
@@ -58,6 +59,15 @@ struct TopBar: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(RoundedRectangle(cornerRadius: 3).fill(document.format == .avfx ? NodeTint.particle.color : NodeTint.emitter.color))
                 Text(document.title + (document.isDirty ? " •" : "")).font(Theme.font).foregroundStyle(Theme.text)
+                if let exact = document.roundTripExact {
+                    HStack(spacing: 3) {
+                        Image(systemName: exact ? "checkmark.seal.fill" : "exclamationmark.triangle.fill").font(.system(size: 9))
+                        Text(exact ? "Verified" : "Not byte-exact").font(Theme.small)
+                    }
+                    .foregroundStyle(exact ? Color(red: 0.45, green: 0.8, blue: 0.45) : Color.orange)
+                    .help(exact ? "The file was re-encoded right after loading and matched the original byte for byte, so saving cannot damage untouched data"
+                          : "Re-encoding this file does not reproduce it byte for byte. Keep a backup: saving may change data you did not edit")
+                }
             }
             Spacer()
             if let root = app.libraryRoot {
@@ -83,55 +93,79 @@ struct TopBar: View {
 
 struct ContentView: View {
     @EnvironmentObject var app: AppModel
+    @AppStorage("layout.left") private var leftFraction = 0.17
+    @AppStorage("layout.right") private var rightFraction = 0.22
+    @AppStorage("layout.bottom") private var bottomFraction = 0.4
+    @AppStorage("layout.library") private var libraryFraction = 0.36
+
+    private func clamp(_ value: Double, _ low: Double, _ high: Double) -> Double { min(max(value, low), high) }
 
     var body: some View {
         VStack(spacing: 0) {
             TopBar()
-            HSplitView {
-                VSplitView {
+            GeometryReader { geometry in
+                let size = geometry.size
+                let origin = geometry.frame(in: .global).origin
+                let left = max(180, size.width * leftFraction)
+                let right = max(260, size.width * rightFraction)
+                let center = max(200, size.width - left - right - AreaDivider.thickness * 2)
+                let bottom = max(120, size.height * bottomFraction)
+                let library = max(90, size.height * libraryFraction)
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        Group {
+                            if let document = app.document {
+                                OutlinerView(document: document)
+                            } else {
+                                VStack(spacing: 0) {
+                                    EditorHeader(symbol: "list.bullet.indent", title: "Outliner") { Spacer() }
+                                    Color(white: 0.157)
+                                }
+                            }
+                        }
+                        .frame(height: max(100, size.height - library - AreaDivider.thickness))
+                        AreaDivider(vertical: false) { y in libraryFraction = clamp(1 - Double((y - origin.y) / size.height), 0.1, 0.8) }
+                        LibraryView().frame(height: library)
+                    }
+                    .frame(width: left)
+                    AreaDivider(vertical: true) { x in leftFraction = clamp(Double((x - origin.x) / size.width), 0.1, 0.35) }
                     Group {
                         if let document = app.document {
-                            OutlinerView(document: document)
+                            if app.bottomExpanded {
+                                BottomEditors(document: document)
+                            } else {
+                                VStack(spacing: 0) {
+                                    ViewportPanel(document: document).frame(height: max(120, size.height - bottom - AreaDivider.thickness))
+                                    AreaDivider(vertical: false) { y in bottomFraction = clamp(1 - Double((y - origin.y) / size.height), 0.15, 0.8) }
+                                    BottomEditors(document: document).frame(height: bottom)
+                                }
+                            }
+                        } else {
+                            welcome
+                        }
+                    }
+                    .frame(width: center)
+                    AreaDivider(vertical: true) { x in rightFraction = clamp(1 - Double((x - origin.x) / size.width), 0.14, 0.4) }
+                    Group {
+                        if let document = app.document {
+                            InspectorView(document: document)
                         } else {
                             VStack(spacing: 0) {
-                                EditorHeader(symbol: "list.bullet.indent", title: "Outliner") { Spacer() }
-                                Color(white: 0.157)
+                                EditorHeader(symbol: "slider.horizontal.3", title: "Properties") { Spacer() }
+                                Theme.panel
                             }
                         }
                     }
-                    .frame(minHeight: 160)
-                    LibraryView().frame(minHeight: 120, idealHeight: 260)
+                    .frame(width: right)
+                    .environment(\.labelWidth, min(max(right * 0.36, 96), 220))
                 }
-                .frame(minWidth: 200, idealWidth: 270, maxWidth: 480)
-                Group {
-                    if let document = app.document {
-                        VSplitView {
-                            ViewportPanel(document: document).frame(minHeight: 200)
-                            BottomEditors(document: document).frame(minHeight: 140, idealHeight: 280)
-                        }
-                    } else {
-                        welcome
-                    }
-                }
-                .frame(minWidth: 420)
-                .layoutPriority(1)
-                Group {
-                    if let document = app.document {
-                        InspectorView(document: document)
-                    } else {
-                        VStack(spacing: 0) {
-                            EditorHeader(symbol: "slider.horizontal.3", title: "Properties") { Spacer() }
-                            Theme.panel
-                        }
-                    }
-                }
-                .frame(minWidth: 280, idealWidth: 340, maxWidth: 560)
             }
             statusBar
         }
         .background(Theme.window)
+        .background(WindowConfigurator())
         .preferredColorScheme(.dark)
-        .alert("Ошибка", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
+        .alert("Error", isPresented: Binding(get: { app.errorMessage != nil }, set: { if !$0 { app.errorMessage = nil } })) {
             Button("OK") { app.errorMessage = nil }
         } message: {
             Text(app.errorMessage ?? "")
@@ -142,10 +176,10 @@ struct ContentView: View {
         VStack(spacing: 12) {
             Image(systemName: "sparkles").font(.system(size: 40)).foregroundStyle(NodeTint.particle.color)
             Text("FViewer").font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.text)
-            Text("Редактор эффектов FFXIV: .avfx и JSON").font(Theme.font).foregroundStyle(Theme.dim)
+            Text("FFXIV effect editor: .avfx and JSON").font(Theme.font).foregroundStyle(Theme.dim)
             HStack(spacing: 8) {
-                welcomeButton("Открыть папку…", "folder") { app.chooseLibrary() }
-                welcomeButton("Открыть файл…", "doc") { app.openFilePanel() }
+                welcomeButton("Open Folder…", "folder") { app.chooseLibrary() }
+                welcomeButton("Open File…", "doc") { app.openFilePanel() }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -165,13 +199,13 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 14) {
-            hint("ЛКМ", "вращение")
-            hint("⇧ + ЛКМ", "сдвиг")
-            hint("Прокрутка / щипок", "вращение / масштаб")
-            hint("Перетаскивание поля", "изменить значение, ⇧ — точно")
+            hint("Drag", "orbit")
+            hint("⇧ Drag", "pan")
+            hint("Scroll / Pinch", "orbit / zoom")
+            hint("Drag a field", "change value, ⇧ for precision")
             Spacer()
             if let document = app.document {
-                Text(document.undoManager.canUndo ? "Отмена: \(document.undoManager.undoActionName)" : "").font(Theme.small).foregroundStyle(Theme.dim)
+                Text(document.undoManager.canUndo ? "Undo: \(document.undoManager.undoActionName)" : "").font(Theme.small).foregroundStyle(Theme.dim)
             }
         }
         .padding(.horizontal, 10)

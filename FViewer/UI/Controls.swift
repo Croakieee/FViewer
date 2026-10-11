@@ -29,6 +29,8 @@ struct NumberField: View {
     @State private var text = ""
     @State private var dragStart: Double?
     @State private var moved = false
+    @State private var live: Double?
+    @GestureState private var pressing = false
     @FocusState private var focused: Bool
 
     private var formatted: String {
@@ -51,7 +53,8 @@ struct NumberField: View {
                     .padding(.horizontal, 6)
                     .onSubmit { finishEditing() }
                     .onExitCommand { editing = false }
-                    .onChange(of: focused) { _, isFocused in if !isFocused && editing { finishEditing() } }
+                    .onAppear { DispatchQueue.main.async { focused = true } }
+                    .onChange(of: focused) { old, isFocused in if old && !isFocused && editing { finishEditing() } }
             } else {
                 HStack(spacing: 2) {
                     Image(systemName: "chevron.left").font(.system(size: 7, weight: .bold)).opacity(hovering ? 0.7 : 0)
@@ -73,38 +76,47 @@ struct NumberField: View {
         }
         .frame(height: 20)
         .contentShape(Rectangle())
-        .onHover { inside in
-            hovering = inside
-            if inside && !editing { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-        }
+        .onHover { hovering = $0 }
+        .pointerStyle(editing ? .default : .columnResize)
         .gesture(DragGesture(minimumDistance: 0)
+            .updating($pressing) { _, state, _ in state = true }
             .onChanged { drag in
                 guard !editing else { return }
                 if dragStart == nil {
                     dragStart = value
                     moved = false
                 }
-                if abs(drag.translation.width) > 2 { moved = true }
+                if abs(drag.translation.width) > 3 { moved = true }
                 guard moved, let origin = dragStart else { return }
                 let flags = NSEvent.modifierFlags
-                var unit = isInteger ? 1.0 / 6 : step
+                let magnitude = max(1, pow(10, floor(log10(max(abs(origin), 1)))))
+                var unit = isInteger ? max(1.0 / 6, magnitude / 60) : step * magnitude
                 if flags.contains(.shift) { unit *= 0.1 }
                 var next = origin + Double(drag.translation.width) * unit
                 if isInteger { next = next.rounded() }
-                if flags.contains(.control) && !isInteger { next = (next / (step * 10)).rounded() * step * 10 }
+                if flags.contains(.control) && !isInteger {
+                    let snap = step * magnitude * 10
+                    next = (next / snap).rounded() * snap
+                }
+                guard next != live else { return }
+                live = next
                 onLive(next)
             }
-            .onEnded { _ in
-                guard !editing else { return }
-                if let origin = dragStart, moved {
-                    onCommit(origin, value)
-                } else {
-                    text = formatted
-                    editing = true
-                    focused = true
-                }
-                dragStart = nil
-            })
+            .onEnded { _ in finishDrag(cancelled: false) })
+        .onChange(of: pressing) { _, now in if !now { DispatchQueue.main.async { finishDrag(cancelled: true) } } }
+    }
+
+    private func finishDrag(cancelled: Bool) {
+        guard !editing, let origin = dragStart else { return }
+        if moved {
+            onCommit(origin, live ?? value)
+        } else if !cancelled {
+            text = formatted
+            editing = true
+        }
+        dragStart = nil
+        live = nil
+        moved = false
     }
 
     private func finishEditing() {
@@ -192,6 +204,67 @@ struct TextValueField: View {
             .onChange(of: value) { _, next in if !focused { text = next } }
             .onSubmit { if text != value { action(text) } }
             .onChange(of: focused) { _, isFocused in if !isFocused && text != value { action(text) } }
+    }
+}
+
+struct ColorField: View {
+    let color: SIMD4<Double>
+    let alpha: Bool
+    let onLive: (SIMD4<Double>) -> Void
+    let onCommit: (SIMD4<Double>, SIMD4<Double>) -> Void
+    @State private var origin: SIMD4<Double>?
+    @State private var pending: DispatchWorkItem?
+
+    private var hex: String {
+        String(format: "#%02X%02X%02X", Int((min(max(color.x, 0), 1) * 255).rounded()), Int((min(max(color.y, 0), 1) * 255).rounded()),
+               Int((min(max(color.z, 0), 1) * 255).rounded()))
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ZStack {
+                CheckerBackground()
+                Color(.sRGB, red: color.x, green: color.y, blue: color.z, opacity: alpha ? color.w : 1)
+                Text(hex + (alpha ? String(format: "  %.0f%%", color.w * 100) : "")).font(Theme.small).monospacedDigit()
+                    .foregroundStyle(color.x * 0.3 + color.y * 0.59 + color.z * 0.11 > 0.55 ? Color.black : Color.white)
+            }
+            .frame(height: 20)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            ColorPicker("", selection: Binding(
+                get: { Color(.sRGB, red: color.x, green: color.y, blue: color.z, opacity: color.w) },
+                set: { picked in
+                    guard let c = NSColor(picked).usingColorSpace(.sRGB) else { return }
+                    let next = SIMD4(Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent), alpha ? Double(c.alphaComponent) : color.w)
+                    if origin == nil { origin = color }
+                    onLive(next)
+                    pending?.cancel()
+                    let work = DispatchWorkItem {
+                        if let start = origin { onCommit(start, next) }
+                        origin = nil
+                    }
+                    pending = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+                }), supportsOpacity: alpha)
+                .labelsHidden()
+                .frame(width: 28, height: 20)
+        }
+    }
+}
+
+struct SegmentButton: View {
+    let title: String
+    let active: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Text(title)
+            .font(Theme.font)
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : Color(white: 0.22)))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
     }
 }
 

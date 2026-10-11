@@ -49,7 +49,7 @@ extension EffectDocument {
             for (i, block) in blocks.enumerated() {
                 let cls = catalog.classOf(block, in: "AvfxMain", parentBlock: root)
                 group.children.append(avfxNode(block, cls, id: "avfx/\(folder.tag)/\(i)", index: i, parentClass: "AvfxMain",
-                                               symbol: folder.symbol, tint: folder.tint))
+                                               symbol: folder.symbol, tint: folder.tint, owner: root))
             }
             if blocks.count == 1 && folder.tag == "Schd" {
                 result.append(group.children[0])
@@ -65,7 +65,7 @@ extension EffectDocument {
     }
 
     private func avfxNode(_ block: AvfxBlock, _ cls: String?, id: String, index: Int, parentClass: String?, symbol: String,
-                          tint: NodeTint) -> OutlineNode {
+                          tint: NodeTint, owner: AvfxBlock? = nil) -> OutlineNode {
         var title = EffectDocument.partTitles[block.tag] ?? catalog.field(parentClass, block.tag)?.name ?? block.tag
         var detail = ""
         var symbol = symbol
@@ -92,7 +92,7 @@ extension EffectDocument {
             title = "Model \(index)"
             let vertices = (block.child("VDrw")?.data.count ?? 0) / 36
             let emit = (block.child("VEmt")?.data.count ?? 0) / 28
-            detail = emit > 0 && vertices == 0 ? "\(emit) точек" : "\(vertices) вершин"
+            detail = emit > 0 && vertices == 0 ? "\(emit) points" : "\(vertices) verts"
         case "UvSt":
             title = "UV Set \(index)"
             symbol = "square.grid.2x2"
@@ -107,7 +107,7 @@ extension EffectDocument {
         case "TC1", "TC2", "TC3", "TC4", "TN", "TR", "TD", "TP":
             symbol = "photo.on.rectangle"
             tint = .texture
-            if block.int("bEna") == 0 { detail = "выкл." }
+            if block.int("bEna") == 0 { detail = "off" }
         case "Clip":
             title = "Clip \(index)"
             detail = clipTypeName(block)
@@ -121,6 +121,15 @@ extension EffectDocument {
         }
         let node = OutlineNode(id: id, title: title, detail: detail, symbol: symbol, tint: tint,
                                payload: .avfx(block: block, cls: cls, record: nil))
+        if parentClass == "AvfxMain" {
+            switch block.tag {
+            case "TmLn": node.visibility = .timeline(index)
+            case "Emit": node.visibility = .emitter(index)
+            case "Ptcl": node.visibility = .particle(index)
+            default: break
+            }
+        }
+        node.actions = avfxActions(node, block, parent: owner, cls: cls)
         node.children = avfxChildNodes(block, cls, id: id, tint: tint)
         return node
     }
@@ -136,19 +145,20 @@ extension EffectDocument {
         var counters: [String: Int] = [:]
         let listTags = AvfxBlock.cumulativeTags[block.tag] ?? []
         for listTag in listTags {
-            guard let last = children.last(where: { $0.tag == listTag && $0.children != nil }) else { continue }
+            let last = children.last(where: { $0.tag == listTag && $0.children != nil }) ?? AvfxBlock(tag: listTag, children: [])
             let itemClass = catalog.classOf(last, in: cls, parentBlock: block)
-            var records = last.records()
-            if let source = AvfxBlock.cumulativePrefixSource[listTag],
-               let origin = children.last(where: { $0.tag == source && $0.children != nil }) {
-                records = Array(records.dropFirst(origin.records().count))
-            }
-            if records.isEmpty { continue }
+            let records = block.ownRecords(listTag)
             let group = OutlineNode(id: "\(id)/\(listTag)", title: EffectDocument.listTitles["\(block.tag)/\(listTag)"] ?? listTag,
                                     detail: "\(records.count)", symbol: "list.bullet", tint: .item, payload: .group)
+            if listTag != "Trgr", let itemClass {
+                group.actions = [NodeAction(id: group.id + "!add", title: "Add Item", symbol: "plus") { [weak self] in
+                    self?.addRecord(block, list: listTag, cls: itemClass, id: id)
+                }]
+            }
             for (i, record) in records.enumerated() {
-                group.children.append(recordNode(record, list: last, cls: itemClass, id: "\(id)/\(listTag)/\(i)", index: i,
-                                                 owner: block.tag, listTag: listTag))
+                let item = recordNode(record, list: last, cls: itemClass, id: "\(id)/\(listTag)/\(i)", index: i, owner: block.tag, listTag: listTag)
+                if listTag != "Trgr" { item.actions = recordActions(item, owner: block, list: listTag, index: i) }
+                group.children.append(item)
             }
             result.append(group)
         }
@@ -157,7 +167,7 @@ extension EffectDocument {
                 let n = counters["Clip", default: 0]
                 counters["Clip"] = n + 1
                 result.append(avfxNode(child, "AvfxTimelineClip", id: "\(id)/Clip\(n)", index: n, parentClass: cls,
-                                       symbol: "scissors", tint: .item))
+                                       symbol: "scissors", tint: .item, owner: block))
                 continue
             }
             guard child.children != nil, !listTags.contains(child.tag) else { continue }
@@ -166,7 +176,7 @@ extension EffectDocument {
             let n = counters[child.tag, default: 0]
             counters[child.tag] = n + 1
             result.append(avfxNode(child, childClass, id: "\(id)/\(child.tag)\(n)", index: n, parentClass: cls,
-                                   symbol: "square.stack.3d.up", tint: .data))
+                                   symbol: "square.stack.3d.up", tint: .data, owner: block))
         }
         return result
     }
@@ -184,7 +194,7 @@ extension EffectDocument {
         switch (owner, listTag) {
         case ("Schd", _):
             title = "Timeline \(recordInt(record, "TlNo"))"
-            detail = "кадр \(recordInt(record, "StTm", 0))"
+            detail = "frame \(recordInt(record, "StTm", 0))"
             tint = .timeline
             if listTag == "Trgr" {
                 title = "Trigger \(index) → " + title
@@ -215,15 +225,27 @@ extension EffectDocument {
             tint = .emitter
         default: break
         }
-        if recordInt(record, "bEnb", recordInt(record, "bEna", 1)) == 0 { detail += detail.isEmpty ? "выкл." : " · выкл." }
+        if recordInt(record, "bEnb", recordInt(record, "bEna", 1)) == 0 { detail += detail.isEmpty ? "off" : " · off" }
         return OutlineNode(id: id, title: title, detail: detail, symbol: symbol, tint: tint,
                            payload: .avfx(block: list, cls: cls, record: record))
     }
 
-    func avfxField(_ block: AvfxBlock, cls: String?, id: String) -> PropField? {
+    func avfxField(_ block: AvfxBlock, cls: String?, id: String, list: String? = nil) -> PropField? {
         if AvfxBlock.binaryLeafTags.contains(block.tag) || block.children != nil { return nil }
+        if block.data.count >= 4, let choices = referenceChoices(tag: block.tag, cls: cls, list: list) {
+            let label = catalog.field(cls, block.tag)?.name ?? block.tag
+            return PropField(id: id, label: label.replacingOccurrences(of: " Index", with: ""), tag: block.tag, kind: .choice(choices),
+                             read: { .int(block.intValue) }, write: { if case .int(let v) = $0 { block.intValue = v } })
+        }
         if AvfxCatalog.countTags.contains(block.tag) { return nil }
         if cls == "AvfxParticle" && block.tag == "UvSN" { return nil }
+        if block.tag == "BPID", block.data.count >= 4 {
+            var choices = EffectDocument.bindPointNames.map { FieldChoice(name: "\($0.id) · \($0.name)", value: $0.id) }
+            let current = block.intValue
+            if !choices.contains(where: { $0.value == current }) { choices.insert(FieldChoice(name: "\(current) · unnamed", value: current), at: 0) }
+            return PropField(id: id, label: "Bind Point", tag: block.tag, kind: .choice(choices), read: { .int(block.intValue) },
+                             write: { if case .int(let v) = $0 { block.intValue = v } })
+        }
         let def = catalog.field(cls, block.tag)
         let label = def?.name ?? block.tag
         let base = def?.baseType ?? (block.data.count == 4 ? "AvfxInt" : "")
@@ -263,17 +285,46 @@ extension EffectDocument {
         default:
             let size = block.data.count
             return PropField(id: id, label: label, tag: block.tag, kind: .info,
-                             read: { .text(size == 4 && block.intValue == -1 ? "−1" : "\(size) байт") }, write: nil)
+                             read: { .text(size == 4 && block.intValue == -1 ? "−1" : "\(size) bytes") }, write: nil)
         }
     }
 
-    private func avfxFields(_ blocks: [AvfxBlock], cls: String?, id: String) -> [PropField] {
+    private func avfxFields(_ blocks: [AvfxBlock], cls: String?, id: String, list: String? = nil) -> [PropField] {
         var seen: [String: Int] = [:]
         return blocks.compactMap { block in
             let n = seen[block.tag, default: 0]
             seen[block.tag] = n + 1
-            return avfxField(block, cls: cls, id: "\(id)#\(block.tag)\(n)")
+            guard var field = avfxField(block, cls: cls, id: "\(id)#\(block.tag)\(n)", list: list) else { return nil }
+            if list == nil, field.write != nil, let parent = block.parent, !AvfxCatalog.typeTags.contains(block.tag) {
+                let label = field.label
+                field.unassign = { [weak self] in self?.removeChild(block, from: parent, title: "Remove " + label) }
+            }
+            return field
         }
+    }
+
+    private func simpleColorFields(_ block: AvfxBlock, id: String) -> [PropField] {
+        var fields: [PropField] = []
+        guard let colors = block.child("Cols"), let frames = block.child("Frms") else { return fields }
+        for i in 0..<4 where colors.data.count >= (i + 1) * 4 && frames.data.count >= (i + 1) * 2 {
+            fields.append(PropField(id: "\(id)#frame\(i)", label: "Frame \(i + 1)", tag: "Frms", kind: .int,
+                                    read: { .int(Int(Int16(bitPattern: frames.data.u16(i * 2)))) },
+                                    write: {
+                                        let v = UInt16(bitPattern: Int16(truncatingIfNeeded: Int($0.number.rounded())))
+                                        frames.data[i * 2] = UInt8(v & 0xff)
+                                        frames.data[i * 2 + 1] = UInt8(v >> 8)
+                                    }))
+            fields.append(PropField(id: "\(id)#color\(i)", label: "Color \(i + 1)", tag: "Cols", kind: .color(alpha: true),
+                                    read: {
+                                        let d = colors.data
+                                        return .color(Double(d[i * 4]) / 255, Double(d[i * 4 + 1]) / 255, Double(d[i * 4 + 2]) / 255, Double(d[i * 4 + 3]) / 255)
+                                    },
+                                    write: {
+                                        guard case .color(let r, let g, let b, let a) = $0 else { return }
+                                        for (k, v) in [r, g, b, a].enumerated() { colors.data[i * 4 + k] = UInt8(max(0, min(255, (v * 255).rounded()))) }
+                                    }))
+        }
+        return fields
     }
 
     func avfxSections(_ node: OutlineNode, _ block: AvfxBlock, _ cls: String?, _ record: [AvfxBlock]?) -> [PropSection] {
@@ -285,7 +336,14 @@ extension EffectDocument {
         if block.tag == "Clip" { return [PropSection(id: node.id + "/main", title: node.title, fields: clipFields(block, id: node.id))] }
         if block.tag == "Modl" { return [PropSection(id: node.id + "/main", title: node.title, fields: modelFields(block, id: node.id))] }
         let source = record ?? block.children ?? []
-        var sections = [PropSection(id: node.id + "/main", title: node.title, fields: avfxFields(source, cls: cls, id: node.id))]
+        let list = record != nil ? block.tag : nil
+        var sections = [PropSection(id: node.id + "/main", title: node.title, fields: avfxFields(source, cls: cls, id: node.id, list: list))]
+        if record == nil, block.tag == "Emit" || block.tag == "Ptcl" {
+            sections.insert(PropSection(id: node.id + "/transform", title: "Transform", fields: transformFields(block, id: node.id)), at: 0)
+        }
+        if block.tag == "Smpl" {
+            sections.append(PropSection(id: node.id + "/colors", title: "Sprite Colors", fields: simpleColorFields(block, id: node.id)))
+        }
         if record == nil {
             for child in block.children ?? [] where child.tag == "Life" {
                 if let fields = child.children {
@@ -297,22 +355,65 @@ extension EffectDocument {
                 }
             }
         }
-        sections[0].fields.removeAll { $0.tag == "Life" }
+        for i in sections.indices where sections[i].id.hasSuffix("/main") { sections[i].fields.removeAll { $0.tag == "Life" } }
         return sections.filter { !$0.fields.isEmpty }
     }
 
+    static let bindPointNames: [(id: Int, name: String)] = [
+        (0, "None"), (1, "Face (j_kao)"), (3, "Base of weapon (relative)"), (4, "Center of weapon"), (5, "Tip of weapon (relative)"),
+        (6, "Right shoulder"), (7, "Left shoulder"), (8, "Right forearm"), (9, "Left forearm"), (10, "Right calves"), (11, "Left calves"),
+        (16, "Front of character"), (25, "Top of head"), (26, "Middle of head"), (27, "Front of head"), (28, "Chest (j_sebo_c)"),
+        (29, "Center of character (n_root)"), (30, "Center of character (n_hara)"), (31, "Waist (j_kosi)"), (32, "Right hand (j_te_r)"),
+        (33, "Left hand (j_te_l)"), (34, "Right foot"), (35, "Left foot"), (42, "Above character (n_root)"), (43, "Head (near right eye)"),
+        (44, "Head (near left eye)"), (71, "Character origin (n_root)"), (77, "Right hand (n_buki_r)"), (78, "Left hand (n_buki_l)"),
+        (107, "n_throw"), (108, "SGE noulith 3 front / RPR avatar neck"), (109, "SGE noulith 3 back / RPR avatar spine"),
+        (110, "SGE noulith 2 front / RPR avatar left hand"), (111, "SGE noulith 2 back / RPR avatar face"),
+        (112, "SGE noulith 4 front / RPR avatar origin"), (113, "SGE noulith 4 back"),
+    ]
+
+    static let clipTypes: [(code: String, name: String)] = [
+        ("KILL", "Kill"), ("REST", "Reset"), ("END ", "End"), ("FADI", "Fade In"), ("ULLP", "Unlock Loop Point"), ("TRG ", "Trigger"),
+        ("RTRG", "Random Trigger"),
+    ]
+
     private func clipFields(_ block: AvfxBlock, id: String) -> [PropField] {
         guard block.data.count >= 36 else { return [] }
-        var fields = [PropField(id: id + "#type", label: "Type", tag: "Clip", kind: .info, read: { [self] in .text(clipTypeName(block)) }, write: nil)]
-        for i in 0..<4 {
+        func code() -> String { String(decoding: block.data.prefix(4).reversed(), as: UTF8.self) }
+        func intField(_ label: String, _ i: Int, suffix: String) -> PropField {
             let at = 4 + i * 4
-            fields.append(PropField(id: id + "#i\(i)", label: "Int \(i)", tag: "Clip", kind: .int,
-                                    read: { .int(Int(Int32(bitPattern: block.data.u32(at)))) },
-                                    write: { block.data.setU32(at, UInt32(bitPattern: Int32(truncatingIfNeeded: Int($0.number.rounded())))) }))
+            return PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .int,
+                             read: { .int(Int(Int32(bitPattern: block.data.u32(at)))) },
+                             write: { block.data.setU32(at, UInt32(bitPattern: Int32(truncatingIfNeeded: Int($0.number.rounded())))) })
         }
+        func flagField(_ label: String, at: Int, suffix: String, isOn: @escaping () -> Bool, set: @escaping (Bool) -> UInt32) -> PropField {
+            PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .bool, read: { .bool(isOn()) },
+                      write: { if case .bool(let v) = $0 { block.data.setU32(at, set(v)) } })
+        }
+        let choices = EffectDocument.clipTypes.enumerated().map { FieldChoice(name: $0.element.name, value: $0.offset) }
+        var fields = [PropField(id: id + "#type", label: "Type", tag: "Clip", kind: .choice(choices),
+                                read: { .int(EffectDocument.clipTypes.firstIndex { $0.code == code() } ?? -1) },
+                                write: {
+                                    guard case .int(let v) = $0, v >= 0, v < EffectDocument.clipTypes.count else { return }
+                                    let bytes = Array(EffectDocument.clipTypes[v].code.utf8.reversed())
+                                    for k in 0..<4 { block.data[k] = bytes[k] }
+                                })]
+        switch code() {
+        case "KILL":
+            fields.append(intField("Fade Out Duration", 0, suffix: "fade"))
+            fields.append(flagField("Hide", at: 16, suffix: "hide", isOn: { block.data.u32(16) == 1 }, set: { $0 ? 1 : 0 }))
+            fields.append(flagField("Allow Show", at: 20, suffix: "allow", isOn: { block.data.f32(20) != -1 },
+                                    set: { $0 ? Float(0).bitPattern : Float(-1).bitPattern }))
+            fields.append(flagField("Start Hidden", at: 24, suffix: "hidden", isOn: { block.data.f32(24) != -1 },
+                                    set: { $0 ? Float(0).bitPattern : Float(-1).bitPattern }))
+        case "RTRG":
+            fields.append(intField("Minimum Trigger", 0, suffix: "min"))
+            fields.append(intField("Maximum Trigger", 1, suffix: "max"))
+        default: break
+        }
+        for i in 0..<4 { fields.append(intField("Raw Integer \(i + 1)", i, suffix: "i\(i)")) }
         for i in 0..<4 {
             let at = 20 + i * 4
-            fields.append(PropField(id: id + "#f\(i)", label: "Float \(i)", tag: "Clip", kind: .double,
+            fields.append(PropField(id: id + "#f\(i)", label: "Raw Float \(i + 1)", tag: "Clip", kind: .double,
                                     read: { .double(Double(block.data.f32(at))) },
                                     write: { block.data.setU32(at, Float($0.number).bitPattern) }))
         }
@@ -321,8 +422,8 @@ extension EffectDocument {
 
     private func modelFields(_ block: AvfxBlock, id: String) -> [PropField] {
         let counts: [(String, Int)] = [
-            ("Вершины", (block.child("VDrw")?.data.count ?? 0) / 36), ("Треугольники", (block.child("VIdx")?.data.count ?? 0) / 6),
-            ("Точки эмиссии", (block.child("VEmt")?.data.count ?? 0) / 28), ("Порядок точек", (block.child("VNum")?.data.count ?? 0) / 2),
+            ("Vertices", (block.child("VDrw")?.data.count ?? 0) / 36), ("Triangles", (block.child("VIdx")?.data.count ?? 0) / 6),
+            ("Emit Vertices", (block.child("VEmt")?.data.count ?? 0) / 28), ("Emit Order", (block.child("VNum")?.data.count ?? 0) / 2),
         ]
         return counts.enumerated().map { i, entry in
             PropField(id: id + "#m\(i)", label: entry.0, tag: "Modl", kind: .info, read: { .text("\(entry.1)") }, write: nil)
@@ -367,7 +468,10 @@ extension EffectDocument {
                 let saved = block.curveKeys
                 return { block.curveKeys = saved }
             },
-            settings: settings)
+            settings: settings,
+            extrapolation: { (block.int("BvPr"), block.int("BvPo")) },
+            colorComponent: component,
+            clampUnit: component != nil)
     }
 
     func avfxCurveGroups(_ node: OutlineNode, _ block: AvfxBlock, _ cls: String?) -> [CurveGroup] {
@@ -406,7 +510,8 @@ extension EffectDocument {
                 }
                 settings = avfxFields((child.children ?? []).filter { $0.children == nil }, cls: curveClass, id: id)
             }
-            groups.append(CurveGroup(id: id, title: title, tag: child.tag, isAngle: isAngle, channels: channels, settings: settings))
+            groups.append(CurveGroup(id: id, title: title, tag: child.tag, isAngle: isAngle, channels: channels, settings: settings,
+                                     remove: { [weak self] in self?.removeChild(child, from: block, title: "Remove " + title) }))
         }
         return groups
     }
@@ -444,11 +549,15 @@ extension EffectDocument {
                 let open = Double(endTime) + base <= start
                 let end = open ? start + (life > 0 ? life : (clip >= 0 && emitter < 0 ? 1 : 30)) : base + Double(endTime)
                 let label = emitter >= 0 ? "Emitter \(emitter)" : clip >= 0 ? "Clip \(clip)" : "—"
-                children.append(SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end, openEnded: open && life <= 0 && emitter >= 0,
-                                             tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)"))
+                var row = SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end, openEnded: open && life <= 0 && emitter >= 0,
+                                       tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
+                row.base = base
+                row.startField = record.first { $0.tag == "StTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#StTm") }
+                row.endField = record.first { $0.tag == "EdTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#EdTm") }
+                children.append(row)
             }
             let end = children.map(\.end).max() ?? base + 30
-            let suffix = triggered.contains(t) ? " (триггер)" : ""
+            let suffix = triggered.contains(t) ? " (trigger)" : ""
             rows.append(SequencerRow(id: id, label: "Timeline \(t)" + suffix, start: base, end: end, openEnded: false, tint: .timeline,
                                      depth: 0, nodeID: id))
             rows.append(contentsOf: children)

@@ -46,18 +46,21 @@ struct AxisGizmo: View {
 struct ViewportPanel: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
-    @StateObject private var camera = ViewportCamera()
+    @State private var camera = ViewportCamera()
     @State private var framedKey = ""
 
     private var scene: ViewportScene {
         var scene = ViewportScene()
         scene.shading = app.viewportMode
+        scene.effectShading = app.effectShading
+        scene.showEmitters = app.showEmitters
+        scene.showBindPoints = app.showBindPoints
+        scene.filter = document.visibilityFilter
         let selected = document.selectionID ?? ""
         var key = "\(document.id)|\(document.revision)|\(app.viewportMode)|"
         let meshes = app.meshes(for: document)
-        let focused = meshes.filter { selected.hasPrefix($0.id) }
-        for entry in focused.isEmpty ? meshes : focused {
-            scene.meshes.append((entry.mesh, !focused.isEmpty))
+        for entry in meshes.filter({ selected.hasPrefix($0.id) }) {
+            scene.meshes.append((entry.mesh, true))
             key += entry.id + ";"
         }
         if let slot = document.textureSlots.first(where: { $0.nodeID == selected }) {
@@ -65,6 +68,7 @@ struct ViewportPanel: View {
             scene.meshes = []
             key += "tex:" + slot.path
         }
+        scene.showEffect = scene.meshes.isEmpty && scene.texture == nil
         scene.revision = key.hashValue
         return scene
     }
@@ -84,25 +88,94 @@ struct ViewportPanel: View {
         if let lo, let hi { camera.frame((lo, hi)) } else { camera.frame(nil) }
     }
 
+    private var shadingButtons: some View {
+        HStack(spacing: 1) {
+            HeaderButton(symbol: "circle.fill", active: app.effectShading == 0, help: "Textured") { app.effectShading = 0 }
+            HeaderButton(symbol: "square.grid.3x3", active: app.effectShading == 1, help: "Wireframe only") { app.effectShading = 1 }
+            HeaderButton(symbol: "circle.grid.cross", active: app.effectShading == 2, help: "Textured with wireframe overlay") { app.effectShading = 2 }
+        }
+    }
+
+    private var isolateButton: some View {
+        HeaderButton(symbol: "scope", active: document.isolateSelection, help: "Isolate the selected timeline, emitter or particle") {
+            document.isolateSelection.toggle()
+        }
+    }
+
+    private var visibilityNote: some View {
+        let filter = document.visibilityFilter
+        return Group {
+            if !filter.isEmpty {
+                HStack(spacing: 4) {
+                    Image(systemName: "eye.slash").font(.system(size: 9))
+                    Text(filter.isolated != nil ? "Isolated" : "\(filter.hidden.count) hidden").font(Theme.small)
+                    Text("Show All").font(Theme.small).underline()
+                        .onTapGesture {
+                            document.hidden = []
+                            document.isolateSelection = false
+                        }
+                }
+                .foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))
+            }
+        }
+    }
+
     var body: some View {
+        if document.format == .pixi {
+            VStack(spacing: 0) {
+                EditorHeader(symbol: "view.2d", title: "2D Viewport") {
+                    visibilityNote
+                    Spacer()
+                    Text("Drag: pan · Pinch or ⌘ Scroll: zoom · Double-click: reset").font(Theme.small).foregroundStyle(Theme.dim)
+                    isolateButton
+                    shadingButtons
+                }
+                Effect2DViewport(document: document, app: app, shading: app.effectShading)
+            }
+        } else {
+            viewport3D
+        }
+    }
+
+    private var viewport3D: some View {
         VStack(spacing: 0) {
             EditorHeader(symbol: "view.3d", title: "3D Viewport") {
+                Menu {
+                    Button("Front") { camera.setView(yaw: 0, pitch: 0) }
+                    Button("Right") { camera.setView(yaw: .pi / 2, pitch: 0) }
+                    Button("Top") { camera.setView(yaw: 0, pitch: 1.55) }
+                    Button("Frame All") { frameAll() }
+                } label: {
+                    Text("View").font(Theme.font).foregroundStyle(Theme.text).padding(.horizontal, 6).frame(height: 20)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                visibilityNote
                 Spacer()
-                HeaderButton(symbol: "scope", help: "Показать всё (.)") { frameAll() }
-                HStack(spacing: 1) {
-                    HeaderButton(symbol: "square.grid.3x3", active: app.viewportMode == 0, help: "Каркас") { app.viewportMode = 0 }
-                    HeaderButton(symbol: "circle.fill", active: app.viewportMode == 1, help: "Сплошной") { app.viewportMode = 1 }
-                    HeaderButton(symbol: "circle.lefthalf.filled", active: app.viewportMode == 2, help: "Цвета вершин") { app.viewportMode = 2 }
+                if scene.showEffect {
+                    HeaderButton(symbol: "dot.radiowaves.left.and.right", active: app.showEmitters, help: "Show emitter axes and shape points") {
+                        app.showEmitters.toggle()
+                    }
+                    HeaderButton(symbol: "figure.stand", active: app.showBindPoints, help: "Show the reference figure and bind points") {
+                        app.showBindPoints.toggle()
+                    }
+                    isolateButton
+                    shadingButtons
+                } else {
+                    HStack(spacing: 1) {
+                        HeaderButton(symbol: "square.grid.3x3", active: app.viewportMode == 0, help: "Wireframe") { app.viewportMode = 0 }
+                        HeaderButton(symbol: "circle.fill", active: app.viewportMode == 1, help: "Solid") { app.viewportMode = 1 }
+                        HeaderButton(symbol: "circle.lefthalf.filled", active: app.viewportMode == 2, help: "Vertex colors") { app.viewportMode = 2 }
+                    }
                 }
             }
             ZStack(alignment: .topLeading) {
-                MetalViewport(camera: camera, scene: scene)
+                MetalViewport(camera: camera, scene: scene, document: document, app: app)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("User Perspective").font(.system(size: 11, weight: .medium))
                     Text(document.selectedNode.map { "\(document.title) | \($0.title)" } ?? document.title).font(Theme.small)
-                    if scene.meshes.isEmpty && scene.texture == nil {
-                        Text("Проигрывание эффекта ещё не реализовано: показываются модели и текстуры").font(Theme.small).padding(.top, 4)
-                    }
                 }
                 .foregroundStyle(Color.white.opacity(0.8))
                 .shadow(color: .black, radius: 1)

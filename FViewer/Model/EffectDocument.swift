@@ -10,31 +10,42 @@ final class EffectDocument: ObservableObject, Identifiable {
     let id = UUID()
     @Published var url: URL
     let format: EffectFormat
-    private(set) var avfxRoot: AvfxBlock?
-    private(set) var jsonRoot: JSONNode?
+    var avfxRoot: AvfxBlock?
+    var jsonRoot: JSONNode?
+    @Published var hidden: Set<VisibilityKey> = []
+    @Published var isolateSelection = false
     @Published private(set) var revision = 0
     @Published private(set) var outline: [OutlineNode] = []
     @Published var selectionID: String? {
         didSet { if selectionID != oldValue { activeCurveID = nil } }
     }
     @Published var activeCurveID: String?
-    @Published var time: Double = 0
+    let clock = PlaybackClock()
     @Published var isDirty = false
-    let undoManager = UndoManager()
+    private(set) var roundTripExact: Bool?
+    private var backedUp = false
+    let undoManager: UndoManager = {
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        return manager
+    }()
     let catalog = AvfxCatalog.shared
     private var index: [String: OutlineNode] = [:]
+    private var rowsCache: (revision: Int, rows: [SequencerRow])?
 
     init(url: URL) throws {
         self.url = url
         let data = try Data(contentsOf: url)
         if url.pathExtension.lowercased() == "avfx" {
             format = .avfx
-            avfxRoot = try AvfxBlock.parseFile([UInt8](data))
+            let root = try AvfxBlock.parseFile([UInt8](data))
+            avfxRoot = root
+            roundTripExact = Data(root.serialized()) == data
         } else {
             format = .pixi
             let root = try JSONParser.parse(data)
             guard root["emitters"] != nil || root["particles"] != nil || root["timelines"] != nil else {
-                throw AvfxError.malformed("Это не эффект: в JSON нет timelines, emitters и particles")
+                throw AvfxError.malformed("Not an effect: the JSON has no timelines, emitters or particles")
             }
             jsonRoot = root
         }
@@ -46,6 +57,7 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     func serializedData() -> Data {
         if let avfxRoot {
+            avfxRoot.updateCounts()
             avfxRoot.syncCumulativeLists()
             return Data(avfxRoot.serialized())
         }
@@ -54,7 +66,13 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     func save(to target: URL? = nil) throws {
         let destination = target ?? url
-        try serializedData().write(to: destination, options: .atomic)
+        let payload = serializedData()
+        if destination == url, !backedUp, FileManager.default.fileExists(atPath: url.path) {
+            let backup = url.appendingPathExtension("bak")
+            if !FileManager.default.fileExists(atPath: backup.path) { try? FileManager.default.copyItem(at: url, to: backup) }
+            backedUp = true
+        }
+        try payload.write(to: destination, options: .atomic)
         url = destination
         isDirty = false
     }
@@ -65,6 +83,23 @@ final class EffectDocument: ObservableObject, Identifiable {
     }
 
     var selectedNode: OutlineNode? { node(selectionID) }
+
+    func visibilityKey(forNodeID id: String?) -> VisibilityKey? {
+        guard var path = id else { return nil }
+        while true {
+            if let key = index[path]?.visibility { return key }
+            guard let slash = path.lastIndex(of: "/") else { return nil }
+            path = String(path[..<slash])
+        }
+    }
+
+    var visibilityFilter: VisibilityFilter {
+        VisibilityFilter(hidden: hidden, isolated: isolateSelection ? visibilityKey(forNodeID: selectionID) : nil)
+    }
+
+    func toggleHidden(_ key: VisibilityKey) {
+        if hidden.contains(key) { hidden.remove(key) } else { hidden.insert(key) }
+    }
 
     func rebuildOutline() {
         if let avfxRoot {
@@ -85,18 +120,53 @@ final class EffectDocument: ObservableObject, Identifiable {
         isDirty = true
     }
 
-    func perform(_ title: String, _ action: @escaping () -> Void, revert: @escaping () -> Void) {
+    func perform(_ title: String, _ action: () -> Void, revert: () -> Void) {
+        let before = snapshot()
         action()
-        registerUndo(title, undo: revert, redo: action)
+        registerUndo(title, since: before)
     }
 
-    func registerUndo(_ title: String, undo: @escaping () -> Void, redo: @escaping () -> Void) {
+    private struct Snapshot {
+        let avfx: AvfxBlock?
+        let json: JSONNode?
+        let selection: String?
+    }
+
+    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID) }
+
+    private func restore(_ state: Snapshot) {
+        if let avfx = state.avfx { avfxRoot = avfx.deepCopy() }
+        if let json = state.json { jsonRoot = json.deepCopy() }
+    }
+
+    func registerUndo(_ title: String, undo: () -> Void, redo: () -> Void) {
+        undo()
+        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID)
+        redo()
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID))
+    }
+
+    func registerUndo(_ title: String, since before: Any) {
+        guard let before = before as? Snapshot else { return }
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID))
+    }
+
+    private func pushUndo(_ title: String, from: Snapshot, to: Snapshot) {
+        let grouped = !undoManager.isUndoing && !undoManager.isRedoing
+        if grouped { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { document in
-            undo()
-            document.registerUndo(title, undo: redo, redo: undo)
+            document.restore(from)
+            document.pushUndo(title, from: to, to: from)
+            if let selection = from.selection, document.node(selection) != nil { document.selectionID = selection }
         }
         undoManager.setActionName(title)
+        if grouped { undoManager.endUndoGrouping() }
         rebuildOutline()
+        var path = selectionID
+        while let current = path, node(current) == nil {
+            path = current.lastIndex(of: "/").map { String(current[..<$0]) }
+        }
+        if path != selectionID { selectionID = path ?? outline.first?.id }
         touch()
     }
 
@@ -140,10 +210,28 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
     }
 
-    var sequencerRows: [SequencerRow] {
-        if let avfxRoot { return avfxSequencerRows(avfxRoot) }
-        if let jsonRoot { return pixiSequencerRows(jsonRoot) }
+    func missingCurves(for node: OutlineNode) -> [MissingCurve] {
+        if case .avfx(let block, let cls, let record) = node.payload, record == nil { return avfxMissingCurves(node, block, cls) }
         return []
+    }
+
+    func missingFields(for node: OutlineNode) -> [MissingCurve] {
+        if case .avfx(let block, let cls, let record) = node.payload, record == nil, block.children != nil { return avfxMissingFields(node, block, cls) }
+        return []
+    }
+
+    var triggerCount: Int {
+        if let root = avfxRoot { return root.child("Schd")?.ownRecords("Trgr").count ?? 0 }
+        let numbers = (jsonRoot?["timelines"]?.elements ?? []).compactMap { $0["trigger"]?.number }
+        return numbers.isEmpty ? 0 : Int(numbers.max() ?? 0) + 1
+    }
+
+    var sequencerRows: [SequencerRow] {
+        if let cached = rowsCache, cached.revision == revision { return cached.rows }
+        var rows: [SequencerRow] = []
+        if let avfxRoot { rows = avfxSequencerRows(avfxRoot) } else if let jsonRoot { rows = pixiSequencerRows(jsonRoot) }
+        rowsCache = (revision, rows)
+        return rows
     }
 
     var duration: Double {
