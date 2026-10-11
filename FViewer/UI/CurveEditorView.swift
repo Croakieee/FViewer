@@ -51,6 +51,7 @@ struct CurveEditorView: View {
     @State private var cache = GroupCache()
     @State private var dragActive = false
     @AppStorage("curves.radians") private var radians = false
+    @AppStorage("curves.palette") private var paletteText = ""
     @State private var aim: (key: KeyRef, outgoing: Bool, reach: CGFloat)?
     @State private var ghost: [String: [CurveKeyPoint]] = [:]
     @State private var ghostStamp = 0
@@ -302,7 +303,7 @@ struct CurveEditorView: View {
     }
 
     private var graph: some View {
-        let redrawTriggers = (range, selection, hidden, boxStart, boxEnd, measured, activeChannel, dragActive, document.revision, ghostStamp)
+        let redrawTriggers = (range, selection, hidden, boxStart, boxEnd, measured, activeChannel, dragActive, document.revision, ghostStamp, radians)
         if case .box = drag { _ = redrawTriggers }
         return Canvas { context, canvasSize in
             _ = redrawTriggers
@@ -323,7 +324,10 @@ struct CurveEditorView: View {
                     line.move(to: CGPoint(x: 0, y: y(v)))
                     line.addLine(to: CGPoint(x: canvasSize.width, y: y(v)))
                     context.stroke(line, with: .color(Color.white.opacity(abs(v) < vStep / 2 ? 0.18 : 0.06)), lineWidth: 1)
-                    let label = String(format: vStep < 0.1 ? "%.3f" : vStep < 1 ? "%.2f" : "%.0f", v) + (group?.isAngle == true ? "°" : "")
+                    let asRadians = group?.isAngle == true && radians
+                    let shownValue = asRadians ? v * Double.pi / 180 : v
+                    let shownStep = asRadians ? vStep * Double.pi / 180 : vStep
+                    let label = String(format: shownStep < 0.1 ? "%.3f" : shownStep < 1 ? "%.2f" : "%.0f", shownValue) + (group?.isAngle == true ? (asRadians ? " rad" : "°") : "")
                     context.draw(Text(label).font(Theme.small).foregroundStyle(Theme.dim), at: CGPoint(x: 4, y: y(v) - 7), anchor: .leading)
                 }
                 v += vStep
@@ -1038,7 +1042,8 @@ struct CurveEditorView: View {
                 channel.write(keys)
             }
         }
-        return HStack(spacing: 6) {
+        return VStack(spacing: 4) {
+        HStack(spacing: 6) {
             Text("Color").font(Theme.font).foregroundStyle(Theme.text).frame(width: 72, alignment: .trailing)
             ColorField(color: current, alpha: false,
                        onLive: { color in
@@ -1052,6 +1057,48 @@ struct CurveEditorView: View {
                            apply(new)
                            document.registerUndo("Key Color", undo: before, redo: first.snapshot())
                        })
+        }
+        palette { color in
+            guard let first = channels.first else { return }
+            let before = first.snapshot()
+            apply(color)
+            document.registerUndo("Key Color", undo: before, redo: first.snapshot())
+        } current: { current }
+        }
+    }
+
+    private func palette(apply: @escaping (SIMD4<Double>) -> Void, current: @escaping () -> SIMD4<Double>) -> some View {
+        let saved = paletteText.split(separator: ";").compactMap { entry -> SIMD4<Double>? in
+            let parts = entry.split(separator: ",").compactMap { Double($0) }
+            return parts.count == 3 ? SIMD4(parts[0], parts[1], parts[2], 1) : nil
+        }
+        return HStack(spacing: 3) {
+            Color.clear.frame(width: 72, height: 1)
+            ForEach(Array(saved.enumerated()), id: \.offset) { offset, color in
+                RoundedRectangle(cornerRadius: 3).fill(Color(.sRGB, red: color.x, green: color.y, blue: color.z, opacity: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.black.opacity(0.5), lineWidth: 1))
+                    .frame(width: 16, height: 16)
+                    .onTapGesture { apply(color) }
+                    .contextMenu {
+                        Button("Remove from Palette") {
+                            var list = paletteText.split(separator: ";").map(String.init)
+                            if offset < list.count { list.remove(at: offset) }
+                            paletteText = list.joined(separator: ";")
+                        }
+                    }
+                    .help("Click to use this colour")
+            }
+            Image(systemName: "plus").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 16, height: 16)
+                .background(RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.22)))
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    let color = current()
+                    var list = paletteText.split(separator: ";").map(String.init)
+                    list.append(String(format: "%.4f,%.4f,%.4f", color.x, color.y, color.z))
+                    paletteText = list.suffix(16).joined(separator: ";")
+                }
+                .help("Save the current colour to the palette")
+            Spacer(minLength: 0)
         }
     }
 

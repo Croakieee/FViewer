@@ -129,7 +129,11 @@ extension EffectDocument {
         out.appendU32(UInt32(body.count))
         out.appendU32(UInt32(17 + body.count))
         out.append(contentsOf: body)
-        out.append(contentsOf: [UInt8](repeating: 0, count: copies.count))
+        for node in nodes {
+            let id = all.first { $0.block === node }?.id ?? ""
+            out.append(contentsOf: Array((names[id] ?? "").utf8))
+            out.append(0)
+        }
         return Data(out)
     }
 
@@ -148,7 +152,21 @@ extension EffectDocument {
             end = 17 + Int(bytes.u32(9))
             guard end <= bytes.count else { throw AvfxError.malformed("The node data is truncated") }
         }
-        let blocks = try AvfxBlock.parse(bytes, start, end).filter { EffectDocument.exchangeTags.contains($0.tag) }
+        let parsed = try AvfxBlock.parse(bytes, start, end)
+        var renames: [ObjectIdentifier: String] = [:]
+        if !legacy {
+            var at = Int(bytes.u32(13))
+            for block in parsed where at < bytes.count {
+                var text: [UInt8] = []
+                while at < bytes.count, bytes[at] != 0 {
+                    text.append(bytes[at])
+                    at += 1
+                }
+                at += 1
+                if !text.isEmpty { renames[ObjectIdentifier(block)] = String(decoding: text, as: UTF8.self) }
+            }
+        }
+        let blocks = parsed.filter { EffectDocument.exchangeTags.contains($0.tag) }
         guard !blocks.isEmpty else { throw AvfxError.malformed("The file contains no nodes") }
         var offsets: [String: Int] = [:]
         for tag in EffectDocument.exchangeTags { offsets[tag] = root.childrenNamed(tag).count }
@@ -171,6 +189,12 @@ extension EffectDocument {
             }
             root.syncCumulativeLists()
         }
+        var fresh: [String: String] = [:]
+        for block in blocks {
+            guard let name = renames[ObjectIdentifier(block)], let index = root.childrenNamed(block.tag).firstIndex(where: { $0 === block }) else { continue }
+            fresh["avfx/\(block.tag)/\(index)"] = name
+        }
+        if !fresh.isEmpty { assignNames(fresh) }
         if let last = EffectDocument.exportOrder.first(where: { tag in blocks.contains { $0.tag == tag } }) {
             selectionID = "avfx/\(last)/\(root.childrenNamed(last).count - 1)"
         }

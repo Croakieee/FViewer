@@ -30,6 +30,27 @@ private struct ModelEditorContent: View {
 
     private var vertexCount: Int { (model.child("VDrw")?.data.count ?? 0) / 36 }
     private var emitCount: Int { (model.child("VEmt")?.data.count ?? 0) / 28 }
+    private var orderCount: Int { (model.child("VNum")?.data.count ?? 0) / 2 }
+
+    private func addEmitPoint() {
+        document.performStructural("Add Emit Point") {
+            var point: [UInt8] = []
+            for value in [Float(0), 0, 0, 0, 1, 0] { point.appendU32(value.bitPattern) }
+            point.append(contentsOf: [255, 255, 255, 255])
+            let count = emitCount
+            if let block = model.child("VEmt") { block.data.append(contentsOf: point) } else { model.insert(AvfxBlock(tag: "VEmt", data: point), at: 0) }
+            var order: [UInt8] = []
+            order.appendU16(UInt16(truncatingIfNeeded: count))
+            if let block = model.child("VNum") { block.data.append(contentsOf: order) } else { model.insert(AvfxBlock(tag: "VNum", data: order), at: 0) }
+        }
+    }
+
+    private func removeEmitPoint(_ index: Int) {
+        document.performStructural("Remove Emit Point") {
+            if let block = model.child("VEmt"), (index + 1) * 28 <= block.data.count { block.data.removeSubrange(index * 28..<(index + 1) * 28) }
+            if let block = model.child("VNum"), block.data.count >= 2 { block.data.removeLast(2) }
+        }
+    }
 
     var body: some View {
         let mesh = Gltf.mesh(from: model)
@@ -61,8 +82,15 @@ private struct ModelEditorContent: View {
                             tab = 1
                             page = 0
                         }
+                        SegmentButton(title: "Vertex Order", active: tab == 2) {
+                            tab = 2
+                            page = 0
+                        }
+                        if tab == 1 {
+                            HeaderButton(symbol: "plus", help: "Add an emit point") { addEmitPoint() }
+                        }
                         Spacer()
-                        let total = tab == 0 ? vertexCount : emitCount
+                        let total = tab == 0 ? vertexCount : tab == 1 ? emitCount : orderCount
                         let pages = max(1, (total + pageSize - 1) / pageSize)
                         if pages > 1 {
                             HeaderButton(symbol: "chevron.left", help: "Previous page") { page = max(0, page - 1) }
@@ -157,6 +185,19 @@ private struct ModelEditorContent: View {
                     .padding(.bottom, 8)
                 }
             }
+        } else if tab == 2 {
+            if orderCount == 0 {
+                Color.clear
+            } else {
+                header(["Emit Point Index"])
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(Array((page * pageSize)..<min(orderCount, (page + 1) * pageSize)), id: \.self) { index in orderRow(index) }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 8)
+                }
+            }
         } else {
             if emitCount == 0 {
                 Color.clear
@@ -213,6 +254,25 @@ private struct ModelEditorContent: View {
         }
     }
 
+    private func orderRow(_ index: Int) -> some View {
+        HStack(spacing: 4) {
+            Text("\(index)").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 38, alignment: .trailing)
+            if let block = model.child("VNum") {
+                NumberField(label: nil, value: index * 2 + 1 < block.data.count ? Double(block.data.u16(index * 2)) : 0, isInteger: true,
+                            onLive: { _ in },
+                            onCommit: { old, next in
+                                func write(_ value: Double) {
+                                    guard index * 2 + 1 < block.data.count else { return }
+                                    let v = UInt16(max(0, min(65535, value)))
+                                    block.data[index * 2] = UInt8(v & 0xff)
+                                    block.data[index * 2 + 1] = UInt8(v >> 8)
+                                }
+                                document.perform("Edit Vertex Order", { write(next) }, revert: { write(old) })
+                            })
+            }
+        }
+    }
+
     private func emitRow(_ index: Int) -> some View {
         let o = index * 28
         return HStack(spacing: 4) {
@@ -224,6 +284,8 @@ private struct ModelEditorContent: View {
                     }
                 }
                 swatch(block, o + 24)
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 16, height: 20)
+                    .contentShape(Rectangle()).onTapGesture { removeEmitPoint(index) }.help("Remove this emit point")
             }
         }
     }

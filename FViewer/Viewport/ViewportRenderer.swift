@@ -307,13 +307,25 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         for entry in scene.meshes {
             let mesh = entry.mesh
             let accent: SIMD4<Float> = entry.highlighted ? SIMD4(1.0, 0.63, 0.16, 1) : SIMD4(0.75, 0.75, 0.75, 1)
-            if !mesh.vertices.isEmpty, !mesh.indices.isEmpty,
-               let vb = device.makeBuffer(bytes: mesh.vertices, length: MemoryLayout<MeshVertex>.stride * mesh.vertices.count),
+            var shown = mesh.vertices
+            if scene.shading == 3 {
+                for i in shown.indices {
+                    let n = shown[i].normal * 0.5 + SIMD3<Float>(repeating: 0.5)
+                    shown[i].color = SIMD4(n.x, n.y, n.z, 1)
+                }
+            } else if scene.shading == 4 {
+                for i in shown.indices {
+                    let uv = shown[i].uv
+                    shown[i].color = SIMD4(uv.x - uv.x.rounded(.down), uv.y - uv.y.rounded(.down), 0.15, 1)
+                }
+            }
+            if !shown.isEmpty, !mesh.indices.isEmpty,
+               let vb = device.makeBuffer(bytes: shown, length: MemoryLayout<MeshVertex>.stride * shown.count),
                let ib = device.makeBuffer(bytes: mesh.indices, length: 4 * mesh.indices.count) {
                 if scene.shading > 0 {
-                    let tint: SIMD4<Float> = scene.shading == 2 ? SIMD4(1, 1, 1, 1) : SIMD4(0.72, 0.72, 0.72, 1)
+                    let tint: SIMD4<Float> = scene.shading >= 2 ? SIMD4(1, 1, 1, 1) : SIMD4(0.72, 0.72, 0.72, 1)
                     items.append(DrawItem(vertices: vb, indices: ib, count: mesh.indices.count, primitive: .triangle, tint: tint,
-                                          lit: true, textured: false, wire: false))
+                                          lit: scene.shading < 3, textured: false, wire: false))
                 }
                 if scene.shading == 0 || entry.highlighted {
                     items.append(DrawItem(vertices: vb, indices: ib, count: mesh.indices.count, primitive: .triangle,

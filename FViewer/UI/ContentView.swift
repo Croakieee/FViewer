@@ -45,10 +45,23 @@ struct TopBar: View {
                 }
                 Button("Open File…") { app.openFilePanel() }
                 Button("Open Folder…") { app.chooseLibrary() }
+                Menu("Open Recent") {
+                    ForEach(app.recentFiles, id: \.self) { url in Button(url.lastPathComponent) { app.openRecent(url) } }
+                }
                 Divider()
                 Button("Save") { app.save() }.disabled(app.document == nil)
                 Button("Save As…") { app.saveAs() }.disabled(app.document == nil)
                 Divider()
+                Button("Save Workspace…") { app.saveWorkspace() }.disabled(app.libraryRoot == nil)
+                Menu("Open Workspace") {
+                    ForEach(app.workspaceFiles, id: \.self) { url in Button(url.deletingPathExtension().lastPathComponent) { app.openWorkspace(url) } }
+                }
+                .disabled(app.workspaceFiles.isEmpty)
+                Divider()
+                Button("Reload from Disk") { app.reloadDocument() }.disabled(app.document == nil)
+                Button("Show Autosaves") { app.revealAutosaves() }
+                Divider()
+                Button("Import Penumbra Mod (.pmp)…") { app.importPenumbraMod() }
                 Button("Import Nodes…") { app.importNodesPanel() }.disabled(app.document?.format != .avfx)
                 Button("Export Nodes…") { app.document?.exportRequest = [] }.disabled(app.document?.format != .avfx)
                 Button("Export Penumbra Mod…") { app.modExport = true }.disabled(app.document?.format != .avfx)
@@ -58,6 +71,7 @@ struct TopBar: View {
                 Button("Redo") { app.document?.redo() }.disabled(app.document?.undoManager.canRedo != true)
                 Divider()
                 Button("Clean Up Unused Nodes") { app.cleanUp() }.disabled(app.document?.format != .avfx)
+                Button("Convert Textures to Custom Paths") { app.convertTextures() }.disabled(app.document?.format != .avfx)
             }
             Spacer()
             if let document = app.document {
@@ -171,7 +185,10 @@ struct ContentView: View {
         }
         .background(Theme.window)
         .background(WindowConfigurator())
-        .onAppear { app.openModelWindow = { openWindow(id: "model") } }
+        .onAppear {
+            app.openModelWindow = { openWindow(id: "model") }
+            app.openTextureWindow = { openWindow(id: "texture") }
+        }
         .preferredColorScheme(.dark)
         .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {
             if let document = app.document { ExportNodesSheet(document: document, selected: document.exportRequest ?? []) }

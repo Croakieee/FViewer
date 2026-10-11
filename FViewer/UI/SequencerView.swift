@@ -17,8 +17,11 @@ struct SequencerView: View {
     @State private var liveSpan: Double = 64
 
     private func currentSpan(_ end: Double) -> Double { frozenSpan ?? max(end, 1) * 1.08 + 4 }
-    private func x(_ t: Double, _ width: CGFloat, _ span: Double) -> CGFloat { CGFloat((t + 2) / span) * width }
-    private func time(_ px: CGFloat, _ width: CGFloat, _ span: Double) -> Double { Double(px / max(width, 1)) * span - 2 }
+    @State private var viewZoom: Double = 1
+    @State private var viewStart: Double = 0
+
+    private func x(_ t: Double, _ width: CGFloat, _ span: Double) -> CGFloat { CGFloat((t + 2 - viewStart) / (span / viewZoom)) * width }
+    private func time(_ px: CGFloat, _ width: CGFloat, _ span: Double) -> Double { Double(px / max(width, 1)) * (span / viewZoom) - 2 + viewStart }
 
     private var triggerMenu: some View {
         Menu {
@@ -104,6 +107,10 @@ struct SequencerView: View {
                                 value: Int((clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
                         .frame(width: 64)
                         .help("Playback speed")
+                    HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
+                        viewZoom = 1
+                        viewStart = 0
+                    }
                 }
                 .fixedSize()
                 Text(clock.status.isEmpty ? "30 fps" : clock.status + " · 30 fps").font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
@@ -178,6 +185,15 @@ struct SequencerView: View {
                             context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(Theme.playhead))
                             context.draw(Text("\(Int(clock.time.rounded()))").font(Theme.small).foregroundStyle(.white), at: CGPoint(x: px, y: rulerHeight / 2))
                         }
+                        .background(ScrollMonitor(
+                            onScroll: { delta, flags, point in
+                                if flags.contains(.command) {
+                                    zoomTimeline(1 + Double(delta.height) * 0.01, at: point.x, width: geometry.size.width, span: span)
+                                } else if abs(delta.width) > abs(delta.height) {
+                                    viewStart = max(0, viewStart - Double(delta.width / max(geometry.size.width, 1)) * span / viewZoom)
+                                }
+                            },
+                            onMagnify: { amount, point in zoomTimeline(1 + Double(amount), at: point.x, width: geometry.size.width, span: span) }))
                         .contentShape(Rectangle())
                         .gesture(DragGesture(minimumDistance: 0)
                             .updating($pressing) { _, state, _ in state = true }
@@ -195,6 +211,13 @@ struct SequencerView: View {
                 .onAppear { labelWidth = min(max(geometry.size.width * 0.16, 140), 300) }
                 .onChange(of: geometry.size.width) { _, width in labelWidth = min(max(width * 0.16, 140), 300) }
         })
+    }
+
+    private func zoomTimeline(_ factor: Double, at px: CGFloat, width: CGFloat, span: Double) {
+        let anchor = time(px, width, span)
+        viewZoom = min(max(viewZoom * factor, 1), 40)
+        let shifted = time(px, width, span)
+        viewStart = viewZoom <= 1.001 ? 0 : max(0, viewStart + anchor - shifted)
     }
 
     private func handleDrag(_ drag: DragGesture.Value, rows: [SequencerRow], width: CGFloat, span liveValue: Double) {
@@ -229,7 +252,7 @@ struct SequencerView: View {
             return
         }
         guard let row = dragRow, abs(drag.translation.width) > 2 else { return }
-        let delta = (Double(drag.translation.width / max(width, 1)) * span).rounded()
+        let delta = (Double(drag.translation.width / max(width, 1)) * span / viewZoom).rounded()
         func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
         if dragMode == 2 {
             let shift = max(delta, -dragStart)

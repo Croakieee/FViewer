@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 private enum FieldRowItem: Identifiable {
@@ -305,6 +306,10 @@ struct InspectorView: View {
                 Text(node.title).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
                 Text(node.detail).font(Theme.font).foregroundStyle(Theme.dim).lineLimit(1)
                 Spacer()
+                HeaderButton(symbol: "doc.on.doc", help: "Copy the parameters and curves of this node") { ParameterClipboard.copy(node, in: document) }
+                HeaderButton(symbol: "doc.on.clipboard", help: "Paste the copied parameters into this node, matching fields by name") {
+                    ParameterClipboard.paste(into: node, in: document)
+                }
                 if let key = node.visibility {
                     HeaderButton(symbol: document.hidden.contains(key) ? "eye.slash" : "eye", help: "Show or hide in the viewport") {
                         document.toggleHidden(key)
@@ -319,7 +324,18 @@ struct InspectorView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let path = texturePath(for: node, sections: sections) {
-                Panel(title: "Preview") { TexturePreview(path: path) }
+                Panel(title: "Preview") {
+                    TexturePreview(path: path)
+                    if case .avfx(let block, _, _) = node.payload, block.tag == "Tex", block.children == nil {
+                        FlowLayout(spacing: 2) {
+                            ForEach(AppModel.TextureOperation.allCases, id: \.self) { operation in
+                                HeaderButton(symbol: operation.symbol, help: operation.rawValue) { app.transformTexture(block, operation) }
+                            }
+                            HelpBadge(text: "Each operation writes a new texture file next to the effect and points this slot at it. The original file is not changed.")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
             if case .avfx(let block, _, let record) = node.payload, record == nil, block.tag == "UvSt" {
                 Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
@@ -403,6 +419,36 @@ struct InspectorView: View {
 
     @ViewBuilder private var textures: some View {
         let slots = document.textureSlots
+        if document.format == .avfx {
+            Panel(title: "Import Settings") {
+                HStack(spacing: 8) {
+                    Text("Format").font(Theme.font).foregroundStyle(Theme.text).frame(width: 60, alignment: .trailing)
+                    ChoiceField(choices: TextureCodec.importFormats.map { FieldChoice(name: $0.name, value: Int($0.format.rawValue)) },
+                                value: Int(app.importFormat.rawValue)) { value in
+                        UserDefaults.standard.set(value, forKey: "texture.format")
+                        app.objectWillChange.send()
+                    }
+                }
+                HStack(spacing: 8) {
+                    Text("Mips").font(Theme.font).foregroundStyle(Theme.text).frame(width: 60, alignment: .trailing)
+                    NumberField(label: nil, value: Double(app.importMips), isInteger: true,
+                                onLive: { _ in },
+                                onCommit: { _, next in
+                                    UserDefaults.standard.set(Int(min(max(next, 1), 13)), forKey: "texture.mips")
+                                    app.objectWillChange.send()
+                                })
+                    HelpBadge(text: "Used when an image (PNG, JPEG, TIFF) is imported or a texture is transformed. DDS, .atex and .tex files keep their own format.")
+                }
+                HStack(spacing: 8) {
+                    Text("Prefix").font(Theme.font).foregroundStyle(Theme.text).frame(width: 60, alignment: .trailing)
+                    TextValueField(value: app.customPrefix) { value in
+                        UserDefaults.standard.set(value, forKey: "texture.prefix")
+                        app.objectWillChange.send()
+                    }
+                    HelpBadge(text: "Folder for custom texture paths. Edit → Convert Textures to Custom Paths moves every texture path of the effect under it, so the mod does not replace textures other effects use.")
+                }
+            }
+        }
         ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
             Panel(title: "\(index) · \(slot.name)") {
                 TexturePreview(path: slot.path, height: 110)
@@ -413,6 +459,27 @@ struct InspectorView: View {
                             tab = 0
                         }
                     }
+                if let id = slot.nodeID, case .avfx(let block, _, _)? = document.node(id)?.payload,
+                   case .avfx(let before, _, _)? = document.original?.node(id)?.payload, before.stringValue != block.stringValue {
+                    HStack(spacing: 6) {
+                        ChangeDot()
+                        Text("Replaced").font(Theme.font).foregroundStyle(Theme.changed)
+                        Spacer()
+                        SegmentButton(title: "Reset", active: false) {
+                            let current = block.stringValue, old = before.stringValue
+                            document.perform("Reset Texture", { block.stringValue = old }, revert: { block.stringValue = current })
+                        }
+                        .help(before.stringValue)
+                    }
+                }
+                if app.textureURL(slot.path) == nil, let id = slot.nodeID, case .avfx(let block, _, _)? = document.node(id)?.payload {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle").font(.system(size: 10)).foregroundStyle(Color.orange)
+                        Text("Missing").font(Theme.font).foregroundStyle(Color.orange)
+                        Spacer()
+                        SegmentButton(title: "Locate…", active: false) { app.replaceTexture(block) }
+                    }
+                }
             }
         }
     }

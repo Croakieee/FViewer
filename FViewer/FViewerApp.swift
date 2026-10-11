@@ -23,6 +23,11 @@ struct FViewerApp: App {
                 .frame(minWidth: 960, minHeight: 600)
         }
         .defaultLaunchBehavior(.presented)
+        Window("Texture Editor", id: "texture") {
+            TextureEditorView().environmentObject(app)
+        }
+        .defaultSize(width: 1100, height: 720)
+        .defaultLaunchBehavior(.suppressed)
         Window("Model Editor", id: "model") {
             ModelEditorView().environmentObject(app)
         }

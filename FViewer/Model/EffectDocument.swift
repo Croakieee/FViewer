@@ -24,6 +24,48 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
     }
     @Published var soloPreview = false
+    @Published private(set) var names: [String: String] = [:]
+
+    @Published var gamePath = "" {
+        didSet { if gamePath != oldValue, metaLoaded { saveMeta() } }
+    }
+    private var metaLoaded = false
+
+    private struct Meta: Codable {
+        var names: [String: String] = [:]
+        var gamePath: String = ""
+    }
+
+    private var metaURL: URL { url.deletingPathExtension().appendingPathExtension("fvmeta.json") }
+
+    func loadNames() {
+        if let data = try? Data(contentsOf: metaURL), let decoded = try? JSONDecoder().decode(Meta.self, from: data) {
+            names = decoded.names
+            gamePath = decoded.gamePath
+        }
+        metaLoaded = true
+    }
+
+    func saveMeta() {
+        if names.isEmpty && gamePath.isEmpty {
+            try? FileManager.default.removeItem(at: metaURL)
+        } else if let data = try? JSONEncoder().encode(Meta(names: names, gamePath: gamePath)) {
+            try? data.write(to: metaURL, options: .atomic)
+        }
+    }
+
+    func assignNames(_ fresh: [String: String]) {
+        for (id, name) in fresh where !name.isEmpty { names[id] = name }
+        saveMeta()
+        rebuildOutline()
+    }
+
+    func setName(_ name: String, for nodeID: String) {
+        if name.isEmpty { names[nodeID] = nil } else { names[nodeID] = name }
+        saveMeta()
+        rebuildOutline()
+        revision += 1
+    }
     var savedEnd: Double?
     var savedIsolate = false
     @Published var activeCurveID: String?
@@ -56,6 +98,7 @@ final class EffectDocument: ObservableObject, Identifiable {
             }
             jsonRoot = root
         }
+        loadNames()
         rebuildOutline()
         selectionID = outline.first?.id
         original = EffectDocument(shadowOf: self)
@@ -143,6 +186,10 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
         index = [:]
         func visit(_ node: OutlineNode) {
+            if let custom = names[node.id] {
+                if node.detail.isEmpty { node.detail = node.title }
+                node.title = custom
+            }
             index[node.id] = node
             node.children.forEach(visit)
         }

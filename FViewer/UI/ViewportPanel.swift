@@ -201,6 +201,8 @@ struct ViewportPanel: View {
                         HeaderButton(symbol: "square.grid.3x3", active: app.viewportMode == 0, help: "Wireframe") { app.viewportMode = 0 }
                         HeaderButton(symbol: "circle.fill", active: app.viewportMode == 1, help: "Solid") { app.viewportMode = 1 }
                         HeaderButton(symbol: "circle.lefthalf.filled", active: app.viewportMode == 2, help: "Vertex colors") { app.viewportMode = 2 }
+                        HeaderButton(symbol: "arrow.up.right", active: app.viewportMode == 3, help: "Normals") { app.viewportMode = 3 }
+                        HeaderButton(symbol: "square.grid.2x2", active: app.viewportMode == 4, help: "UV 1") { app.viewportMode = 4 }
                     }
                 }
             }

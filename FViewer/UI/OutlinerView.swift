@@ -36,6 +36,23 @@ struct OutlinerView: View {
                         ForEach(EffectDocument.addableKinds, id: \.tag) { kind in
                             Button(kind.title) { document.addTopLevel(kind.tag) }
                         }
+                        Divider()
+                        Menu("Texture from Library") {
+                            ForEach(Array((AppDelegate.model?.textureLibrary ?? []).enumerated()), id: \.offset) { _, entry in
+                                Button("★ " + entry.name) { document.addTexture(path: entry.path) }
+                            }
+                            if !(AppDelegate.model?.textureLibrary ?? []).isEmpty { Divider() }
+                            ForEach(Array(AppModel.usefulTextures.enumerated()), id: \.offset) { _, entry in
+                                Button(entry.name) { document.addTexture(path: entry.path) }
+                            }
+                        }
+                        Menu("Node from Library") {
+                            ForEach(Array((AppDelegate.model?.nodeLibraryItems ?? []).enumerated()), id: \.offset) { _, item in
+                                Button(item.name) { AppDelegate.model?.importFromNodeLibrary(item.url) }
+                            }
+                            Divider()
+                            Button("Show Library Folder") { AppDelegate.model?.revealNodeLibrary() }
+                        }
                     } label: {
                         Image(systemName: "plus").font(.system(size: 11)).foregroundStyle(Theme.text).frame(width: 24, height: 20)
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
@@ -132,6 +149,8 @@ struct OutlinerView: View {
             ForEach(node.actions) { action in
                 Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform)
             }
+            Divider()
+            Button("Rename…") { AppDelegate.model?.renameNode(node.id) }
         }
     }
 }
@@ -140,7 +159,11 @@ struct LibraryView: View {
     @EnvironmentObject var app: AppModel
 
     private var groups: [(folder: String, files: [LibraryFile])] {
-        Dictionary(grouping: app.files, by: \.folder).map { ($0.key, $0.value) }.sorted { $0.folder < $1.folder }
+        let favorites = app.favorites
+        var result = Dictionary(grouping: app.files, by: \.folder).map { (folder: $0.key, files: $0.value) }.sorted { $0.folder < $1.folder }
+        let starred = app.files.filter { favorites.contains($0.url.path) }
+        if !starred.isEmpty { result.insert((folder: "★ Favorites", files: starred), at: 0) }
+        return result
     }
 
     var body: some View {
@@ -176,6 +199,9 @@ struct LibraryView: View {
                                     .foregroundStyle(file.isAvfx ? NodeTint.particle.color : NodeTint.emitter.color).frame(width: 14)
                                 Text(file.name).font(Theme.font).foregroundStyle(selected ? .white : Theme.text).lineLimit(1)
                                 Spacer(minLength: 0)
+                                if app.favorites.contains(file.url.path) {
+                                    Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(Theme.changed)
+                                }
                                 if app.isDirty(file.url) { Circle().fill(Theme.text).frame(width: 5, height: 5) }
                             }
                             .padding(.leading, 18)
@@ -184,6 +210,9 @@ struct LibraryView: View {
                             .background(selected ? Theme.selection : Color.clear)
                             .contentShape(Rectangle())
                             .onTapGesture { app.open(file.url) }
+                            .contextMenu {
+                                Button(app.favorites.contains(file.url.path) ? "Remove from Favorites" : "Add to Favorites") { app.toggleFavorite(file.url) }
+                            }
                         }
                     }
                 }

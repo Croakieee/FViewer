@@ -187,6 +187,13 @@ extension EffectDocument {
         owner.children = list
     }
 
+    func addTexture(path: String) {
+        guard let root = avfxRoot else { return }
+        let block = AvfxBlock(tag: "Tex", data: Array(path.utf8) + [0])
+        performStructural("Add Texture") { root.insertTopLevel(block) }
+        selectionID = "avfx/Tex/\(root.childrenNamed("Tex").count - 1)"
+    }
+
     func addClip(_ timeline: AvfxBlock) {
         var bytes = Array("KILL".utf8.reversed())
         bytes.append(contentsOf: [UInt8](repeating: 0, count: 160))
@@ -307,6 +314,9 @@ extension EffectDocument {
             actions.append(NodeAction(id: node.id + "!export", title: "Export…", symbol: "square.and.arrow.up") { [weak self] in
                 self?.exportRequest = [node.id]
             })
+            actions.append(NodeAction(id: node.id + "!library", title: "Save to Library…", symbol: "books.vertical") {
+                AppDelegate.model?.saveToNodeLibrary(node.id)
+            })
         }
         if let life = block.children?.first(where: { $0.tag == "Life" }), life.children != nil, ["Emit", "Ptcl", "Bind", "Efct"].contains(block.tag) {
             actions.append(NodeAction(id: node.id + "!life", title: "Make Life Infinite", symbol: "infinity") { [weak self] in
@@ -342,7 +352,13 @@ extension EffectDocument {
             }, at: 0)
         }
         if block.tag == "Tex", block.children == nil {
+            actions.append(NodeAction(id: node.id + "!texlib", title: "Add to Texture Library", symbol: "star") {
+                AppDelegate.model?.addToTextureLibrary(block.stringValue)
+            })
+            actions.insert(NodeAction(id: node.id + "!atex", title: "Export .atex…", symbol: "doc") { AppDelegate.model?.exportTextureFile(block.stringValue, dds: false) }, at: 0)
+            actions.insert(NodeAction(id: node.id + "!dds", title: "Export DDS…", symbol: "doc") { AppDelegate.model?.exportTextureFile(block.stringValue, dds: true) }, at: 0)
             actions.insert(NodeAction(id: node.id + "!png", title: "Export PNG…", symbol: "photo") { AppDelegate.model?.exportTexture(block.stringValue) }, at: 0)
+            actions.insert(NodeAction(id: node.id + "!editor", title: "Open Texture Editor…", symbol: "paintbrush") { AppDelegate.model?.requestTextureEditor(node.id) }, at: 0)
             actions.insert(NodeAction(id: node.id + "!replace", title: "Replace Image…", symbol: "arrow.triangle.2.circlepath") {
                 AppDelegate.model?.replaceTexture(block)
             }, at: 0)
@@ -431,7 +447,7 @@ extension EffectDocument {
         var sections: [(String, [String])] = []
         if let root = avfxRoot {
             let version = root.int("Ver")
-            var summary = [String(format: "Version %08X", version)]
+            var summary = ["Version \((version >> 24) & 0xff).\((version >> 16) & 0xff).\((version >> 8) & 0xff).\(version & 0xff)"]
             for (tag, title) in [("TmLn", "Timelines"), ("Emit", "Emitters"), ("Ptcl", "Particles"), ("Efct", "Effectors"), ("Bind", "Binders"),
                                  ("Tex", "Textures"), ("Modl", "Models")] {
                 summary.append("\(title): \(root.childrenNamed(tag).count)")
