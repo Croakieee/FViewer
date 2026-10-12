@@ -161,9 +161,9 @@ private struct TmbView: View {
                         HStack(spacing: 5) {
                             Text(entry.magic).font(.system(size: 10, design: .monospaced)).foregroundStyle(entry.magic == "C012" || entry.magic == "C173" ? Theme.changed : Theme.dim)
                                 .frame(width: 38, alignment: .leading)
-                            Text(GameFiles.tmbNames[entry.magic] ?? "").font(Theme.font).foregroundStyle(entry.id == item?.id ? .white : Theme.text).lineLimit(1)
+                            Text(TmbCatalog.name(entry.magic)).font(Theme.font).foregroundStyle(entry.id == item?.id ? .white : Theme.text).lineLimit(1)
                             Spacer(minLength: 0)
-                            Text("#\(entry.itemID) · \(entry.time)").font(Theme.small).foregroundStyle(Theme.dim)
+                            Text(entry.itemID < 0 ? "" : "#\(entry.itemID) · \(entry.time)").font(Theme.small).foregroundStyle(Theme.dim)
                         }
                         .padding(.horizontal, 6)
                         .frame(height: 20)
@@ -194,40 +194,111 @@ private struct TmbView: View {
         }
     }
 
-    @ViewBuilder private func detail(_ item: TmbItem) -> some View {
+    private func number(_ label: String, _ value: Double, integer: Bool, _ commit: @escaping (Double) -> Void) -> some View {
+        row(label) {
+            NumberField(label: nil, value: value, isInteger: integer, step: integer ? 1 : 0.01, onLive: { _ in }, onCommit: { _, v in commit(v) }).frame(width: 130)
+        }
+    }
+
+    private func read(_ b: [UInt8], _ at: Int, _ size: Int) -> Int {
+        switch size {
+        case 1: return at < b.count ? Int(Int8(bitPattern: b[at])) : 0
+        case 2: return GameFiles.i16(b, at)
+        default: return GameFiles.i32(b, at)
+        }
+    }
+
+    private func write(_ at: Int, _ size: Int, _ value: Int) {
+        switch size {
+        case 1: if at < file.bytes.count { file.bytes[at] = UInt8(bitPattern: Int8(truncatingIfNeeded: value)) }
+        case 2: file.setShort(at, value)
+        default: file.setInt(at, value)
+        }
+    }
+
+    @ViewBuilder private func fieldRow(_ field: TmbFieldDef, _ item: TmbItem) -> some View {
         let b = file.bytes
-        Panel(title: (GameFiles.tmbNames[item.magic] ?? item.magic) + "  ·  " + item.magic, trailing: "\(item.size) bytes") {
-            if item.magic != "TMDH" || item.size >= 12 {
-                row("Id") { Text("\(item.itemID)").font(Theme.font).foregroundStyle(Theme.dim) }
-                row("Time") {
-                    NumberField(label: nil, value: Double(item.time), isInteger: true, onLive: { _ in }, onCommit: { _, v in file.setShort(item.offset + 10, Int(v)) })
-                        .frame(width: 100)
+        let at = item.offset + field.at
+        switch field.type {
+        case "Float":
+            number(field.name, Double(GameFiles.f32(b, at)), integer: false) { GameFiles.put32(&file.bytes, at, Float($0).bitPattern) }
+        case "Bool":
+            row(field.name) { CheckBox(isOn: read(b, at, field.size) != 0, label: "") { write(at, field.size, $0 ? 1 : 0) }.frame(width: 40) }
+        case "Enum" where !field.choices.isEmpty:
+            row(field.name) { ChoiceField(choices: field.choices, value: read(b, at, field.size)) { write(at, field.size, $0) }.frame(width: 210) }
+        case "OffsetString":
+            if let path = GameFiles.offsetString(b, item: item, field: field.at) {
+                row(field.name) {
+                    TextValueField(value: path.text) { file.setPath(item: item, field: field.at, to: $0) }
+                    if path.text.hasSuffix(".avfx") { SegmentButton(title: "Open", active: true) { app.openEffect(gamePath: path.text) } }
                 }
+            } else {
+                row(field.name) { Text("not set").font(Theme.font).foregroundStyle(Theme.dim) }
             }
-            if item.magic == "C012", item.size >= 0x48 {
-                row("Duration") {
-                    NumberField(label: nil, value: Double(GameFiles.i32(b, item.offset + 12)), isInteger: true, onLive: { _ in },
-                                onCommit: { _, v in file.setInt(item.offset + 12, Int(v)) }).frame(width: 100)
-                }
-                if let path = GameFiles.offsetString(b, item: item, field: 20) {
-                    row("Path") {
-                        TextValueField(value: path.text) { file.setPath(item: item, field: 20, to: $0) }
-                        SegmentButton(title: "Open", active: true) { app.openEffect(gamePath: path.text) }
+        case "OffsetFloat3", "OffsetAngle3", "OffsetFloat4":
+            let offset = GameFiles.i32(b, at), count = min(max(GameFiles.i32(b, at + 4), 0), 4)
+            let target = item.offset + 8 + offset
+            if offset > 0, target + count * 4 <= b.count {
+                let scale: Float = field.type == "OffsetAngle3" ? 180 / .pi : 1
+                row(field.name) {
+                    ForEach(0..<count, id: \.self) { index in
+                        NumberField(label: nil, value: Double(GameFiles.f32(b, target + index * 4) * scale), suffix: scale == 1 ? "" : "°", step: 0.01,
+                                    onLive: { _ in }, onCommit: { _, v in GameFiles.put32(&file.bytes, target + index * 4, (Float(v) / scale).bitPattern) })
+                            .frame(width: 84)
                     }
                 }
-                row("Bind Point 1") {
-                    NumberField(label: nil, value: Double(GameFiles.i16(b, item.offset + 26)), isInteger: true, onLive: { _ in },
-                                onCommit: { _, v in file.setShort(item.offset + 26, Int(v)) }).frame(width: 100)
+            } else {
+                row(field.name) { Text("not set").font(Theme.font).foregroundStyle(Theme.dim) }
+            }
+        case "OffsetTimeline":
+            row(field.name) {
+                Text(TmbCatalog.idList(b, item: item, field: field.at).ids.map { "#\($0)" }.joined(separator: "  ")).font(Theme.font).foregroundStyle(Theme.text)
+                    .lineLimit(2)
+            }
+        case "OffsetExtra":
+            row(field.name) { Text(GameFiles.i32(b, at) == 0 ? "not set" : "present").font(Theme.font).foregroundStyle(Theme.dim) }
+        default:
+            number(field.name, Double(read(b, at, field.size)), integer: true) { write(at, field.size, Int($0)) }
+        }
+    }
+
+    @ViewBuilder private func detail(_ item: TmbItem) -> some View {
+        let b = file.bytes
+        let type = TmbCatalog.types[item.magic].flatMap { $0.size == item.size ? $0 : nil }
+        let block = blocks.first { $0.id == file.block } ?? blocks.first
+        Panel(title: (TmbCatalog.name(item.magic).isEmpty ? item.magic : TmbCatalog.name(item.magic)) + "  ·  " + item.magic, trailing: "\(item.size) bytes") {
+            if item.magic.hasPrefix("C"), let block {
+                HStack(spacing: 6) {
+                    SegmentButton(title: "Duplicate Entry", active: false) {
+                        if let problem = TmbCatalog.canRestructure(b, block) {
+                            file.note = problem
+                        } else if let next = TmbCatalog.duplicate(b, block: block, entry: item) {
+                            file.bytes = next
+                            file.selection = item.id + 1
+                            file.note = nil
+                        }
+                    }
+                    SegmentButton(title: "Delete Entry", active: false) {
+                        if let problem = TmbCatalog.canRestructure(b, block) {
+                            file.note = problem
+                        } else if let next = TmbCatalog.remove(b, block: block, entry: item) {
+                            file.bytes = next
+                            file.selection = max(0, item.id - 1)
+                            file.note = nil
+                        }
+                    }
+                    Spacer()
+                    HelpBadge(text: "A duplicate gets a new id and goes into the same track right after this entry. Both work in standalone .tmb files; inside a .pap only values can be edited.")
                 }
-                row("Bind Point 2") {
-                    NumberField(label: nil, value: Double(GameFiles.i16(b, item.offset + 30)), isInteger: true, onLive: { _ in },
-                                onCommit: { _, v in file.setShort(item.offset + 30, Int(v)) }).frame(width: 100)
-                }
-                row("Visibility") {
-                    ChoiceField(choices: [FieldChoice(name: "Default, no triggers", value: 0), FieldChoice(name: "Default, with triggers", value: 1),
-                                          FieldChoice(name: "Always, no triggers", value: 2), FieldChoice(name: "Always, with triggers", value: 3)],
-                                value: GameFiles.i32(b, item.offset + 64)) { file.setInt(item.offset + 64, $0) }.frame(width: 190)
-                }
+            }
+            if item.magic != "TMAL", item.magic != "TMPP" {
+                row("Id") { Text("\(item.itemID)").font(Theme.font).foregroundStyle(Theme.dim) }
+            }
+            if item.magic.hasPrefix("C") || item.magic == "TMAC" || item.magic == "TMTR" || item.magic == "TMFC" {
+                number("Time", Double(item.time), integer: true) { file.setShort(item.offset + 10, Int($0)) }
+            }
+            if let type {
+                ForEach(Array(type.fields.enumerated()), id: \.offset) { _, field in fieldRow(field, item) }
             }
         }
         Panel(title: "Raw Values", trailing: "\((item.size - 8) / 4)") {

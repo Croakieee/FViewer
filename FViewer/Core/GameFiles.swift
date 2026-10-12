@@ -120,8 +120,9 @@ enum GameFiles {
             let magic = String(decoding: b[at..<at + 4], as: UTF8.self)
             let length = i32(b, at + 4)
             guard length >= 8, at + length <= start + size else { break }
-            let hasID = magic != "TMDH" || length >= 12
-            items.append(TmbItem(id: index, offset: at, magic: magic, size: length, itemID: hasID ? i16(b, at + 8) : 0, time: hasID ? i16(b, at + 10) : 0))
+            let hasID = magic != "TMAL" && magic != "TMPP" && length >= 12
+            let hasTime = hasID && magic != "TMDH"
+            items.append(TmbItem(id: index, offset: at, magic: magic, size: length, itemID: hasID ? i16(b, at + 8) : -1, time: hasTime ? i16(b, at + 10) : 0))
             at += length
         }
         return TmbBlock(id: id, offset: start, size: size, items: items)

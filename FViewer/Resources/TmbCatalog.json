@@ -1,0 +1,2992 @@
+{
+ "C002": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   }
+  ],
+  "name": "TMB",
+  "size": 28
+ },
+ "C006": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Fly Text Settings",
+  "size": 24
+ },
+ "C009": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   }
+  ],
+  "name": "Animation (PAP Only)",
+  "size": 24
+ },
+ "C010": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Flags",
+    "size": 4,
+    "type": "Flag"
+   },
+   {
+    "at": 24,
+    "name": "Animation Start Frame",
+    "size": 4,
+    "type": "Float"
+   },
+   {
+    "at": 28,
+    "name": "Animation End Frame",
+    "size": 4,
+    "type": "Float"
+   },
+   {
+    "at": 32,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Animation",
+  "size": 40
+ },
+ "C011": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Fly Text",
+  "size": 20
+ },
+ "C012": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Disabled",
+      -1
+     ],
+     [
+      "Default",
+      0
+     ],
+     [
+      "Caster",
+      1
+     ],
+     [
+      "Target",
+      2
+     ]
+    ],
+    "name": "Bind Point 1 Origin",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 25,
+    "cases": [
+     [
+      "Disabled",
+      -1
+     ],
+     [
+      "Character",
+      0
+     ],
+     [
+      "Weapon",
+      1
+     ],
+     [
+      "Offhand",
+      2
+     ],
+     [
+      "Summon or Lemure",
+      3
+     ]
+    ],
+    "name": "Bind Point 1 Type",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 26,
+    "name": "Bind Point 1",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Disabled",
+      -1
+     ],
+     [
+      "Default",
+      0
+     ],
+     [
+      "Caster",
+      1
+     ],
+     [
+      "Target",
+      2
+     ]
+    ],
+    "name": "Bind Point 2 Origin",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 29,
+    "cases": [
+     [
+      "Disabled",
+      -1
+     ],
+     [
+      "Character",
+      0
+     ],
+     [
+      "Weapon",
+      1
+     ],
+     [
+      "Offhand",
+      2
+     ],
+     [
+      "Summon or Lemure",
+      3
+     ]
+    ],
+    "name": "Bind Point 2 Type",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 30,
+    "name": "Bind Point 2",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 32,
+    "name": "Scale",
+    "size": 8,
+    "type": "OffsetFloat3"
+   },
+   {
+    "at": 40,
+    "name": "Rotation",
+    "size": 8,
+    "type": "OffsetAngle3"
+   },
+   {
+    "at": 48,
+    "name": "Position",
+    "size": 8,
+    "type": "OffsetFloat3"
+   },
+   {
+    "at": 56,
+    "name": "RGBA",
+    "size": 8,
+    "type": "OffsetFloat4"
+   },
+   {
+    "at": 64,
+    "cases": [
+     [
+      "Default no Triggers",
+      0
+     ],
+     [
+      "Default with Triggers",
+      1
+     ],
+     [
+      "Always no Triggers",
+      2
+     ],
+     [
+      "Always with Triggers",
+      3
+     ]
+    ],
+    "name": "Visibility",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 68,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "VFX",
+  "size": 72
+ },
+ "C013": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "F-Curve Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Placement",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Model Animation",
+  "size": 28
+ },
+ "C014": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "cases": [
+     [
+      "Stowed State1",
+      0
+     ],
+     [
+      "Drawn State0",
+      1
+     ],
+     [
+      "CraftGather State2",
+      2
+     ],
+     [
+      "SwitchHand State3",
+      3
+     ],
+     [
+      "n throw State4",
+      4
+     ],
+     [
+      "SwitchReverse State5",
+      5
+     ]
+    ],
+    "name": "Object Position",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Object Control",
+    "size": 4,
+    "type": "Enum"
+   }
+  ],
+  "name": "Weapon Position",
+  "size": 28
+ },
+ "C015": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "cases": [
+     [
+      "State 1",
+      0
+     ],
+     [
+      "State 0",
+      1
+     ],
+     [
+      "State 2",
+      2
+     ],
+     [
+      "State 3",
+      3
+     ],
+     [
+      "State 4",
+      4
+     ],
+     [
+      "State 5",
+      5
+     ]
+    ],
+    "name": "ATCH Object Scale",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Object Control",
+    "size": 4,
+    "type": "Enum"
+   }
+  ],
+  "name": "Weapon Size",
+  "size": 28
+ },
+ "C021": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 28
+ },
+ "C031": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Animation",
+    "size": 2,
+    "type": "WeaponTimeline"
+   },
+   {
+    "at": 22,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Target Type",
+    "size": 2,
+    "type": "Enum"
+   }
+  ],
+  "name": "Summon Animation",
+  "size": 24
+ },
+ "C033": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Crafting Delay",
+  "size": 20
+ },
+ "C034": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Gathering Delay",
+  "size": 20
+ },
+ "C042": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Bind Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Sound Id",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Footstep",
+  "size": 28
+ },
+ "C043": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Weapon Id",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 26,
+    "name": "Body Id",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 28,
+    "name": "Variant Id",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Summon Weapon",
+  "size": 32
+ },
+ "C053": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Bind Id",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 22,
+    "name": "Sound Id",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 3",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 26,
+    "name": "Flags",
+    "size": 2,
+    "type": "Flag"
+   }
+  ],
+  "name": "Voiceline",
+  "size": 28
+ },
+ "C063": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Loop/Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   },
+   {
+    "at": 24,
+    "name": "Sound Index",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Sound Position",
+    "size": 1,
+    "type": "Flag"
+   },
+   {
+    "at": 29,
+    "name": "Bind Id",
+    "size": 1,
+    "type": "Byte"
+   },
+   {
+    "at": 30,
+    "name": "Unknown 2",
+    "size": 2,
+    "type": "Short"
+   }
+  ],
+  "name": "Sound",
+  "size": 32
+ },
+ "C067": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Flinch",
+  "size": 20
+ },
+ "C068": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Color 1",
+    "size": 8,
+    "type": "OffsetFloat4"
+   },
+   {
+    "at": 28,
+    "name": "Color 2",
+    "size": 8,
+    "type": "OffsetFloat4"
+   }
+  ],
+  "name": "Shade Color",
+  "size": 36
+ },
+ "C075": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Shape",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Scale",
+    "size": 8,
+    "type": "OffsetFloat3"
+   },
+   {
+    "at": 32,
+    "name": "Rotation",
+    "size": 8,
+    "type": "OffsetAngle3"
+   },
+   {
+    "at": 40,
+    "name": "Position",
+    "size": 8,
+    "type": "OffsetFloat3"
+   },
+   {
+    "at": 48,
+    "name": "RGBA",
+    "size": 8,
+    "type": "OffsetFloat4"
+   },
+   {
+    "at": 56,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 60,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Terrain VFX",
+  "size": 64
+ },
+ "C083": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 24
+ },
+ "C084": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 24
+ },
+ "C088": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Animation Blending",
+  "size": 20
+ },
+ "C089": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 24
+ },
+ "C093": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Color 1",
+    "size": 8,
+    "type": "OffsetFloat4"
+   },
+   {
+    "at": 28,
+    "name": "Color 2",
+    "size": 8,
+    "type": "OffsetFloat4"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Color",
+  "size": 40
+ },
+ "C094": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Fade Time",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Start Visibility",
+    "size": 4,
+    "type": "Float"
+   },
+   {
+    "at": 24,
+    "name": "End Visibility",
+    "size": 4,
+    "type": "Float"
+   },
+   {
+    "at": 28,
+    "name": "Filter Data",
+    "size": 4,
+    "type": "OffsetExtra"
+   }
+  ],
+  "name": "Invisibility",
+  "size": 32
+ },
+ "C095": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Float"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Float"
+   }
+  ],
+  "name": "",
+  "size": 32
+ },
+ "C100": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Visibility",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 22,
+    "name": "Unknown 3",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Hide Weapon",
+  "size": 32
+ },
+ "C107": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Row",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "VFX Trigger",
+  "size": 28
+ },
+ "C117": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "F-Curve Id",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Forced Forward Movement",
+  "size": 24
+ },
+ "C118": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Transition Time",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Animation Transition",
+  "size": 24
+ },
+ "C120": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Wave Type",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Controller Vibration",
+  "size": 24
+ },
+ "C124": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Targetable",
+    "size": 4,
+    "type": "Bool"
+   }
+  ],
+  "name": "Targetable",
+  "size": 24
+ },
+ "C125": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Animation Lock",
+  "size": 20
+ },
+ "C131": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Animation Cancelled by Movement",
+  "size": 20
+ },
+ "C136": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Local Wind Scale",
+  "size": 20
+ },
+ "C139": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Forced Movement Cancel",
+  "size": 20
+ },
+ "C142": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Bind Point",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Target FixedDirection",
+      0
+     ],
+     [
+      "Target UserFacingDirection",
+      1
+     ],
+     [
+      "Return",
+      2
+     ]
+    ],
+    "name": "Freeze Location",
+    "size": 4,
+    "type": "Enum"
+   }
+  ],
+  "name": "Freeze Position",
+  "size": 28
+ },
+ "C143": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Bank Id",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Fishing Sound",
+  "size": 24
+ },
+ "C144": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Camera Shift",
+    "size": 8,
+    "type": "Float2"
+   },
+   {
+    "at": 32,
+    "name": "Nameplate Shift",
+    "size": 12,
+    "type": "Float3"
+   }
+  ],
+  "name": "Camera and Nameplate Control",
+  "size": 44
+ },
+ "C161": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Blink",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Blink",
+  "size": 28
+ },
+ "C168": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "F-Curve Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "IntByte4"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 40,
+    "name": "Unknown 8",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 44,
+    "name": "Unknown 9",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 48,
+    "name": "Unknown 10",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 52,
+    "name": "Unknown 11",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Forced Camera Control",
+  "size": 56
+ },
+ "C173": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Loop / Wait",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Disabled",
+      -1
+     ],
+     [
+      "Default",
+      0
+     ],
+     [
+      "Caster",
+      1
+     ],
+     [
+      "Target",
+      2
+     ]
+    ],
+    "name": "Bind Point 1 Origin",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 25,
+    "cases": [
+     [
+      "Disabled",
+      -1
+     ],
+     [
+      "Character",
+      0
+     ],
+     [
+      "Weapon",
+      1
+     ],
+     [
+      "Offhand",
+      2
+     ],
+     [
+      "Summon or Lemure",
+      3
+     ]
+    ],
+    "name": "Bind Point 1 Type",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 26,
+    "name": "Bind Point 1",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 28,
+    "name": "Visibility",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Limit",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 40,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 44,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 48,
+    "name": "Unknown 8",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 52,
+    "name": "Unknown 9",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 56,
+    "name": "Unknown 10",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 60,
+    "name": "Unknown 11",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 64,
+    "name": "Unknown 12",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Async VFX",
+  "size": 68
+ },
+ "C174": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "cases": [
+     [
+      "Stowed State1",
+      0
+     ],
+     [
+      "Drawn State0",
+      1
+     ],
+     [
+      "CraftGather State2",
+      2
+     ],
+     [
+      "SwitchHand State3",
+      3
+     ],
+     [
+      "n throw State4",
+      4
+     ],
+     [
+      "SwitchReverse State5",
+      5
+     ]
+    ],
+    "name": "Object Position",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Object Control",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Stowed State1",
+      0
+     ],
+     [
+      "Drawn State0",
+      1
+     ],
+     [
+      "CraftGather State2",
+      2
+     ],
+     [
+      "SwitchHand State3",
+      3
+     ],
+     [
+      "n throw State4",
+      4
+     ],
+     [
+      "SwitchReverse State5",
+      5
+     ],
+     [
+      "Original",
+      6
+     ]
+    ],
+    "name": "Final Position",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 32,
+    "name": "Position Delay",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Object Control",
+  "size": 40
+ },
+ "C175": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "cases": [
+     [
+      "Stowed State1",
+      0
+     ],
+     [
+      "Drawn State0",
+      1
+     ],
+     [
+      "CraftGather State2",
+      2
+     ],
+     [
+      "SwitchHand State3",
+      3
+     ],
+     [
+      "n throw State4",
+      4
+     ],
+     [
+      "SwitchReverse State5",
+      5
+     ]
+    ],
+    "name": "Object Scale",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 24,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Object Control",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Stowed State1",
+      0
+     ],
+     [
+      "Drawn State0",
+      1
+     ],
+     [
+      "CraftGather State2",
+      2
+     ],
+     [
+      "SwitchHand State3",
+      3
+     ],
+     [
+      "n throw State4",
+      4
+     ],
+     [
+      "SwitchReverse State5",
+      5
+     ],
+     [
+      "Original",
+      6
+     ]
+    ],
+    "name": "Final Scale",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 32,
+    "name": "Scale Delay",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Object Scaling",
+  "size": 40
+ },
+ "C176": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "F-Curve Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "IntByte4"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Forced Vertical Movement",
+  "size": 40
+ },
+ "C177": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "F-Curve Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Forced Backwards Movement",
+  "size": 36
+ },
+ "C178": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "F-Curve Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 36
+ },
+ "C187": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Part",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "IntByte4"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Remove Part",
+  "size": 32
+ },
+ "C188": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Invisibility",
+  "size": 20
+ },
+ "C192": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 40,
+    "name": "Unknown 8",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 44,
+    "name": "Unknown 9",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 48,
+    "name": "Unknown 10",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 52,
+    "name": "Unknown 11",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 56
+ },
+ "C194": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 28
+ },
+ "C197": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Fade Time",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Voiceline Number",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Bind Point Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Normal",
+      0
+     ],
+     [
+      "Whisper",
+      1
+     ],
+     [
+      "Shout",
+      2
+     ],
+     [
+      "Disabled",
+      3
+     ]
+    ],
+    "name": "Speak Type",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Voiceline",
+  "size": 36
+ },
+ "C198": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Summon 0",
+      0
+     ],
+     [
+      "Summon 1",
+      1
+     ]
+    ],
+    "name": "Summon Id",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 29,
+    "cases": [
+     [
+      "Default",
+      0
+     ],
+     [
+      "State 0",
+      1
+     ],
+     [
+      "State 1",
+      2
+     ],
+     [
+      "State 2",
+      3
+     ],
+     [
+      "State 3",
+      4
+     ],
+     [
+      "State 4",
+      5
+     ],
+     [
+      "State 5",
+      6
+     ]
+    ],
+    "name": "ATCH State",
+    "size": 1,
+    "type": "Enum"
+   },
+   {
+    "at": 30,
+    "name": "Unknown 4",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 32,
+    "name": "Model Id",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 34,
+    "name": "Body Id",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 36,
+    "name": "Variant",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Lemure",
+  "size": 40
+ },
+ "C199": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Bind Point ID",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Object Control",
+    "size": 4,
+    "type": "Enum"
+   }
+  ],
+  "name": "Freeze Object",
+  "size": 32
+ },
+ "C202": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "IntByte4"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 36
+ },
+ "C203": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Bind Point Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Rotation",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "cases": [
+     [
+      "Weapon or Pet",
+      0
+     ],
+     [
+      "OffHand",
+      1
+     ],
+     [
+      "Summon or Lemure 0",
+      2
+     ],
+     [
+      "Summon or Lemure 1",
+      3
+     ]
+    ],
+    "name": "Object Control",
+    "size": 4,
+    "type": "Enum"
+   },
+   {
+    "at": 32,
+    "name": "Disable Follow",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 36,
+    "name": "Scale Enabled",
+    "size": 2,
+    "type": "Bool"
+   },
+   {
+    "at": 38,
+    "name": "Unknown 3",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 40,
+    "name": "Scale",
+    "size": 4,
+    "type": "Float"
+   }
+  ],
+  "name": "Summon Weapon Visibility",
+  "size": 44
+ },
+ "C204": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Shroud Transform",
+  "size": 28
+ },
+ "C211": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Lock Facing Direction",
+  "size": 28
+ },
+ "C212": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Float"
+   }
+  ],
+  "name": "",
+  "size": 32
+ },
+ "C215": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 4",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 28
+ },
+ "C216": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Subtitle Type",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Text Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Speaker Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Duration",
+    "size": 4,
+    "type": "Float"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 40,
+    "name": "Unknown 8",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 44,
+    "name": "Unknown 9",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "Subtitles",
+  "size": 48
+ },
+ "C225": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Duration",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 28
+ },
+ "C230": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Enabled",
+    "size": 4,
+    "type": "Bool"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "BGM Id",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 32,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 36,
+    "name": "Unknown 7",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "BGM Track",
+  "size": 40
+ },
+ "C234": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 3",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 22,
+    "name": "Unknown 4",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 24,
+    "name": "Unknown 5",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 6",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "",
+  "size": 32
+ },
+ "TMAC": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Ability Delay",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 16,
+    "name": "Unknown 2",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Tracks",
+    "size": 8,
+    "type": "OffsetTimeline"
+   }
+  ],
+  "name": "Actor",
+  "size": 28
+ },
+ "TMAL": {
+  "fields": [
+   {
+    "at": 8,
+    "name": "Actors",
+    "size": 8,
+    "type": "OffsetTimeline"
+   }
+  ],
+  "name": "Actor List",
+  "size": 16
+ },
+ "TMDH": {
+  "fields": [
+   {
+    "at": 10,
+    "name": "Unknown 1",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 12,
+    "name": "Length",
+    "size": 2,
+    "type": "Short"
+   },
+   {
+    "at": 14,
+    "name": "Unknown 3",
+    "size": 2,
+    "type": "Short"
+   }
+  ],
+  "name": "Header",
+  "size": 16
+ },
+ "TMFC": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Data Start",
+    "size": 4,
+    "type": "OffsetExtra"
+   },
+   {
+    "at": 16,
+    "name": "Data Count",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 20,
+    "name": "Unknown 1",
+    "size": 4,
+    "type": "Int"
+   },
+   {
+    "at": 24,
+    "name": "Data End",
+    "size": 4,
+    "type": "OffsetExtra"
+   },
+   {
+    "at": 28,
+    "name": "Unknown 3",
+    "size": 4,
+    "type": "Int"
+   }
+  ],
+  "name": "F-Curve",
+  "size": 32
+ },
+ "TMPP": {
+  "fields": [
+   {
+    "at": 8,
+    "name": "Path",
+    "size": 4,
+    "type": "OffsetString"
+   }
+  ],
+  "name": "Face Library",
+  "size": 12
+ },
+ "TMTR": {
+  "fields": [
+   {
+    "at": 12,
+    "name": "Entries",
+    "size": 8,
+    "type": "OffsetTimeline"
+   },
+   {
+    "at": 20,
+    "name": "Lua Data",
+    "size": 4,
+    "type": "OffsetExtra"
+   }
+  ],
+  "name": "Track",
+  "size": 24
+ }
+}
