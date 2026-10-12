@@ -344,6 +344,21 @@ extension AppModel {
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    func variantEffect(of table: URL, number: Int) -> URL? {
+        let folder = table.deletingLastPathComponent().appendingPathComponent("vfx").appendingPathComponent("eff")
+        let wanted = String(format: "%04d", number)
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "avfx" && $0.deletingPathExtension().lastPathComponent.hasSuffix(wanted) }.sorted { $0.lastPathComponent < $1.lastPathComponent }.first
+    }
+
+    func openVariantEffect(of table: URL, number: Int) {
+        guard let url = variantEffect(of: table, number: number) else {
+            errorMessage = "No effect numbered \(number) was found in vfx/eff next to \(table.lastPathComponent)"
+            return
+        }
+        open(url)
+    }
+
     func openCatalogPath(_ gamePath: String) {
         guard let url = locateGameFile(gamePath) else {
             catalogNote = "Not found in the open folder" + (game == nil ? "; no game folder is set" : " or the game archives")

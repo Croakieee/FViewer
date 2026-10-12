@@ -121,7 +121,7 @@ struct GameFileView: View {
             if let file = app.gameFile {
                 GameFileContent(file: file)
             } else {
-                HelpBadge(text: "Open a .tmb, .pap, .eid, .scd, .atch, .mtrl or any other game file with File → Game → Inspect Game File…")
+                HelpBadge(text: "Open a .tmb, .pap, .eid, .scd, .atch, .phyb, .skp, .imc, .mtrl or any other game file with File → Game → Inspect Game File…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -158,6 +158,9 @@ private struct GameFileContent: View {
             case .eid: EidView(file: file)
             case .scd: ScdView(file: file)
             case .atch: AtchView(file: file)
+            case .phyb: RecordsView(file: file, records: GameRecords.phyb(file.bytes))
+            case .skp: RecordsView(file: file, records: GameRecords.skp(file.bytes))
+            case .imc: RecordsView(file: file, records: GameRecords.imc(file.bytes))
             case .other: RawFileView(file: file)
             }
         }
@@ -602,6 +605,105 @@ private struct AtchView: View {
             }
         } else {
             Text("Not an attach table").font(Theme.font).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct RecordsView: View {
+    @EnvironmentObject var app: AppModel
+    @ObservedObject var file: GameFileDocument
+    let records: [GameRecord]?
+
+    private func number(_ at: Int, _ value: Double, integer: Bool = false, suffix: String = "", width: CGFloat = 96, _ commit: @escaping (Double) -> Void) -> some View {
+        NumberField(label: nil, value: value, isInteger: integer, suffix: suffix, step: integer ? 1 : 0.01, onLive: { _ in }, onCommit: { _, v in commit(v) }).frame(width: width)
+    }
+
+    private func putFloat(_ at: Int, _ value: Double) { GameFiles.put32(&file.bytes, at, Float(value).bitPattern) }
+
+    @ViewBuilder private func editor(_ field: RecordField) -> some View {
+        let b = file.bytes
+        switch field.kind {
+        case .text(let length, let fill):
+            TextValueField(value: GameFiles.string(b, field.at, max: length)) { text in
+                let raw = Array(text.utf8.prefix(length - 1))
+                for slot in 0..<length { file.bytes[field.at + slot] = slot < raw.count ? raw[slot] : slot == raw.count ? 0 : fill }
+            }
+            .frame(width: 260)
+        case .float:
+            number(field.at, Double(GameFiles.f32(b, field.at))) { putFloat(field.at, $0) }
+        case .angle:
+            number(field.at, Double(GameFiles.f32(b, field.at)) * 180 / .pi, suffix: "°") { putFloat(field.at, $0 * .pi / 180) }
+        case .floats(let count):
+            ForEach(0..<count, id: \.self) { slot in number(field.at + slot * 4, Double(GameFiles.f32(b, field.at + slot * 4))) { putFloat(field.at + slot * 4, $0) } }
+        case .angles(let count):
+            ForEach(0..<count, id: \.self) { slot in
+                number(field.at + slot * 4, Double(GameFiles.f32(b, field.at + slot * 4)) * 180 / .pi, suffix: "°") { putFloat(field.at + slot * 4, $0 * .pi / 180) }
+            }
+        case .short:
+            number(field.at, Double(GameFiles.i16(b, field.at)), integer: true) { GameFiles.put16(&file.bytes, field.at, Int($0)) }
+        case .int:
+            number(field.at, Double(b.u32(field.at)), integer: true, width: 130) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, min($0, 4_294_967_295)))) }
+        case .byte:
+            number(field.at, Double(b[field.at]), integer: true) { file.bytes[field.at] = UInt8(max(0, min($0, 255))) }
+        case .choice(let names):
+            ChoiceField(choices: names.enumerated().map { FieldChoice(name: $1, value: $0) }, value: Int(b.u32(field.at))) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, $0))) }
+                .frame(width: 200)
+        case .flags(let names):
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(Array(names.enumerated()), id: \.offset) { bit, name in
+                    CheckBox(isOn: b[field.at] >> UInt8(bit) & 1 == 1, label: name) { on in
+                        file.bytes[field.at] = on ? file.bytes[field.at] | 1 << UInt8(bit) : file.bytes[field.at] & ~(1 << UInt8(bit))
+                    }
+                }
+            }
+        }
+    }
+
+    var body: some View {
+        if let records, !records.isEmpty {
+            let index = min(max(file.selection, 0), records.count - 1)
+            let record = records[index]
+            HStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(records) { item in
+                            if item.id == 0 || records[item.id - 1].section != item.section {
+                                Text(item.section).font(Theme.small).foregroundStyle(Theme.dim).padding(.horizontal, 6).frame(height: 20, alignment: .bottomLeading)
+                            }
+                            HStack(spacing: 0) {
+                                Text(item.title).font(Theme.font).foregroundStyle(item.id == index ? .white : Theme.text).lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 20)
+                            .background(item.id == index ? Theme.selection : Color.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture { file.selection = item.id }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(width: 290)
+                .background(Theme.gray(0.157))
+                ScrollView {
+                    Panel(title: record.section + "  ·  " + record.title) {
+                        ForEach(record.fields) { field in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text(field.name).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).frame(width: 170, alignment: .trailing).padding(.top, 3)
+                                editor(field)
+                                if file.kind == .imc, field.name == "VFX Id", file.bytes[field.at] > 0 {
+                                    SegmentButton(title: "Open Effect", active: true) { app.openVariantEffect(of: file.url, number: Int(file.bytes[field.at])) }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        } else {
+            Text(records == nil ? "This file has a layout this app does not know" : "The file holds no records").font(Theme.font).foregroundStyle(Theme.dim)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
