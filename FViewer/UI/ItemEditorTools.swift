@@ -87,6 +87,29 @@ struct ShapeDiagramPanel: View {
 
     var body: some View {
         let type = particle.int("PrVT")
+        if type == 2 {
+            Panel(title: "Windmill Shape") {
+                Canvas { context, size in
+                    let centre = CGPoint(x: size.width / 2, y: size.height / 2), reach = min(size.width, size.height) / 2 - 8
+                    for blade in 0..<4 {
+                        let angle = CGFloat(blade) * .pi / 4
+                        var path = Path()
+                        path.move(to: CGPoint(x: centre.x - cos(angle) * reach, y: centre.y - sin(angle) * reach))
+                        path.addLine(to: CGPoint(x: centre.x + cos(angle) * reach, y: centre.y + sin(angle) * reach))
+                        context.stroke(path, with: .color(NodeTint.particle.color.opacity(0.8)), lineWidth: 3)
+                    }
+                    context.fill(Path(ellipseIn: CGRect(x: centre.x - 2, y: centre.y - 2, width: 4, height: 4)), with: .color(.white))
+                    let mirrored = (particle.child("Data")?.int("WUvT") ?? 0) == 1
+                    context.draw(Text(mirrored ? "mirrored UV" : "plain UV").font(.system(size: 9)).foregroundStyle(.white), at: CGPoint(x: size.width / 2, y: 9))
+                }
+                .frame(height: 110)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.14)))
+                HStack {
+                    Spacer()
+                    HelpBadge(text: "Seen from above: four upright quads crossing at the particle origin, each one unit of scale wide.")
+                }
+            }
+        }
         if type == 4 || type == 6 {
             let data = particle.child("Data")
             let time = CurveTime(Float(clock.time))

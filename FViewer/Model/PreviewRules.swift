@@ -13,6 +13,10 @@ enum PreviewRules {
         ("uvRotationReversed", "Reversed UV rotation", "UV Set rotation turns the opposite way to its sign."),
         ("paletteAlpha", "Palette alpha", "The Palette layer scales alpha by the first colour layer."),
         ("revisedColor", "Revised colour", "The effect header colour multiplies every particle."),
+        ("polygonAsQuad", "Polygon as quad", "Polygon particles are drawn as a quad with the whole texture."),
+        ("axisConnectRandom", "Separate random axis link", "Random offsets of X, Y and Z follow their own Axis Connect Random setting."),
+        ("tc1Luminance", "First layer as luminance", "A first colour layer with Multiply is read as brightness, not as colour."),
+        ("softDepthOffset", "Soft fade after depth offset", "The soft particle fade is measured from the depth the particle is drawn at."),
     ]
 
     private static var cache: [String: Bool] = [:]
@@ -30,6 +34,8 @@ enum PreviewRules {
         cache[key] = value
         token += 1
     }
+
+    static func bump() { token += 1 }
 
     static func curveColors() -> [Color]? {
         guard let stored = UserDefaults.standard.stringArray(forKey: "curve.colors"), stored.count == 3 else { return nil }

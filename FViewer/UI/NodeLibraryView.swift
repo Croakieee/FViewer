@@ -487,6 +487,28 @@ struct AssetsView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
+                    if let document = app.document, document.format == .pixi {
+                        Text("Shapes").font(Theme.small).foregroundStyle(Theme.dim).padding(.horizontal, 6)
+                        FlowLayout(spacing: 4) {
+                            ForEach(Array(EffectDocument.shapeTemplates.enumerated()), id: \.offset) { index, shape in
+                                HStack(spacing: 4) {
+                                    Image(systemName: shape.symbol).font(.system(size: 9))
+                                    Text(shape.name).font(Theme.font)
+                                }
+                                .foregroundStyle(Theme.text)
+                                .padding(.horizontal, 7)
+                                .frame(height: 20)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    if let id = document.addShapeParticle(index) { app.notice = "Particle \(id) added; link it to an emitter in the Node Editor" }
+                                }
+                                .help("Add a particle with this shape to the effect")
+                            }
+                        }
+                        .padding(.horizontal, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     HStack {
                         Text("Textures  \(textures.count) / \(all.count)").font(Theme.small).foregroundStyle(Theme.dim)
                         Spacer()
@@ -593,6 +615,54 @@ struct ModListSheet: View {
             .background(Theme.gray(0.157))
         }
         .frame(width: 560)
+        .background(Theme.panel)
+        .preferredColorScheme(Theme.scheme)
+    }
+}
+
+struct TimelineHitsSheet: View {
+    @EnvironmentObject var app: AppModel
+
+    var body: some View {
+        let hits = app.timelineHits ?? []
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "film").foregroundStyle(Theme.text)
+                Text("Timelines Using This Effect").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+                Spacer()
+                Text("\(hits.count)").font(Theme.small).foregroundStyle(Theme.dim)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(Theme.gray(0.157))
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(hits, id: \.self) { url in
+                        HStack(spacing: 6) {
+                            Text(url.lastPathComponent).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
+                            Text(url.deletingLastPathComponent().path).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.head)
+                            Spacer(minLength: 4)
+                            SegmentButton(title: "Inspect", active: true) {
+                                app.timelineHits = nil
+                                app.inspectGameFile(url)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 24)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .frame(minHeight: 140, maxHeight: 460)
+            HStack {
+                Spacer()
+                SegmentButton(title: "Close", active: false) { app.timelineHits = nil }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .background(Theme.gray(0.157))
+        }
+        .frame(width: 640)
         .background(Theme.panel)
         .preferredColorScheme(Theme.scheme)
     }

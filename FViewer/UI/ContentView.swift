@@ -55,6 +55,9 @@ struct TopBar: View {
                     Button("Effects of Timeline by Game Path…") { app.listEffectsOfGamePath() }.disabled(app.gameRoot == nil)
                     Button("Effects of Timeline File (.tmb, .pap)…") { app.listEffectsOfFile() }
                     Divider()
+                    Button("Load Skeleton (.sklb)…") { app.loadSkeletonPanel() }
+                    Button("Remove Skeleton") { app.clearSkeleton() }.disabled(app.skeletonName == nil)
+                    Divider()
                     Button("Inspect Game File…") { app.inspectGameFilePanel() }
                     Button("Inspect File by Game Path…") { app.inspectGameFileByPath() }.disabled(app.gameRoot == nil)
                 }
@@ -225,6 +228,7 @@ struct ContentView: View {
         .dropDestination(for: URL.self) { urls, _ in app.openDropped(urls) }
         .sheet(isPresented: $app.convertImages) { ConvertImagesSheet().environmentObject(app) }
         .sheet(isPresented: Binding(get: { app.modList != nil }, set: { if !$0 { app.modList = nil } })) { ModListSheet().environmentObject(app) }
+        .sheet(isPresented: Binding(get: { app.timelineHits != nil }, set: { if !$0 { app.timelineHits = nil } })) { TimelineHitsSheet().environmentObject(app) }
         .sheet(item: $app.effectList) { list in EffectListSheet(list: list).environmentObject(app) }
         .sheet(isPresented: $app.modExport) {
             if let document = app.document { ExportModSheet(document: document).environmentObject(app) }

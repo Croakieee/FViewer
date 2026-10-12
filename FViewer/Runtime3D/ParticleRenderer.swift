@@ -223,7 +223,7 @@ final class ParticleRenderer {
         let sprites = ps.simple != nil && (ps.type == 1 || ps.type == 3)
         let vertexColors = isModel || ps.type == 12 || ps.type == 6
         m.uniforms.flags = Vec4(vertexColors ? 1 : 0, fresnel ? 1 : 0, sprites ? 1 : 0, lineGradient ? 1 : 0)
-        m.uniforms.flags2 = Vec4(premultiply, distortion != nil ? 1 : 0, palette ? 1 : 0, 1)
+        m.uniforms.flags2 = Vec4(premultiply, distortion != nil ? 1 : 0, palette ? 1 : 0, PreviewRules.isOn("tc1Luminance") ? 1 : 0)
         m.hasColorEnds = fresnel || lineGradient
         m.soft = ps.softParticle && PreviewRules.isOn("softParticles")
         if copiesScene {
@@ -307,7 +307,7 @@ final class ParticleRenderer {
             u.cameraPosition = Vec4(camera.x, camera.y, camera.z, 1)
             let sceneReady = !wire && sceneColor != nil && sceneDepth != nil
             u.scene = Vec4(sceneReady && material.soft ? softDistance : 0, sceneReady ? material.screenCopy : 0, viewport.x, viewport.y)
-            u.scene2 = Vec4(clip.x, clip.y, 0, 0)
+            u.scene2 = Vec4(clip.x, clip.y, PreviewRules.isOn("softDepthOffset") ? 1 : 0, 0)
             if material.screenCopy > 0, !sceneReady, !wire { u.color.w = 0 }
             if wire {
                 u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle)

@@ -30,6 +30,13 @@ final class GameFileDocument: ObservableObject {
         guard let current = GameFiles.offsetString(bytes, item: item, field: field) else { return }
         if GameFiles.setString(&bytes, at: current.at, old: current.text, new: text) {
             note = nil
+        } else if kind == .tmb, bytes.count >= 12, GameFiles.i32(bytes, 4) == bytes.count, !text.isEmpty {
+            let offset = bytes.count - (item.offset + 8)
+            bytes.append(contentsOf: Array(text.utf8) + [0])
+            while bytes.count % 4 != 0 { bytes.append(0) }
+            GameFiles.put32(&bytes, item.offset + field, UInt32(offset))
+            GameFiles.put32(&bytes, 4, UInt32(bytes.count))
+            note = "The longer path was added at the end of the file"
         } else {
             note = "The path can be at most \(current.text.utf8.count) characters here"
         }
@@ -340,10 +347,32 @@ private struct ScdView: View {
 private struct RawFileView: View {
     @ObservedObject var file: GameFileDocument
 
+    private func line(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.dim).frame(width: 130, alignment: .trailing)
+            Text(value).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
     var body: some View {
         let strings = GameFiles.strings(file.bytes)
+        let ext = file.url.pathExtension.lowercased()
         ScrollView {
             VStack(spacing: 6) {
+                if ext == "mtrl", let summary = GameFiles.mtrlSummary(file.bytes) {
+                    Panel(title: "Material") {
+                        line("Shader", summary.shader)
+                        ForEach(Array(summary.textures.enumerated()), id: \.offset) { index, path in line("Texture \(index)", path) }
+                        ForEach(Array(summary.uvSets.enumerated()), id: \.offset) { index, name in line("UV Set \(index)", name) }
+                        ForEach(Array(summary.colorSets.enumerated()), id: \.offset) { index, name in line("Colour Set \(index)", name) }
+                    }
+                }
+                if ext == "mdl", let summary = GameFiles.mdlSummary(file.bytes) {
+                    Panel(title: "Model") {
+                        ForEach(Array(summary.enumerated()), id: \.offset) { _, entry in line(entry.label, entry.value) }
+                    }
+                }
                 Panel(title: "Strings", trailing: "\(strings.count)") {
                     ForEach(Array(strings.enumerated()), id: \.offset) { _, entry in
                         HStack(spacing: 8) {

@@ -176,11 +176,23 @@ struct LibraryView: View {
     @EnvironmentObject var app: AppModel
     @Binding var mode: Int
     @State private var filter = ""
+    @State private var category = ""
+
+    private var categories: [String] {
+        var seen: [String] = []
+        for file in app.files {
+            let top = String(file.folder.split(separator: "/").first ?? "")
+            if !top.isEmpty, !seen.contains(top) { seen.append(top) }
+            if seen.count > 60 { break }
+        }
+        return seen.sorted()
+    }
 
     private var groups: [(folder: String, files: [LibraryFile])] {
         let favorites = app.favorites
         let needle = filter.lowercased()
-        let shown = needle.isEmpty ? app.files : app.files.filter { $0.name.lowercased().contains(needle) || $0.folder.lowercased().contains(needle) }
+        let scoped = category.isEmpty ? app.files : app.files.filter { $0.folder == category || $0.folder.hasPrefix(category + "/") }
+        let shown = needle.isEmpty ? scoped : scoped.filter { $0.name.lowercased().contains(needle) || $0.folder.lowercased().contains(needle) }
         var result = Dictionary(grouping: shown, by: \.folder).map { (folder: $0.key, files: $0.value) }.sorted { $0.folder < $1.folder }
         let starred = shown.filter { favorites.contains($0.url.path) }
         if !starred.isEmpty { result.insert((folder: "★ Favorites", files: starred), at: 0) }
@@ -203,6 +215,21 @@ struct LibraryView: View {
                     TextField("", text: $filter).textFieldStyle(.plain).font(Theme.font).foregroundStyle(Theme.text)
                     if !filter.isEmpty { Image(systemName: "xmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.dim).onTapGesture { filter = "" } }
                     Text("\(app.files.count)").font(Theme.small).foregroundStyle(Theme.dim)
+                    if categories.count > 1 {
+                        Menu {
+                            Button("All Folders") { category = "" }
+                            Divider()
+                            ForEach(categories, id: \.self) { name in Button(name) { category = name } }
+                        } label: {
+                            Text(category.isEmpty ? "All" : category).font(Theme.small).foregroundStyle(Theme.text).lineLimit(1)
+                                .padding(.horizontal, 5).frame(height: 16).background(RoundedRectangle(cornerRadius: 3).fill(Theme.field.opacity(0.6)))
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Show only one top folder")
+                    }
                 }
                 .padding(.horizontal, 6)
                 .frame(height: 20)

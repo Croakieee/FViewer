@@ -30,6 +30,8 @@ final class AppModel: ObservableObject {
     @Published var effectList: EffectList?
     @Published var modList: [PenumbraMod]?
     @Published var gameFile: GameFileDocument?
+    @Published var skeletonName: String?
+    @Published var timelineHits: [URL]?
     var openGameFileWindow: (() -> Void)?
     var game: GameArchive?
 
@@ -61,6 +63,7 @@ final class AppModel: ObservableObject {
         }
         AppDelegate.model = self
         restoreGameFolder()
+        restoreSkeleton()
         startAutosave()
     }
 

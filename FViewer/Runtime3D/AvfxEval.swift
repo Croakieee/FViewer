@@ -118,7 +118,7 @@ enum Eval {
         let offsets = Vec3(randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot)),
                            randomOffset(c.ry, type: c.y?.random ?? 0, time, seed.get(slot + 1)),
                            randomOffset(c.rz, type: c.z?.random ?? 0, time, seed.get(slot + 2)))
-        return linked(base, c.connect) + linked(offsets, c.connectRandom)
+        return linked(base, c.connect) + linked(offsets, PreviewRules.isOn("axisConnectRandom") ? c.connectRandom : c.connect)
     }
 
     static func color(_ c: RColor, _ time: CurveTime, _ seed: RandomSeed) -> Vec4 {

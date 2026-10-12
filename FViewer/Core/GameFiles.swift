@@ -278,4 +278,35 @@ enum GameFiles {
         }
         return result
     }
+
+    static func mtrlSummary(_ b: [UInt8]) -> (shader: String, textures: [String], uvSets: [String], colorSets: [String])? {
+        guard b.count >= 16 else { return nil }
+        let tableSize = Int(b.u16(8)), shader = Int(b.u16(10))
+        let textures = Int(b[12]), uvSets = Int(b[13]), colorSets = Int(b[14])
+        let table = 16 + (textures + uvSets + colorSets) * 4
+        guard table + tableSize <= b.count, tableSize > 0 else { return nil }
+        func name(_ slot: Int) -> String { string(b, table + Int(b.u16(16 + slot * 4)), max: 260) }
+        return (string(b, table + shader, max: 64), (0..<textures).map(name), (textures..<(textures + uvSets)).map(name),
+                ((textures + uvSets)..<(textures + uvSets + colorSets)).map(name))
+    }
+
+    static func mdlSummary(_ b: [UInt8]) -> [(label: String, value: String)]? {
+        guard b.count >= 0x48 else { return nil }
+        let declarations = Int(b.u16(12)), materials = Int(b.u16(14))
+        let stringsAt = 0x44 + declarations * 136
+        guard stringsAt + 8 <= b.count else { return nil }
+        let stringCount = Int(b.u16(stringsAt)), stringSize = Int(b.u32(stringsAt + 4))
+        guard stringsAt + 8 + stringSize <= b.count else { return nil }
+        var names: [String] = []
+        var at = stringsAt + 8
+        let end = at + stringSize
+        while at < end, names.count < stringCount {
+            let text = string(b, at, max: 260)
+            names.append(text)
+            at += text.utf8.count + 1
+        }
+        let paths = names.filter { $0.contains("/") }, bones = names.filter { $0.hasPrefix("j_") || $0.hasPrefix("n_") }
+        return [("Version", String(format: "0x%08X", b.u32(0))), ("Vertex Declarations", "\(declarations)"), ("Materials", "\(materials)"), ("LODs", "\(b[0x40])"),
+                ("Names", "\(names.count)"), ("Bones", "\(bones.count)"), ("Material Paths", paths.joined(separator: "\n"))]
+    }
 }

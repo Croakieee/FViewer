@@ -243,7 +243,11 @@ private final class TimelineStart {
 }
 
 final class AvfxSimulation {
-    static let bindPoints: [Int: Vec3] = [
+    static var skeletonBindPoints: [Int: Vec3]?
+    static var skeletonLines: [(Vec3, Vec3)] = []
+    static var bindPoints: [Int: Vec3] { skeletonBindPoints ?? defaultBindPoints }
+
+    static let defaultBindPoints: [Int: Vec3] = [
         1: Vec3(0, 1.58, 0.08), 3: Vec3(0.3, 0.85, 0.1), 4: Vec3(0.3, 1.2, 0.1), 5: Vec3(0.3, 1.6, 0.1), 6: Vec3(-0.2, 1.42, 0),
         7: Vec3(0.2, 1.42, 0), 8: Vec3(-0.3, 1.05, 0), 9: Vec3(0.3, 1.05, 0), 10: Vec3(-0.1, 0.3, 0), 11: Vec3(0.1, 0.3, 0),
         16: Vec3(0, 1.0, 0.4), 25: Vec3(0, 1.72, 0), 26: Vec3(0, 1.6, 0), 27: Vec3(0, 1.6, 0.12), 28: Vec3(0, 1.3, 0.05),

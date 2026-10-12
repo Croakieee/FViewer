@@ -19,6 +19,8 @@ final class GizmoState {
     var radiusModel: Mat4?
     var radiusLocal = Vec3.zero
     var radiusTags: [String] = []
+    var radiusMode = 0
+    var radiusScale = 1.0
     var active: (index: Int, kind: Int, axis: Int, start: CGPoint, values: [Double], before: Any, origin: Vec3, basis: simd_quatf, unit: Vec3, size: Float,
                  radiusModel: Mat4?, radiusLocal: Vec3)?
 }
@@ -44,7 +46,10 @@ extension ViewportRenderer {
         for child in node.children {
             guard case .avfx(let block, _, let record) = child.payload, record == nil, block.tag == "Data" else { continue }
             for group in document.curveGroups(for: child) where tags.contains(group.tag) {
-                if let channel = group.channels.first { result.append(channel) }
+                if let channel = group.channels.first {
+                    result.append(channel)
+                    gizmo.radiusScale = group.isAngle ? 180 / .pi : 1
+                }
             }
         }
         return result
@@ -63,9 +68,10 @@ extension ViewportRenderer {
             return
         }
         gizmo.rootID = root
-        gizmo.radiusModel = nil
-        gizmo.radiusTags = []
         if gizmo.active == nil {
+            gizmo.radiusModel = nil
+            gizmo.radiusTags = []
+            gizmo.radiusScale = 1
             var origin: Vec3?
             var basis = simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
             var unit = Vec3(1, 1, 1)
@@ -75,6 +81,16 @@ extension ViewportRenderer {
                     let parent = Math3D.decompose(emitter.anchor())
                     basis = parent.rotation
                     unit = parent.scale
+                    let type = emitter.schema.type
+                    if type == 3 || type == 4 {
+                        gizmo.radiusModel = emitter.world
+                        gizmo.radiusTags = ["Rads", "Rad"]
+                        gizmo.radiusMode = 2
+                    } else if type == 1 || type == 2 {
+                        gizmo.radiusModel = emitter.world
+                        gizmo.radiusTags = ["IjA"]
+                        gizmo.radiusMode = 3
+                    }
                 }
             } else if let particle = simulation.particles.first(where: { $0.schema.index == index }) {
                 let parent = Math3D.decompose(particle.emitter.world)
@@ -85,6 +101,8 @@ extension ViewportRenderer {
                     let type = particle.schema.type
                     if type == 12 || type == 11, !draw.isSprite {
                         gizmo.radiusModel = draw.model
+                        gizmo.radiusTags = type == 12 ? ["RB", "RE"] : ["WID"]
+                        gizmo.radiusMode = type == 12 ? 0 : 1
                     }
                 }
             }
@@ -124,18 +142,21 @@ extension ViewportRenderer {
             color.w = 0.55
             handles.append(GizmoHandle(index: handles.count, kind: 1, axis: axis, points: ring, color: color))
         }
-        if let model = gizmo.radiusModel, let document, let node = document.node(root), case .avfx(let block, _, _) = node.payload {
-            let type = block.int("PrVT")
-            let tags = type == 12 ? ["RB", "RE"] : ["WID"]
-            let channels = radiusChannels(root, tags)
+        if let model = gizmo.radiusModel, !gizmo.radiusTags.isEmpty {
+            let channels = radiusChannels(root, gizmo.radiusTags)
             if let first = channels.first {
-                let value = Float(first.read().first?.value ?? (type == 12 ? 1 : 0.1))
-                let local = gizmo.active?.radiusLocal ?? (type == 12 ? Vec3(value, 0, 0) : Vec3(0.5 + value, 0.01, 0))
-                gizmo.radiusLocal = type == 12 ? Vec3(value, 0, 0) : Vec3(0.5 + value, 0.01, 0)
-                gizmo.radiusTags = tags
+                let raw = Float(first.read().first?.value ?? (gizmo.radiusMode == 1 ? 0.1 : gizmo.radiusMode == 3 ? 0 : 1))
+                var local: Vec3
+                switch gizmo.radiusMode {
+                case 1: local = Vec3(0.5 + raw, 0.01, 0)
+                case 3:
+                    let angle = raw / Float(gizmo.radiusScale)
+                    local = Vec3(sin(angle), 0, cos(angle))
+                default: local = Vec3(raw, 0, 0)
+                }
+                if gizmo.active == nil { gizmo.radiusLocal = local }
                 let centre = Math3D.point(model, .zero)
-                handles.append(GizmoHandle(index: handles.count, kind: 2, axis: 0, points: [centre, Math3D.point(model, gizmo.active == nil ? gizmo.radiusLocal : local)],
-                                           color: SIMD4(1, 0.72, 0.28, 1)))
+                handles.append(GizmoHandle(index: handles.count, kind: 2, axis: 0, points: [centre, Math3D.point(model, local)], color: SIMD4(1, 0.72, 0.28, 1)))
             }
         }
         gizmo.handles = handles
@@ -219,7 +240,8 @@ extension ViewportRenderer {
             let sx = b.x - a.x, sy = b.y - a.y
             let length = sx * sx + sy * sy
             guard length > 0.01 else { return }
-            let amount = Double((dx * sx + dy * sy) / length)
+            let scale = gizmo.radiusScale
+            let amount = Double((dx * sx + dy * sy) / length) * (gizmo.radiusMode == 3 ? scale : 1)
             for (slot, channel) in radiusChannels(root, gizmo.radiusTags).enumerated() where slot < active.values.count {
                 var keys = channel.read()
                 if keys.isEmpty {

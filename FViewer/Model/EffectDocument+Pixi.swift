@@ -362,4 +362,35 @@ extension EffectDocument {
         let parsed = try JSONParser.parse(Data(text.utf8))
         performStructural("Edit JSON") { json.value = parsed.value }
     }
+
+    static let shapeTemplates: [(name: String, symbol: String, json: String)] = [
+        ("Quad", "square", "{ \"type\": \"quad\" }"),
+        ("Ring", "circle", "{ \"type\": \"ring\", \"innerRadius\": 0.6, \"outerRadius\": 1, \"segments\": 48 }"),
+        ("Disc", "circle.fill", "{ \"type\": \"ring\", \"innerRadius\": 0, \"outerRadius\": 1, \"segments\": 48 }"),
+        ("Rounded Rectangle", "rectangle.roundedtop", "{ \"type\": \"roundRect\", \"width\": 2, \"height\": 1, \"thickness\": 0.2, \"radius\": 0.2 }"),
+        ("Windmill", "fanblades", "{ \"type\": \"windmill\" }"),
+        ("Decal", "square.dashed", "{ \"type\": \"decal\" }"),
+        ("Trail", "scribble", "{ \"type\": \"trail\", \"frames\": 20, \"points\": 16, \"center\": 0.5, \"width\": 0.2 }"),
+    ]
+
+    @discardableResult func addShapeParticle(_ template: Int) -> String? {
+        guard let root = jsonRoot, template >= 0, template < EffectDocument.shapeTemplates.count, let particles = root["particles"],
+              var items = particles.elements, let shape = try? JSONParser.parse(Data(EffectDocument.shapeTemplates[template].json.utf8)) else { return nil }
+        let base = EffectDocument.shapeTemplates[template].name.lowercased().replacingOccurrences(of: " ", with: "_")
+        let taken = Set(items.compactMap { $0["id"]?.string })
+        var id = base
+        var counter = 2
+        while taken.contains(id) {
+            id = "\(base)_\(counter)"
+            counter += 1
+        }
+        let particle = JSONNode(.object([
+            JSONMember(key: "id", node: JSONNode(.string(id))), JSONMember(key: "texture", node: JSONNode(.string(textureSlots.first?.name ?? "white"))),
+            JSONMember(key: "life", node: JSONNode(.number(30))), JSONMember(key: "shape", node: shape),
+        ]))
+        items.append(particle)
+        performStructural("Add \(EffectDocument.shapeTemplates[template].name)") { particles.value = .array(items) }
+        selectionID = "json/particles/\(items.count - 1)"
+        return id
+    }
 }

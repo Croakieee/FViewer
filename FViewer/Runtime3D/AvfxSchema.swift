@@ -448,7 +448,7 @@ enum AvfxSchemaReader {
         }
         let particles = root.childrenNamed("Ptcl").enumerated().map { index, p -> RParticle in
             let data = p.child("Data")
-            let type = p.int("PrVT") == 9 ? 8 : p.int("PrVT")
+            let type = p.int("PrVT") == 9 && PreviewRules.isOn("polygonAsQuad") ? 8 : p.int("PrVT")
             var palette: RPalette?
             if let tp = p.child("TP"), tp.children != nil {
                 palette = RPalette(enabled: tp.bool("bEna"), border: tp.int("TBT"), texture: tp.int("TxNo", -1), offset: curve(tp.child("POff")),

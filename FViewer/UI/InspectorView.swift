@@ -575,6 +575,19 @@ struct InspectorView: View {
                     document.gamePath = PenumbraExport.normalized($0)
                     app.rememberGamePath($0)
                 }
+                FlowLayout(spacing: 4) {
+                    SegmentButton(title: "Guess Path", active: false) {
+                        if let path = app.guessGamePath(for: document) {
+                            document.gamePath = path
+                            app.rememberGamePath(path)
+                        } else {
+                            app.notice = "No file with this name was found under a game folder"
+                        }
+                    }
+                    SegmentButton(title: "Find Timelines Using It…", active: false) { app.findTimelines(using: document) }
+                    HelpBadge(text: "Guess Path looks for a file with the same name and size under a vfx folder of the open library. Find Timelines searches a folder of .tmb and .pap files for this effect's name.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         ForEach(Array(document.report.enumerated()), id: \.offset) { _, section in

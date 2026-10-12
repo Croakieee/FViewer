@@ -246,19 +246,26 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 }
             }
             let body = SIMD4<Float>(1, 1, 1, 0.35)
-            let figure: [(SIMD3<Float>, SIMD3<Float>)] = [
-                (SIMD3(0, 0, 0), SIMD3(0, 1.45, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(0.2, 1.42, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(-0.33, 0.78, 0)),
-                (SIMD3(0.2, 1.42, 0), SIMD3(0.33, 0.78, 0)), (SIMD3(-0.1, 0.95, 0), SIMD3(-0.1, 0, 0)), (SIMD3(0.1, 0.95, 0), SIMD3(0.1, 0, 0)),
-                (SIMD3(-0.1, 0.95, 0), SIMD3(0.1, 0.95, 0)),
-            ]
-            for segment in figure {
-                lines.append((segment.0, body))
-                lines.append((segment.1, body))
-            }
-            for i in 0..<16 {
-                let a = Float(i) / 16 * 2 * .pi, b = Float(i + 1) / 16 * 2 * .pi
-                lines.append((SIMD3(cos(a) * 0.12, 1.6 + sin(a) * 0.13, 0), body))
-                lines.append((SIMD3(cos(b) * 0.12, 1.6 + sin(b) * 0.13, 0), body))
+            if !AvfxSimulation.skeletonLines.isEmpty {
+                for segment in AvfxSimulation.skeletonLines {
+                    lines.append((segment.0, body))
+                    lines.append((segment.1, body))
+                }
+            } else {
+                let figure: [(SIMD3<Float>, SIMD3<Float>)] = [
+                    (SIMD3(0, 0, 0), SIMD3(0, 1.45, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(0.2, 1.42, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(-0.33, 0.78, 0)),
+                    (SIMD3(0.2, 1.42, 0), SIMD3(0.33, 0.78, 0)), (SIMD3(-0.1, 0.95, 0), SIMD3(-0.1, 0, 0)), (SIMD3(0.1, 0.95, 0), SIMD3(0.1, 0, 0)),
+                    (SIMD3(-0.1, 0.95, 0), SIMD3(0.1, 0.95, 0)),
+                ]
+                for segment in figure {
+                    lines.append((segment.0, body))
+                    lines.append((segment.1, body))
+                }
+                for i in 0..<16 {
+                    let a = Float(i) / 16 * 2 * .pi, b = Float(i + 1) / 16 * 2 * .pi
+                    lines.append((SIMD3(cos(a) * 0.12, 1.6 + sin(a) * 0.13, 0), body))
+                    lines.append((SIMD3(cos(b) * 0.12, 1.6 + sin(b) * 0.13, 0), body))
+                }
             }
         }
         var items: [DrawItem] = []

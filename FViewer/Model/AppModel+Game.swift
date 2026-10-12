@@ -343,4 +343,115 @@ extension AppModel {
         open(url)
         if let document, document.url == url, document.gamePath.isEmpty { document.gamePath = PenumbraExport.normalized(gamePath) }
     }
+
+    @discardableResult func loadSkeleton(_ url: URL) throws -> (bones: Int, points: Int) {
+        guard let skeleton = GameSkeleton.parse([UInt8](try Data(contentsOf: url))) else {
+            throw AvfxError.malformed("\(url.lastPathComponent) is not a skeleton this app can read")
+        }
+        var points: [Int: SIMD3<Float>] = [:]
+        let folder = url.deletingLastPathComponent()
+        let eid = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []).first { $0.pathExtension.lowercased() == "eid" }
+        if let eid, let data = try? Data(contentsOf: eid), let parsed = GameFiles.eidPoints([UInt8](data)) { points = skeleton.bindPoints(parsed.points) }
+        var lines: [(SIMD3<Float>, SIMD3<Float>)] = []
+        for (index, parent) in skeleton.parents.enumerated() where parent >= 0 { lines.append((skeleton.position(parent), skeleton.position(index))) }
+        AvfxSimulation.skeletonLines = lines
+        AvfxSimulation.skeletonBindPoints = points.isEmpty ? nil : points
+        skeletonName = url.lastPathComponent
+        PreviewRules.bump()
+        document?.liveChanged()
+        return (skeleton.names.count, points.count)
+    }
+
+    func loadSkeletonPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Load Skeleton"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Load"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let result = try loadSkeleton(url)
+            if let bookmark = try? url.deletingLastPathComponent().bookmarkData(options: .withSecurityScope) {
+                UserDefaults.standard.set(bookmark, forKey: "skeletonBookmark")
+                UserDefaults.standard.set(url.lastPathComponent, forKey: "skeletonFile")
+            }
+            notice = "Skeleton \(url.lastPathComponent): \(result.bones) bones, \(result.points) bind points" + (result.points == 0 ? " (no .eid next to it)" : "")
+            showBindPoints = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func restoreSkeleton() {
+        guard !CommandLine.arguments.contains("--script"), let bookmark = UserDefaults.standard.data(forKey: "skeletonBookmark"),
+              let name = UserDefaults.standard.string(forKey: "skeletonFile") else { return }
+        var stale = false
+        guard let folder = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, bookmarkDataIsStale: &stale) else { return }
+        _ = folder.startAccessingSecurityScopedResource()
+        _ = try? loadSkeleton(folder.appendingPathComponent(name))
+    }
+
+    func clearSkeleton() {
+        UserDefaults.standard.removeObject(forKey: "skeletonBookmark")
+        AvfxSimulation.skeletonLines = []
+        AvfxSimulation.skeletonBindPoints = nil
+        skeletonName = nil
+        PreviewRules.bump()
+        document?.liveChanged()
+    }
+
+    func guessGamePath(for document: EffectDocument) -> String? {
+        let name = document.url.lastPathComponent.lowercased()
+        let size = (try? document.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
+        var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
+        if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+        let wanted = [name, base + "." + document.url.pathExtension.lowercased()]
+        if let direct = gamePath(forAsset: document.url), direct.hasPrefix("vfx/") { return direct }
+        var fallback: String?
+        for file in files where wanted.contains(file.name.lowercased()) && file.url != document.url {
+            guard let path = gamePath(forAsset: file.url) else { continue }
+            if (try? file.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) == size { return path }
+            fallback = fallback ?? path
+        }
+        if let tex = document.textureSlots.first?.path.lowercased(), let cut = tex.range(of: "/texture/") {
+            fallback = fallback ?? String(tex[..<cut.lowerBound]) + "/eff/" + wanted[1]
+        }
+        return fallback
+    }
+
+    nonisolated static func timelines(containing needle: [UInt8], in folder: URL) -> (hits: [URL], scanned: Int) {
+        var hits: [URL] = []
+        var scanned = 0
+        let pattern = Data(needle)
+        if let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil) {
+            for case let url as URL in walker {
+                let ext = url.pathExtension.lowercased()
+                guard ext == "tmb" || ext == "pap", let data = try? Data(contentsOf: url, options: .alwaysMapped) else { continue }
+                scanned += 1
+                if data.range(of: pattern) != nil { hits.append(url) }
+                if hits.count >= 400 { break }
+            }
+        }
+        return (hits, scanned)
+    }
+
+    func findTimelines(using document: EffectDocument) {
+        guard let folder = chooseFolder("Folder with .tmb and .pap Files") else { return }
+        var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
+        if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+        let needle = Array((base + ".avfx").utf8)
+        notice = "Searching timelines for \(base).avfx…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = AppModel.timelines(containing: needle, in: folder)
+            let hits = result.hits, scanned = result.scanned
+            let found = hits, total = scanned
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.notice = "\(found.count) timeline\(found.count == 1 ? "" : "s") use \(base).avfx (\(total) files searched)"
+                if !found.isEmpty { self.timelineHits = found }
+            }
+        }
+    }
 }
