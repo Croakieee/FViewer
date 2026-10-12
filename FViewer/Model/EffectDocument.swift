@@ -177,7 +177,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     func visibilityKey(forNodeID id: String?) -> VisibilityKey? {
         guard var path = id else { return nil }
         while true {
-            if let key = index[path]?.visibility { return key }
+            if let key = index[path]?.visibility ?? index[path]?.focus { return key }
             guard let slash = path.lastIndex(of: "/") else { return nil }
             path = String(path[..<slash])
         }

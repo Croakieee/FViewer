@@ -138,6 +138,7 @@ final class OutlineNode: Identifiable {
     var children: [OutlineNode] = []
     var payload: NodePayload
     var visibility: VisibilityKey?
+    var focus: VisibilityKey?
     var actions: [NodeAction] = []
 
     init(id: String, title: String, detail: String = "", symbol: String, tint: NodeTint, payload: NodePayload) {

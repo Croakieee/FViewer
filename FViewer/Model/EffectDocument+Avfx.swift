@@ -158,6 +158,21 @@ extension EffectDocument {
             for (i, record) in records.enumerated() {
                 let item = recordNode(record, list: last, cls: itemClass, id: "\(id)/\(listTag)/\(i)", index: i, owner: block.tag, listTag: listTag)
                 if listTag != "Trgr" { item.actions = recordActions(item, owner: block, list: listTag, index: i) }
+                switch (block.tag, listTag) {
+                case ("TmLn", "Item"):
+                    let emitter = recordInt(record, "EmNo")
+                    if emitter >= 0 { item.focus = .emitter(emitter) }
+                case ("Emit", "ItPr"):
+                    let target = recordInt(record, "TgtB")
+                    if target >= 0 { item.focus = .particle(target) }
+                case ("Emit", "ItEm"):
+                    let target = recordInt(record, "TgtB")
+                    if target >= 0 { item.focus = .emitter(target) }
+                case ("Schd", "Item"), ("Schd", "Trgr"):
+                    let timeline = recordInt(record, "TlNo")
+                    if timeline >= 0 { item.focus = .timeline(timeline) }
+                default: break
+                }
                 group.children.append(item)
             }
             result.append(group)
