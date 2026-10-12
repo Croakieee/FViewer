@@ -1,0 +1,147 @@
+2ax	Axe (MRD/WAR)
+2bk	Book (ACN/SMN/SCH)
+2bw	Bow (ARC/BRD)
+2ff	Nouliths (SGE)
+2gb	Gunblade (GNB)
+2gl	Globe (AST)
+2gn	Gun (MCH)
+2km	Scythe (RPR)
+2kt	Katana (SAM)
+2kz	Scythe
+2rp	Rapier (RDM)
+2sp	Spear (LNC/DRG)
+2st	Staff (CNJ/WHM / THM/BLM)
+2sw	Greatsword (DRK)
+aai	Alembic, Alt. Inversed (ALC)
+aal	Alembic, Alternate (ALC)
+aar	Hammer, Alternate (ARM)
+abl	Hammer, Alternate (BSM)
+aco	Fry Pan, Alternate (CUL)
+agl	Mallet, Alternate (GSM)
+ali	Alembic, Inversed (ALC)
+alm	Alembic (ALC)
+alt	Knife, Alternate (LTW)
+ase	Needle, Alternate (WVR)
+atr	n_throw Summons
+avt	Avatar (RPR)
+awo	Saw, Alternate (CRP)
+axe	Axe (BST)
+bag	Aetherotransformer (MCH)
+bl2	Double Blade, Off-Hand (VPR)
+bld	Blade, Main Hand (VPR)
+bll	Single Blade, Off-Hand (VPR)
+brs	Brush (PCT)
+chk	Chakram (DNC)
+ckt	Stylus
+clg	Fist Weapon, Unique (PGL/MNK)
+cls	Fist Weapon, Alternate (PGL/MNK)
+clw	Fist Weapon (PGL/MNK)
+cmp	Compass
+col	Control Switch (Left)
+cor	Control Switch (Right)
+cos	Control Seat
+crd	Deck (AST)
+crr	Carry Item / Card (AST)
+crt	Cart
+csl	Chisel (CRP)
+csr	Crafter Off-Hand, Held
+dgr	Dagger (ROG/NIN)
+dge	Dagger
+drm	Drum (Performance)
+ebz	Diadem Cannon
+elg	Electric Guitar (Performance)
+fcb	Fry Egg / Eat Chicken (Emote)
+fch	Fishing Chair
+fdr	Consumable
+fha	Gig (FSH)
+fl2	Flute (Performance)
+flt	Flute (BRD Combat)
+frg	Frog Summon (NIN)
+fry	Knife (LTW) / Fry Pan (CUL)
+fsb	Bell
+fsh	Rod (FSH)
+fsw	Greatsword (Esteem)
+fud	Brush (Emote)
+gdb	Knapsack
+gdh	Emote Summon (Hand)
+gdl	Emote Summon (Left Hand)
+gdp	Pelupack
+gdr	Emote Summon (Right Hand)
+gdt	NPC Transforms
+gdw	Turtle Shell
+gsl	Wrench
+gsr	Opera Glasses
+gun	Gun
+hmm	Hammer (BSM/ARM)
+hrp	Harp (BRD)
+htc	Hatchet (BTN)
+ksh	Katana Sheath (SAM)
+let	Letter
+lfd	Loporitt Paintbrush
+lpr	Ear Wiggle (Emote)
+map	Map
+mlt	Mallet (GSM)
+mmc	Quad-Cannons (MCH)
+mrb	Mortar (ALC)
+mrh	Pestle (ALC)
+msg	Shotgun (MCH)
+mwp	Summoned Tool (MCH) / Cosmic Tool
+ndl	Needle, Off-Hand (WVR)
+nf2	Wasshoi Fan
+nik	Metal Cup
+nmf	Wasshoi Fans / Cheer Orbs
+nph	Sledgehammer (MIN)
+orb	Focus (RDM)
+pen	Quill (ACN/SCH/SMN)
+pic	Pick (MIN)
+plt	Palette (PCT)
+pra	Parachute
+prc	Camera (Emote)
+prf	Awl (LTW)
+pri	Prishe
+qvr	Quiver (BRD)
+rbt	Rabbit (NIN)
+rec	Cart
+rgk	Katana (Gosetsu)
+rgs	Katana Sheath (Gosetsu)
+rod	Rod (BLU)
+rop	Rope
+rp1	Hammer (PCT)
+saw	Saw (CRP)
+sbt	Blow Bubbles / Pen (Emote)
+sca	Aetheric Analyzer
+sci	Scissors
+sen	Folding Fan
+sic	Sickle (BTN)
+sld	Shield (GLD/PLD / CNJ / THM)
+stf	Wand (CNJ / THM)
+stv	Furnace (ALC)
+swd	Sword (GLD/PLD)
+sxs	Greatsword (FFXVI)
+sxw	Phoenix Wings (FFXVI)
+syl	Reference Book (Emote)
+syr	Shovel / Scythe
+syu	Shuriken (NIN)
+syw	Job Summons (Dawntrail)
+tan	Tongue
+tbl	Crafter Tables/Surfaces
+tcs	Teacup (Emote)
+tgn	Nail (GSM)
+tmb	Needle, Main Hand (WVR)
+tms	Tomestone / Bouquet (Emote)
+trm	Trumpet (Performance)
+trr	Limit Break Summon (SCH)
+trw	Rock
+tsl	Mug/Cup (Emote)
+ulw	Wings (White)
+uni	Unicorn
+vln	Violin (BRD)
+wcr	Wheelchair
+wdm	Tankard (Emote)
+whl	Wheel (WVR)
+wng	Wings (Gold)
+yfl	NiER Flight Unit
+ypd	NiER Pod (Raid)
+yt2	NiER Swords, 9S
+ytc	NiER Swords, 2B
+ytk	Tongs (BSM)

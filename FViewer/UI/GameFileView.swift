@@ -121,7 +121,7 @@ struct GameFileView: View {
             if let file = app.gameFile {
                 GameFileContent(file: file)
             } else {
-                HelpBadge(text: "Open a .tmb, .pap, .eid, .scd or any other game file with File → Game → Inspect Game File…")
+                HelpBadge(text: "Open a .tmb, .pap, .eid, .scd, .atch, .mtrl or any other game file with File → Game → Inspect Game File…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -157,6 +157,7 @@ private struct GameFileContent: View {
             case .pap: TmbView(file: file, blocks: file.tmbBlocks, animations: GameFiles.papAnimations(file.bytes))
             case .eid: EidView(file: file)
             case .scd: ScdView(file: file)
+            case .atch: AtchView(file: file)
             case .other: RawFileView(file: file)
             }
         }
@@ -528,6 +529,192 @@ private struct ScdView: View {
     }
 }
 
+private struct AtchView: View {
+    @ObservedObject var file: GameFileDocument
+
+    private func change(_ table: AtchTable, _ mutate: (inout AtchTable) -> Void) {
+        var next = table
+        mutate(&next)
+        file.bytes = next.serialized()
+    }
+
+    private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).frame(width: 110, alignment: .trailing)
+            content()
+            Spacer(minLength: 0)
+        }
+    }
+
+    var body: some View {
+        if let table = AtchTable.parse(file.bytes) {
+            let index = min(max(file.selection, 0), table.entries.count - 1)
+            let entry = table.entries[index]
+            HStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(table.entries) { item in
+                            HStack(spacing: 6) {
+                                Text(item.name).font(.system(size: 10, design: .monospaced)).foregroundStyle(item.accessory ? Theme.changed : Theme.dim).frame(width: 30, alignment: .leading)
+                                Text(AtchTable.weaponNames[item.name] ?? "").font(Theme.font).foregroundStyle(item.id == index ? .white : Theme.text).lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 6)
+                            .frame(height: 20)
+                            .background(item.id == index ? Theme.selection : Color.clear)
+                            .contentShape(Rectangle())
+                            .onTapGesture { file.selection = item.id }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .frame(width: 270)
+                .background(Theme.gray(0.157))
+                ScrollView {
+                    VStack(spacing: 6) {
+                        Panel(title: entry.name + (AtchTable.weaponNames[entry.name].map { "  ·  " + $0 } ?? "")) {
+                            row("Accessory") { CheckBox(isOn: entry.accessory, label: "") { on in change(table) { $0.entries[index].accessory = on } }.frame(width: 40) }
+                        }
+                        ForEach(Array(entry.states.enumerated()), id: \.offset) { slot, state in
+                            Panel(title: "State \(slot)") {
+                                row("Bone") { TextValueField(value: state.bone) { text in change(table) { $0.entries[index].states[slot].bone = text } }.frame(width: 220) }
+                                row("Scale") {
+                                    NumberField(label: nil, value: Double(state.scale), step: 0.01, onLive: { _ in },
+                                                onCommit: { _, v in change(table) { $0.entries[index].states[slot].scale = Float(v) } }).frame(width: 90)
+                                }
+                                row("Offset") {
+                                    ForEach(0..<3, id: \.self) { axis in
+                                        NumberField(label: nil, value: Double(state.offset[axis]), step: 0.01, onLive: { _ in },
+                                                    onCommit: { _, v in change(table) { $0.entries[index].states[slot].offset[axis] = Float(v) } }).frame(width: 90)
+                                    }
+                                }
+                                row("Rotation") {
+                                    ForEach(0..<3, id: \.self) { axis in
+                                        NumberField(label: nil, value: Double(state.rotation[axis] * 180 / .pi), suffix: "°", step: 0.5, onLive: { _ in },
+                                                    onCommit: { _, v in change(table) { $0.entries[index].states[slot].rotation[axis] = Float(v) * .pi / 180 } }).frame(width: 90)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
+            }
+        } else {
+            Text("Not an attach table").font(Theme.font).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+private struct MtrlPanels: View {
+    @ObservedObject var file: GameFileDocument
+    let layout: MtrlLayout
+
+    private func hex(_ at: Int) -> String { String(format: "%08X", file.bytes.u32(at)) }
+
+    private func integer(_ at: Int, width: CGFloat = 120) -> some View {
+        NumberField(label: nil, value: Double(file.bytes.u32(at)), isInteger: true, onLive: { _ in },
+                    onCommit: { _, v in GameFiles.put32(&file.bytes, at, UInt32(max(0, min(v, 4_294_967_295)))) }).frame(width: width)
+    }
+
+    private func label(_ text: String, _ width: CGFloat) -> some View {
+        Text(text).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: width, alignment: .leading)
+    }
+
+    private func color(_ row: Int, _ first: Int) -> some View {
+        let at = layout.tableAt + (row * layout.rowWidth + first) * 2
+        let value = SIMD4<Double>(Double(GameFiles.half(file.bytes.u16(at))), Double(GameFiles.half(file.bytes.u16(at + 2))), Double(GameFiles.half(file.bytes.u16(at + 4))), 1)
+        return ColorField(color: value, alpha: false, onLive: { _ in }, onCommit: { _, next in
+            for axis in 0..<3 {
+                let bits = GameFiles.halfBits(Float(next[axis]))
+                file.bytes[at + axis * 2] = UInt8(bits & 0xFF)
+                file.bytes[at + axis * 2 + 1] = UInt8(bits >> 8)
+            }
+        })
+        .frame(width: 150)
+    }
+
+    var body: some View {
+        Panel(title: "Shader Values") {
+            HStack(spacing: 8) {
+                label("Flags", 110)
+                integer(layout.shaderFlagsAt)
+                label(hex(layout.shaderFlagsAt), 80)
+                if let flagsAt = layout.flagsAt {
+                    CheckBox(isOn: file.bytes[flagsAt] & 0x4 != 0, label: "Colour table") { on in file.bytes[flagsAt] = on ? file.bytes[flagsAt] | 0x4 : file.bytes[flagsAt] & ~0x4 }
+                    CheckBox(isOn: file.bytes[flagsAt] & 0x8 != 0, label: "Dyeable") { on in file.bytes[flagsAt] = on ? file.bytes[flagsAt] | 0x8 : file.bytes[flagsAt] & ~0x8 }
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        if !layout.keys.isEmpty {
+            Panel(title: "Shader Keys", trailing: "\(layout.keys.count)") {
+                ForEach(layout.keys, id: \.self) { at in
+                    HStack(spacing: 8) {
+                        label(hex(at), 110)
+                        integer(at + 4)
+                        label(hex(at + 4), 80)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        if !layout.constants.isEmpty {
+            Panel(title: "Constants", trailing: "\(layout.constants.count)") {
+                ForEach(layout.constants, id: \.at) { constant in
+                    HStack(spacing: 6) {
+                        label(hex(constant.at), 110)
+                        ForEach(0..<min(constant.count, 4), id: \.self) { slot in
+                            let at = constant.valuesAt + slot * 4
+                            NumberField(label: nil, value: Double(GameFiles.f32(file.bytes, at)), step: 0.01, onLive: { _ in },
+                                        onCommit: { _, v in GameFiles.put32(&file.bytes, at, Float(v).bitPattern) }).frame(width: 90)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        if !layout.samplers.isEmpty {
+            Panel(title: "Samplers", trailing: "\(layout.samplers.count)") {
+                ForEach(layout.samplers, id: \.self) { at in
+                    HStack(spacing: 8) {
+                        label(hex(at), 110)
+                        integer(at + 4)
+                        label(hex(at + 4), 80)
+                        Text("Texture").font(Theme.font).foregroundStyle(Theme.dim)
+                        NumberField(label: nil, value: Double(file.bytes[at + 8]), isInteger: true, onLive: { _ in },
+                                    onCommit: { _, v in file.bytes[at + 8] = UInt8(max(0, min(v, 255))) }).frame(width: 60)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+        if layout.rows > 0 {
+            Panel(title: "Colour Table", trailing: "\(layout.rows) rows") {
+                HStack(spacing: 8) {
+                    label("Row", 34)
+                    Text("Diffuse").frame(width: 150, alignment: .leading)
+                    Text("Specular").frame(width: 150, alignment: .leading)
+                    Text("Emissive").frame(width: 150, alignment: .leading)
+                    Spacer(minLength: 0)
+                    HelpBadge(text: "Each row of the colour table holds a diffuse, a specular and an emissive colour as half floats; values above 1 are kept as they are until the colour is edited.")
+                }
+                .font(Theme.small)
+                .foregroundStyle(Theme.dim)
+                ForEach(0..<layout.rows, id: \.self) { row in
+                    HStack(spacing: 8) {
+                        label("\(row)", 34)
+                        color(row, 0)
+                        color(row, 4)
+                        color(row, 8)
+                        Spacer(minLength: 0)
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct WaveStrip: View {
     let peaks: [Float]
 
@@ -588,6 +775,23 @@ private struct RawFileView: View {
                         }
                         ForEach(Array(summary.uvSets.enumerated()), id: \.offset) { index, name in line("UV Set \(index)", name) }
                         ForEach(Array(summary.colorSets.enumerated()), id: \.offset) { index, name in line("Colour Set \(index)", name) }
+                    }
+                }
+                if ext == "mtrl", let layout = MtrlLayout.parse(file.bytes) { MtrlPanels(file: file, layout: layout) }
+                if ext == "sklb", let skeleton = GameSkeleton.parse(file.bytes) {
+                    Panel(title: "Bones", trailing: "\(skeleton.names.count)") {
+                        ForEach(Array(skeleton.names.enumerated()), id: \.offset) { index, name in
+                            let parent = index < skeleton.parents.count ? skeleton.parents[index] : -1
+                            let p = skeleton.position(index)
+                            HStack(spacing: 8) {
+                                Text("\(index)").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: 34, alignment: .leading)
+                                Text(name).font(Theme.font).foregroundStyle(Theme.text).frame(width: 190, alignment: .leading).lineLimit(1).textSelection(.enabled)
+                                Text(parent >= 0 && parent < skeleton.names.count ? skeleton.names[parent] : "—").font(Theme.font).foregroundStyle(Theme.dim)
+                                    .frame(width: 190, alignment: .leading).lineLimit(1)
+                                Text(String(format: "%.3f  %.3f  %.3f", p.x, p.y, p.z)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim)
+                                Spacer(minLength: 0)
+                            }
+                        }
                     }
                 }
                 if ext == "mdl", let summary = GameFiles.mdlSummary(file.bytes) {
