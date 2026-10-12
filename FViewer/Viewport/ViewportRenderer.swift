@@ -79,6 +79,7 @@ private struct DrawItem {
     var textured: Bool
     var wire: Bool
     var pointSize: Float = 1
+    var map: MTLTexture?
 }
 
 final class ViewportRenderer: NSObject, MTKViewDelegate {
@@ -123,7 +124,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     static var referenceMesh: MeshData?
     static var referenceToken = 0
     private var referenceToken = -1
-    private var reference: DrawItem?
+    private var reference: [DrawItem] = []
+    static var referenceParts: [(start: Int, count: Int, texture: DecodedTexture?)] = []
     private var postSource: MTLTexture?
     private var postSampler: MTLSamplerState?
     private var quake: (amount: Float, phase: Float) = (0, 0)
@@ -616,25 +618,30 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let ground = showFloor ? [floor].compactMap { $0 } : []
         if referenceToken != ViewportRenderer.referenceToken {
             referenceToken = ViewportRenderer.referenceToken
-            reference = nil
+            reference = []
             if let mesh = ViewportRenderer.referenceMesh, !mesh.vertices.isEmpty, !mesh.indices.isEmpty,
-               let vb = device.makeBuffer(bytes: mesh.vertices, length: MemoryLayout<MeshVertex>.stride * mesh.vertices.count),
-               let ib = device.makeBuffer(bytes: mesh.indices, length: 4 * mesh.indices.count) {
-                reference = DrawItem(vertices: vb, indices: ib, count: mesh.indices.count, primitive: .triangle, tint: SIMD4(0.62, 0.62, 0.66, 1), lit: true,
-                                     textured: false, wire: false)
+               let vb = device.makeBuffer(bytes: mesh.vertices, length: MemoryLayout<MeshVertex>.stride * mesh.vertices.count) {
+                let parts = ViewportRenderer.referenceParts.isEmpty ? [(start: 0, count: mesh.indices.count, texture: nil)] : ViewportRenderer.referenceParts
+                for part in parts where part.count > 0 && part.start + part.count <= mesh.indices.count {
+                    let slice = Array(mesh.indices[part.start..<(part.start + part.count)])
+                    guard let ib = device.makeBuffer(bytes: slice, length: 4 * slice.count) else { continue }
+                    let map = part.texture.flatMap { ParticleRenderer.makeTexture(device, $0) }
+                    reference.append(DrawItem(vertices: vb, indices: ib, count: slice.count, primitive: .triangle,
+                                              tint: map == nil ? SIMD4(0.62, 0.62, 0.66, 1) : SIMD4(1, 1, 1, 1), lit: true, textured: false, wire: false, map: map))
+                }
             }
         }
-        for (pass, list) in [ground, grid, items, [reference].compactMap { $0 }].enumerated() {
+        for (pass, list) in [ground, grid, items, reference].enumerated() {
             for item in list {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
-                                        options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured ? 1 : 0, item.pointSize, 0))
+                                        options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured || item.map != nil ? 1 : 0, item.pointSize, 0))
                 if item.lit { lit(&uniforms) }
                 encoder.setDepthStencilState(pass == 1 || item.wire || item.textured ? overlayDepthState : depthState)
                 encoder.setTriangleFillMode(item.wire ? .lines : .fill)
                 encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
                 encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
                 encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-                encoder.setFragmentTexture(item.textured ? (texture ?? white) : white, index: 0)
+                encoder.setFragmentTexture(item.map ?? (item.textured ? (texture ?? white) : white), index: 0)
                 if let indices = item.indices {
                     encoder.drawIndexedPrimitives(type: item.primitive, indexCount: item.count, indexType: .uint32, indexBuffer: indices,
                                                   indexBufferOffset: 0)

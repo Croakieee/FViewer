@@ -24,7 +24,29 @@ enum GameModel {
         }
     }
 
-    static func parse(_ b: [UInt8]) -> (mesh: MeshData, meshes: Int)? {
+    struct Part {
+        var start: Int
+        var count: Int
+        var material: Int
+    }
+
+    static func materials(_ b: [UInt8]) -> [String] {
+        guard b.count >= 0x48 else { return [] }
+        let stringsAt = 0x44 + Int(b.u16(12)) * 136
+        guard stringsAt + 8 <= b.count else { return [] }
+        let size = Int(b.u32(stringsAt + 4))
+        guard stringsAt + 8 + size <= b.count else { return [] }
+        var names: [String] = []
+        var at = stringsAt + 8
+        while at < stringsAt + 8 + size {
+            let text = GameFiles.string(b, at, max: 260)
+            if text.hasSuffix(".mtrl") { names.append(text) }
+            at += text.utf8.count + 1
+        }
+        return names
+    }
+
+    static func parse(_ b: [UInt8]) -> (mesh: MeshData, meshes: Int, parts: [Part])? {
         guard b.count >= 0x48 else { return nil }
         let declarations = Int(b.u16(12))
         let vertexStart = Int(b.u32(16)), indexStart = Int(b.u32(28))
@@ -40,6 +62,7 @@ enum GameModel {
         let first = Int(b.u16(lods)), count = Int(b.u16(lods + 2))
         var result = MeshData()
         var used = 0
+        var parts: [Part] = []
         let last = min(first + count, meshCount, declarations)
         guard first < last else { return nil }
         for index in first..<last {
@@ -91,12 +114,13 @@ enum GameModel {
                 list.append(base + UInt32(value))
             }
             if valid {
+                parts.append(Part(start: result.indices.count, count: list.count, material: Int(b.u16(at + 8))))
                 result.indices.append(contentsOf: list)
                 used += 1
             } else {
                 result.vertices.removeSubrange(Int(base)...)
             }
         }
-        return result.vertices.isEmpty || result.indices.isEmpty ? nil : (result, used)
+        return result.vertices.isEmpty || result.indices.isEmpty ? nil : (result, used, parts)
     }
 }

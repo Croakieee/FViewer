@@ -421,6 +421,14 @@ extension AppModel {
         guard let parsed = GameModel.parse([UInt8](try Data(contentsOf: url))) else {
             throw NSError(domain: "FViewer", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(url.lastPathComponent) has no geometry this app can read"])
         }
+        let bytes = [UInt8](try Data(contentsOf: url))
+        let names = GameModel.materials(bytes)
+        var cache: [Int: DecodedTexture?] = [:]
+        ViewportRenderer.referenceParts = parsed.parts.map { part in
+            if cache[part.material] == nil { cache[part.material] = part.material < names.count ? modelDiffuse(model: url, material: names[part.material]) : nil }
+            return (part.start, part.count, cache[part.material] ?? nil)
+        }
+        referenceTextured = ViewportRenderer.referenceParts.filter { $0.texture != nil }.count
         ViewportRenderer.referenceMesh = parsed.mesh
         ViewportRenderer.referenceToken += 1
         AvfxSimulation.skinMesh = parsed.mesh
@@ -428,6 +436,66 @@ extension AppModel {
         document?.liveChanged()
         referenceModelName = url.lastPathComponent
         return (parsed.mesh.vertices.count, parsed.mesh.indices.count / 3, parsed.meshes)
+    }
+
+    private func modelDiffuse(model: URL, material: String) -> DecodedTexture? {
+        let folder = model.deletingLastPathComponent().deletingLastPathComponent()
+        let manager = FileManager.default
+        var candidates: [URL] = []
+        var materialFile: URL?
+        if material.hasPrefix("/") {
+            let versions = ((try? manager.contentsOfDirectory(at: folder.appendingPathComponent("material"), includingPropertiesForKeys: nil)) ?? [])
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            materialFile = versions.map { $0.appendingPathComponent(String(material.dropFirst())) }.first { manager.fileExists(atPath: $0.path) }
+        } else {
+            materialFile = locateGameFile(material)
+        }
+        if let materialFile, let data = try? Data(contentsOf: materialFile), let summary = GameFiles.mtrlSummary([UInt8](data)) {
+            let wanted = summary.textures.first { $0.hasSuffix("_d.tex") || $0.hasSuffix("_base.tex") } ?? summary.textures.first { !$0.hasSuffix("_n.tex") && !$0.hasSuffix("_norm.tex") }
+            if let wanted {
+                if let found = locateGameFile(wanted) { candidates.append(found) }
+                if let name = wanted.split(separator: "/").last { candidates.append(folder.appendingPathComponent("texture").appendingPathComponent(String(name))) }
+            }
+        }
+        let loose = ((try? manager.contentsOfDirectory(at: folder.appendingPathComponent("texture"), includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.lastPathComponent.hasSuffix("_d.tex") || $0.lastPathComponent.hasSuffix("_base.tex") }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        candidates.append(contentsOf: loose)
+        for candidate in candidates {
+            guard let data = try? Data(contentsOf: candidate), var decoded = try? Atex.decode([UInt8](data)) else { continue }
+            for index in stride(from: 3, to: decoded.rgba.count, by: 4) { decoded.rgba[index] = 255 }
+            return decoded
+        }
+        return nil
+    }
+
+    func monsterCode(for document: EffectDocument) -> String? {
+        let text = (document.gamePath.isEmpty ? "" : document.gamePath + " ") + document.url.path
+        guard let range = text.range(of: "[md][0-9]{4}", options: .regularExpression) else { return nil }
+        return String(text[range])
+    }
+
+    func loadModelForEffect() {
+        guard let document, let code = monsterCode(for: document) else {
+            errorMessage = "The effect path names no monster (m0000) or demihuman (d0000) model"
+            return
+        }
+        let kind = code.hasPrefix("m") ? "monster" : "demihuman"
+        let base = "chara/\(kind)/\(code)"
+        let modelPath = kind == "monster" ? "\(base)/obj/body/b0001/model/\(code)b0001.mdl" : "\(base)/obj/equipment/e0001/model/\(code)e0001_top.mdl"
+        guard let model = locateGameFile(modelPath) else {
+            errorMessage = "\(modelPath) was not found in the open folder" + (game == nil ? "" : " or the game archives")
+            return
+        }
+        do {
+            let result = try loadReferenceModel(model)
+            var text = "Model \(model.lastPathComponent): \(result.triangles) triangles, \(referenceTextured) textured"
+            if let skeleton = locateGameFile("\(base)/skeleton/base/b0001/skl_\(code)b0001.sklb"), let bones = try? loadSkeleton(skeleton) {
+                text += " · skeleton \(bones.bones) bones, \(bones.points) bind points"
+            }
+            notice = text
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func loadReferenceModelPanel() {
@@ -441,13 +509,15 @@ extension AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let result = try loadReferenceModel(url)
-            notice = "Model \(url.lastPathComponent): \(result.meshes) meshes, \(result.triangles) triangles"
+            notice = "Model \(url.lastPathComponent): \(result.meshes) meshes, \(result.triangles) triangles, \(referenceTextured) textured"
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
     func clearReferenceModel() {
+        ViewportRenderer.referenceParts = []
+        referenceTextured = 0
         ViewportRenderer.referenceMesh = nil
         ViewportRenderer.referenceToken += 1
         AvfxSimulation.skinMesh = nil

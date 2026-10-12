@@ -25,6 +25,7 @@ final class AppModel: ObservableObject {
     @Published var showGizmo = true
     @Published var themeToken = 0
     @Published var referenceModelName: String?
+    var referenceTextured = 0
     @Published var showCatalog = false
     @Published var catalogNote: String?
     @Published var viewportBackground = 0
