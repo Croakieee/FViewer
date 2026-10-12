@@ -1,2 +1,15 @@
 /ffxiv-docs
 Tools/
+
+.DS_Store
+
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+DerivedData/
+build/
+.build/
+
+Config/Local.xcconfig

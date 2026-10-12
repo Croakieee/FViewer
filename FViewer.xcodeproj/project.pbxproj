@@ -13,6 +13,7 @@
 
 /* Begin PBXFileReference section */
 		4E87A46B307BDFDF00F9F69E /* FViewer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FViewer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4E87C0013090000000F9F69E /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,8 +41,17 @@
 			isa = PBXGroup;
 			children = (
 				4E87A46D307BDFDF00F9F69E /* FViewer */,
+				4E87C0023090000000F9F69E /* Config */,
 				4E87A46C307BDFDF00F9F69E /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		4E87C0023090000000F9F69E /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				4E87C0013090000000F9F69E /* Base.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		4E87A46C307BDFDF00F9F69E /* Products */ = {
@@ -257,13 +267,13 @@
 		};
 		4E87A477307BDFE000F9F69E /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E87C0013090000000F9F69E /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = B3V8PCM3YP;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
@@ -286,7 +296,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.3;
-				PRODUCT_BUNDLE_IDENTIFIER = croakie.FViewer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -300,13 +309,13 @@
 		};
 		4E87A478307BDFE000F9F69E /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4E87C0013090000000F9F69E /* Base.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = B3V8PCM3YP;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_FILE_ACCESS_DOWNLOADS_FOLDER = readwrite;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
@@ -329,7 +338,6 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.3;
-				PRODUCT_BUNDLE_IDENTIFIER = croakie.FViewer;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

@@ -10,6 +10,10 @@ Built with SwiftUI and Metal. Requires macOS 15.7 or later and Xcode to build.
 
 Open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. There are no external dependencies; the 2D runtime is a local Swift package in `Packages/VfxRuntime`.
 
+### Signing
+
+Signing settings are not stored in the project. Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and set your own team and bundle ID suffix; the file is ignored by git. Do not pick a team in Signing & Capabilities: Xcode would write it back into the project file.
+
 ## Opening files
 
 - **File → Open File** opens a single `.avfx` effect or a `.json` effect of the Pixi runtime.

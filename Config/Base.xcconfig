@@ -1,0 +1,5 @@
+BUNDLE_ID_SUFFIX =
+
+#include? "Local.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = croakie.FViewer$(BUNDLE_ID_SUFFIX)
