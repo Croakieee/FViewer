@@ -566,3 +566,161 @@ extension GameRecords {
         return lines
     }
 }
+
+struct KdbModel {
+    var prefix: [UInt8]
+    var operations: Int
+    var tableB: Int
+    var tableE: Int
+    var tableF: Int
+    var nodes: [(head: [UInt8], body: [UInt8])]
+    var itemsB: [UInt8]
+    var itemsE: [UInt8]
+    var itemsF: [UInt8]
+    var aligned = true
+    var gap: [UInt8] = []
+
+    static func parse(_ b: [UInt8]) -> KdbModel? {
+        guard b.count >= 0x70, b.u32(28) == 5 else { return nil }
+        let arrays = 32 + Int(b.u32(32))
+        guard arrays + 48 <= b.count else { return nil }
+        var places: [Int: Int] = [:]
+        for slot in 0..<5 {
+            let entry = arrays + slot * 8
+            places[Int(b.u16(entry))] = entry + 4 + Int(b.u32(entry + 4))
+        }
+        guard let operations = places[0], let tableB = places[1], let tableE = places[4], let tableF = places[5], operations + 8 <= b.count, tableB + 16 <= b.count,
+              tableE + 8 <= b.count, tableF + 8 <= b.count else { return nil }
+        let count = Int(b.u32(operations)), start = operations + 4 + Int(b.u32(operations + 4))
+        guard count > 0, count < 100_000, start + count * 28 <= b.count else { return nil }
+        let countB = Int(b.u32(tableB + 8)), startB = countB > 0 ? tableB + 12 + Int(b.u32(tableB + 12)) : -1
+        let countE = Int(b.u32(tableE)), startE = countE > 0 ? tableE + 4 + Int(b.u32(tableE + 4)) : -1
+        let countF = Int(b.u32(tableF)), startF = countF > 0 ? tableF + 4 + Int(b.u32(tableF + 4)) : -1
+        let tails = [startB, startE, startF].filter { $0 >= 0 }
+        let bodiesEnd = tails.min() ?? b.count
+        guard bodiesEnd <= b.count, tails.allSatisfy({ $0 <= b.count }) else { return nil }
+        var bodies: [Int] = []
+        for index in 0..<count {
+            let at = start + index * 28
+            guard Int(b.u32(at)) == index else { return nil }
+            bodies.append(at + 24 + Int(b.u32(at + 24)))
+        }
+        let raw = start + count * 28
+        var first = raw
+        while first % 8 != 0 { first += 1 }
+        guard bodies.first == first || bodies.first == raw else { return nil }
+        var model = KdbModel(prefix: Array(b[0..<start]), operations: operations, tableB: tableB, tableE: tableE, tableF: tableF, nodes: [], itemsB: [], itemsE: [], itemsF: [])
+        model.aligned = bodies.first == first
+        model.gap = Array(b[raw..<(bodies.first ?? raw)])
+        for index in 0..<count {
+            let from = bodies[index], to = index + 1 < count ? bodies[index + 1] : bodiesEnd
+            guard from < to, to <= b.count else { return nil }
+            let at = start + index * 28
+            model.nodes.append((Array(b[(at + 4)..<(at + 24)]), Array(b[from..<to])))
+        }
+        func block(_ from: Int, _ size: Int) -> [UInt8]? { from >= 0 && from + size <= b.count ? Array(b[from..<from + size]) : nil }
+        if countB > 0 {
+            guard let items = block(startB, countB * 112), startB == bodiesEnd else { return nil }
+            model.itemsB = items
+        }
+        if countE > 0 {
+            guard let items = block(startE, countE * 20) else { return nil }
+            model.itemsE = items
+        }
+        if countF > 0 {
+            guard let items = block(startF, countF * 8) else { return nil }
+            model.itemsF = items
+        }
+        return model
+    }
+
+    func serialized() -> [UInt8] {
+        var out = prefix
+        GameFiles.put32(&out, operations, UInt32(nodes.count))
+        var places: [Int] = []
+        for (index, node) in nodes.enumerated() {
+            out.appendU32(UInt32(index))
+            out.append(contentsOf: node.head)
+            places.append(out.count)
+            out.appendU32(0)
+        }
+        if aligned {
+            let needed = (8 - out.count % 8) % 8
+            out.append(contentsOf: needed == gap.count ? gap : [UInt8](repeating: 0, count: needed))
+        }
+        for (index, node) in nodes.enumerated() {
+            GameFiles.put32(&out, places[index], UInt32(out.count - places[index]))
+            out.append(contentsOf: node.body)
+        }
+        func table(_ items: [UInt8], count: Int, countAt: Int, offsetAt: Int) {
+            GameFiles.put32(&out, countAt, UInt32(count))
+            GameFiles.put32(&out, offsetAt, count > 0 ? UInt32(out.count - offsetAt) : 0)
+            out.append(contentsOf: items)
+        }
+        table(itemsB, count: itemsB.count / 112, countAt: tableB + 8, offsetAt: tableB + 12)
+        table(itemsE, count: itemsE.count / 20, countAt: tableE, offsetAt: tableE + 4)
+        table(itemsF, count: itemsF.count / 8, countAt: tableF, offsetAt: tableF + 4)
+        GameFiles.put32(&out, 16, UInt32(out.count))
+        return out
+    }
+
+    func isConnection(_ index: Int) -> Bool { nodes[index].head[0] == 22 }
+
+    mutating func remap(_ map: (Int) -> Int?) {
+        var kept: [(head: [UInt8], body: [UInt8])] = []
+        for index in nodes.indices {
+            var node = nodes[index]
+            if isConnection(index), node.body.count >= 32 {
+                guard let from = map(Int(node.body.u32(8))), let to = map(Int(node.body.u32(28))) else { continue }
+                GameFiles.put32(&node.body, 8, UInt32(from))
+                GameFiles.put32(&node.body, 28, UInt32(to))
+            }
+            kept.append(node)
+        }
+        nodes = kept
+    }
+}
+
+extension GameRecords {
+    static func kdbRemove(_ b: [UInt8], node index: Int) -> [UInt8]? {
+        guard var model = KdbModel.parse(b), index < model.nodes.count, model.nodes.count > 1 else { return nil }
+        let connection = model.isConnection(index)
+        var dropped: Set<Int> = [index]
+        if !connection {
+            for other in model.nodes.indices where model.isConnection(other) && model.nodes[other].body.count >= 32 {
+                if Int(model.nodes[other].body.u32(8)) == index || Int(model.nodes[other].body.u32(28)) == index { dropped.insert(other) }
+            }
+        }
+        var position: [Int: Int] = [:]
+        var next = 0
+        for old in model.nodes.indices where !dropped.contains(old) {
+            position[old] = next
+            next += 1
+        }
+        var kept: [(head: [UInt8], body: [UInt8])] = []
+        for old in model.nodes.indices where !dropped.contains(old) { kept.append(model.nodes[old]) }
+        let wasConnection = model.nodes.indices.filter { !dropped.contains($0) }.map { model.isConnection($0) }
+        model.nodes = kept
+        for slot in model.nodes.indices where wasConnection[slot] && model.nodes[slot].body.count >= 32 {
+            guard let from = position[Int(model.nodes[slot].body.u32(8))], let to = position[Int(model.nodes[slot].body.u32(28))] else { return nil }
+            GameFiles.put32(&model.nodes[slot].body, 8, UInt32(from))
+            GameFiles.put32(&model.nodes[slot].body, 28, UInt32(to))
+        }
+        return model.serialized()
+    }
+
+    static func kdbDuplicate(_ b: [UInt8], node index: Int) -> [UInt8]? {
+        guard var model = KdbModel.parse(b), index < model.nodes.count else { return nil }
+        let place = model.isConnection(index) ? index + 1 : model.nodes.count
+        model.nodes.insert(model.nodes[index], at: place)
+        if place < model.nodes.count - 1 {
+            for slot in model.nodes.indices where model.isConnection(slot) && model.nodes[slot].body.count >= 32 {
+                for field in [8, 28] {
+                    let value = Int(model.nodes[slot].body.u32(field))
+                    if value >= place { GameFiles.put32(&model.nodes[slot].body, field, UInt32(value + 1)) }
+                }
+            }
+        }
+        return model.serialized()
+    }
+}

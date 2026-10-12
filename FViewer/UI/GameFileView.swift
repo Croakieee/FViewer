@@ -152,7 +152,7 @@ struct GameFileView: View {
             if let file = app.gameFile {
                 GameFileContent(file: file)
             } else {
-                HelpBadge(text: "Open a .tmb, .pap, .eid, .scd, .atch, .phyb, .skp, .imc, .mtrl or any other game file with File → Game → Inspect Game File…")
+                HelpBadge(text: "Open a .tmb, .pap, .eid, .scd, .atch, .phyb, .skp, .kdb, .imc, .mtrl or any other game file with File → Game → Inspect Game File…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -225,6 +225,7 @@ private struct GameFileContent: View {
             case .phyb: RecordsView(file: file, records: GameRecords.phyb(file.bytes))
             case .skp: RecordsView(file: file, records: GameRecords.skp(file.bytes))
             case .imc: RecordsView(file: file, records: GameRecords.imc(file.bytes))
+            case .kdb: RecordsView(file: file, records: GameRecords.kdb(file.bytes))
             case .other: RawFileView(file: file)
             }
         }
@@ -718,6 +719,12 @@ private struct RecordsView: View {
 
     private func putFloat(_ at: Int, _ value: Double) { GameFiles.put32(&file.bytes, at, Float(value).bitPattern) }
 
+    private func putDouble(_ at: Int, _ value: Double) {
+        let bits = value.bitPattern
+        GameFiles.put32(&file.bytes, at, UInt32(bits & 0xFFFF_FFFF))
+        GameFiles.put32(&file.bytes, at + 4, UInt32(bits >> 32))
+    }
+
     private func apply(_ next: [UInt8]?, select: Int? = nil) {
         guard let next else {
             file.note = "This file has a layout this app cannot rebuild"
@@ -809,6 +816,30 @@ private struct RecordsView: View {
             number(field.at, Double(b.u32(field.at)), integer: true, width: 130) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, min($0, 4_294_967_295)))) }
         case .byte:
             number(field.at, Double(b[field.at]), integer: true) { file.bytes[field.at] = UInt8(max(0, min($0, 255))) }
+        case .double:
+            number(field.at, Double(bitPattern: UInt64(b.u32(field.at)) | UInt64(b.u32(field.at + 4)) << 32)) { putDouble(field.at, $0) }
+        case .doubles(let count):
+            ForEach(0..<count, id: \.self) { slot in
+                let at = field.at + slot * 8
+                number(at, Double(bitPattern: UInt64(b.u32(at)) | UInt64(b.u32(at + 4)) << 32)) { putDouble(at, $0) }
+            }
+        case .hash:
+            TextValueField(value: GameRecords.hashText(b.u32(field.at))) { text in GameFiles.put32(&file.bytes, field.at, GameRecords.hashValue(text)) }.frame(width: 260)
+            Text(String(format: "%08X", b.u32(field.at))).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).padding(.top, 4)
+        case .chars(let length):
+            TextValueField(value: String(decoding: b[field.at..<(field.at + length)].prefix { $0 != 0 }, as: UTF8.self)) { text in
+                let raw = Array(text.utf8.prefix(length))
+                for slot in 0..<length { file.bytes[field.at + slot] = slot < raw.count ? raw[slot] : 0x20 }
+            }
+        case .half:
+            number(field.at, Double(GameFiles.half(b.u16(field.at)))) { value in
+                let bits = GameFiles.halfBits(Float(value))
+                file.bytes[field.at] = UInt8(bits & 0xFF)
+                file.bytes[field.at + 1] = UInt8(bits >> 8)
+            }
+        case .sparse(let pairs):
+            ChoiceField(choices: pairs.map { FieldChoice(name: $0.1, value: $0.0) }, value: Int(b.u32(field.at))) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, $0))) }
+                .frame(width: 200)
         case .choice(let names):
             ChoiceField(choices: names.enumerated().map { FieldChoice(name: $1, value: $0) }, value: Int(b.u32(field.at))) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, $0))) }
                 .frame(width: 200)
@@ -852,6 +883,14 @@ private struct RecordsView: View {
                 ScrollView {
                     Panel(title: record.section + "  ·  " + record.title) {
                         if let slot = record.slot { tools(slot) }
+                        if let node = record.node {
+                            HStack(spacing: 6) {
+                                SegmentButton(title: "Duplicate", active: false) { apply(GameRecords.kdbDuplicate(file.bytes, node: node)) }
+                                SegmentButton(title: "Delete", active: false) { apply(GameRecords.kdbRemove(file.bytes, node: node), select: file.selection - 1) }
+                                Spacer()
+                                HelpBadge(text: "A copy of a node goes to the end of the list; a copy of a connection goes right after it with the same ends, to be pointed at other nodes. Deleting a node also deletes its connections. Names are stored as hashes: type a bone name, or 0x and eight hex digits.")
+                            }
+                        }
                         if let slot = record.skp {
                             HStack(spacing: 6) {
                                 SegmentButton(title: "Duplicate", active: false) { apply(GameRecords.skpEdit(file.bytes, slot, remove: false)) }

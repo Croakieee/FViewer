@@ -1,7 +1,7 @@
 import Foundation
 
 enum GameFileKind: String {
-    case tmb, pap, eid, scd, atch, phyb, skp, imc, other
+    case tmb, pap, eid, scd, atch, phyb, skp, imc, kdb, other
 }
 
 struct TmbItem: Identifiable {
@@ -81,6 +81,7 @@ enum GameFiles {
         case "phyb": return .phyb
         case "skp": return .skp
         case "imc": return .imc
+        case "kdb": return .kdb
         default:
             if bytes.count >= 4, bytes[0] == 0x54, bytes[1] == 0x4D, bytes[2] == 0x4C, bytes[3] == 0x42 { return .tmb }
             return .other

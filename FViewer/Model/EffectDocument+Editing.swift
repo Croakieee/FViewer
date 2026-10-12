@@ -529,7 +529,7 @@ extension EffectDocument {
             for (i, particle) in root.childrenNamed("Ptcl").enumerated() {
                 let type = particle.int("PrVT")
                 if unsupported.contains(type) || (type == 3 && particle.int("bSCt") == 0) {
-                    notes.append(type == 14 ? "Particle \(i): Model Skin is drawn over the model loaded with File → Game → Load Model, without its aura settings"
+                    notes.append(type == 14 ? "Particle \(i): Model Skin is drawn over the model loaded with File → Game → Load Model; only its fresnel colours are applied"
                                  : "Particle \(i): \(catalog.enumCaseName("ParticleType", type) ?? "?") is not drawn in the preview")
                 }
                 if type == 6 { notes.append("Particle \(i): the trail is drawn facing the camera over half its point count in frames") }

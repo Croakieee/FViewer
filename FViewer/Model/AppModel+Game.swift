@@ -441,6 +441,7 @@ extension AppModel {
         AvfxSimulation.skeletonLines = lines
         AvfxSimulation.skeletonBindPoints = points.isEmpty ? nil : points
         loadedSkeleton = skeleton
+        for name in skeleton.names { GameRecords.extraNames[GameRecords.fnv(name)] = name }
         skeletonName = url.lastPathComponent
         PreviewRules.bump()
         document?.liveChanged()

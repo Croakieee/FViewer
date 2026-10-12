@@ -11,6 +11,12 @@ enum RecordKind {
     case byte
     case choice([String])
     case flags([String])
+    case double
+    case doubles(Int)
+    case hash
+    case chars(Int)
+    case half
+    case sparse([(Int, String)])
 }
 
 struct RecordField: Identifiable {
@@ -27,6 +33,7 @@ struct GameRecord: Identifiable {
     let fields: [RecordField]
     var slot: RecordSlot? = nil
     var skp: SkpSlot? = nil
+    var node: Int? = nil
 }
 
 struct RecordBuilder {
@@ -41,11 +48,17 @@ struct RecordBuilder {
         case .floats(let count), .angles(let count): return count * 4
         case .short: return 2
         case .byte, .flags: return 1
+        case .double: return 8
+        case .doubles(let count): return count * 8
+        case .hash: return 8
+        case .chars(let length): return length
+        case .half: return 2
+        case .sparse: return 4
         }
     }
 
     @discardableResult mutating func add(_ section: String, _ title: String, at start: Int, _ layout: [(String, RecordKind)], nameField: Int? = nil,
-                                         slot: RecordSlot? = nil, skp: SkpSlot? = nil) -> Int {
+                                         slot: RecordSlot? = nil, skp: SkpSlot? = nil, node: Int? = nil) -> Int {
         var fields: [RecordField] = []
         var at = start
         for (index, item) in layout.enumerated() {
@@ -62,7 +75,7 @@ struct RecordBuilder {
             let text = GameFiles.string(bytes, fields[nameField].at, max: length)
             if !text.isEmpty { name = title + "  " + text }
         }
-        records.append(GameRecord(id: records.count, section: section, title: name, fields: fields, slot: slot, skp: skp))
+        records.append(GameRecord(id: records.count, section: section, title: name, fields: fields, slot: slot, skp: skp, node: node))
         return at
     }
 
@@ -165,6 +178,202 @@ enum GameRecords {
             for item in 0..<counts[7] {
                 at = builder.add(section, "Post Alignment \(item)", at: at, [name("Collision Name"), ("Chain Id", .short), ("Node Id", .short)], nameField: 0, slot: .item(simulator: index, list: 7, index: item))
             }
+        }
+        return builder.valid ? builder.records : nil
+    }
+
+    static func fnv(_ text: String) -> UInt32 {
+        var result: UInt32 = 0x811C_9DC5
+        for byte in text.utf8 {
+            result ^= UInt32(byte)
+            result = result &* 0x0100_0193
+        }
+        return result
+    }
+
+    static let knownNames: [UInt32: String] = {
+        guard let url = Bundle.main.url(forResource: "bone_names", withExtension: "txt"), let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+        var result: [UInt32: String] = [:]
+        for line in text.split(separator: "\n") { result[fnv(String(line))] = String(line) }
+        return result
+    }()
+
+    static var extraNames: [UInt32: String] = [:]
+
+    static func hashText(_ value: UInt32) -> String { extraNames[value] ?? knownNames[value] ?? String(format: "0x%08X", value) }
+
+    static func hashValue(_ text: String) -> UInt32 {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if trimmed.lowercased().hasPrefix("0x"), let value = UInt32(trimmed.dropFirst(2), radix: 16) { return value }
+        return fnv(trimmed)
+    }
+
+    static let kdbNodeNames: [Int: String] = [
+        3: "Source Translate", 4: "Source Rotate", 6: "Target Translate", 7: "Target Scale", 8: "Target Rotate", 9: "Target Bend Roll", 10: "Target Bend ST Roll",
+        12: "Target Position Constraint", 13: "Target Orientation Constraint", 18: "Effector EZ Param Link", 19: "Effector EZ Param Link Linear", 21: "Effector Expression",
+        22: "Connection",
+    ]
+
+    static let kdbConnectionTypes = ["Other", "Translate X", "Translate Y", "Translate Z", "Distance", "Rotate Quat X", "Rotate Quat Y", "Rotate Quat Z", "Rotate Quat W",
+                                     "Rotate Angle", "Bending Quat X", "Bending Quat Y", "Bending Quat Z", "Bending Quat W", "Bending Angle", "Bend S", "Bend T", "Roll",
+                                     "Quat Angle", "Scale X", "Scale Y", "Scale Z", "Input", "Output", "Translate", "Roll Bend"]
+
+    static func kdb(_ b: [UInt8]) -> [GameRecord]? {
+        guard b.count >= 0x70, b.u32(28) == 5 else { return nil }
+        var builder = RecordBuilder(bytes: b)
+        func pad(_ count: Int) -> [(String, RecordKind)] { (0..<count).map { _ in ("", RecordKind.byte) } }
+        builder.add("File", "Header", at: 0, [("Major Version", .int), ("Minor Version", .int), ("Patch Version", .int), ("Check File Size", .int), ("", .int), ("File Name", .hash)])
+        let arrays = 32 + builder.u32(32)
+        guard arrays > 32, arrays + 5 * 8 + 8 <= b.count else { return nil }
+        builder.add("File", "Settings", at: arrays + 40, [("Unknown 1", .int), ("Unknown 2", .int)])
+        var titles: [Int: String] = [:]
+        var pendingB: (count: Int, at: Int)?
+        var pendingE: (count: Int, at: Int)?
+        var pendingF: (count: Int, at: Int)?
+        for slot in 0..<5 {
+            let entry = arrays + slot * 8
+            let type = builder.u16(entry), position = entry + 4 + builder.u32(entry + 4)
+            guard position + 8 <= b.count else { return nil }
+            let count = builder.u32(position), place = position + 4 + builder.u32(position + 4)
+            switch type {
+            case 0:
+                builder.add("File", "Operations", at: position + 8, [("Unknown Operation", .double)])
+                guard count >= 0, count < 100_000, place + count * 28 <= b.count else { return nil }
+                var labels: [Int: String] = [:]
+                for index in 0..<count {
+                    let at = place + index * 28
+                    let name = hashText(b.u32(at + 8))
+                    labels[index] = (kdbNodeNames[builder.u8(at + 4)] ?? "?") + (name.hasPrefix("0x") ? "" : " " + name)
+                }
+                for index in 0..<count {
+                    let at = place + index * 28
+                    let kind = builder.u8(at + 4)
+                    guard let label = kdbNodeNames[kind] else { return nil }
+                    let name = hashText(b.u32(at + 8))
+                    titles[index] = label + (name.hasPrefix("0x") ? "" : "  " + name)
+                    let body = at + 24 + builder.u32(at + 24)
+                    let head: [(String, RecordKind)] = [("", .int), ("", .int), ("Name", .hash), ("Unknown 1", .int), ("Unknown 2", .int)]
+                    let section = kind == 22 ? "Connections" : "Nodes"
+                    guard body > 0, body < b.count else { return nil }
+                    var title = "\(index)  " + (titles[index] ?? label)
+                    if kind == 22 {
+                        let from = builder.u32(body + 8), to = builder.u32(body + 28), fromType = builder.u32(body + 12), toType = builder.u32(body + 32)
+                        func port(_ value: Int) -> String { value >= 0 && value < kdbConnectionTypes.count ? kdbConnectionTypes[value] : "?" }
+                        title = "\(index)  \(from) \(labels[from] ?? "?") · \(port(fromType))  →  \(to) \(labels[to] ?? "?") · \(port(toType))"
+                    }
+                    builder.add(section, title, at: at, head, node: index)
+                    switch kind {
+                    case 22:
+                        builder.add(section, "\(index)  Connection Data", at: body, [
+                            ("", .int), ("", .int), ("Source Node", .int), ("Source Type", .choice(kdbConnectionTypes)), ("", .int), ("", .int), ("", .int),
+                            ("Target Node", .int), ("Target Type", .choice(kdbConnectionTypes)), ("Input Index", .int), ("", .int), ("", .int), ("Coefficient", .double),
+                            ("Unknown", .int),
+                        ])
+                    case 3, 4:
+                        let bones = builder.u32(body), bonesAt = body + 4 + builder.u32(body + 4), weightsAt = body + 12 + builder.u32(body + 12)
+                        let link: [(String, RecordKind)] = [("Link Type", .sparse([(0, "None"), (2, "Bone")])), ("Link", .hash)]
+                        if kind == 4 {
+                            var layout: [(String, RecordKind)] = [("Source", .doubles(4)), ("Target", .doubles(4)), ("Aim Vector", .doubles(3)), ("Up Vector", .doubles(3)),
+                                                                  ("Unknown 3", .doubles(4))]
+                            layout += link
+                            layout += [("Unknown 4", .short), ("Unknown 5", .short)]
+                            builder.add(section, "\(index)  Source Rotate Data", at: body + 16, layout)
+                        } else {
+                            var layout: [(String, RecordKind)] = [("Unknown 3", .doubles(3)), ("Unknown 4", .doubles(3))]
+                            layout += link
+                            builder.add(section, "\(index)  Source Translate Data", at: body + 16, layout)
+                        }
+                        guard bones >= 0, bones < 4096 else { return nil }
+                        for bone in 0..<bones {
+                            builder.add(section, "\(index)  Bone \(bone)", at: bonesAt + bone * 8, [("Bone", .hash)], nameField: nil)
+                            builder.add(section, "\(index)  Weight \(bone)", at: weightsAt + bone * 8, [("Weight", .double)])
+                        }
+                    case 9:
+                        var layout: [(String, RecordKind)] = [("Bone", .hash), ("Unknown 3", .doubles(3)), ("Unknown 4", .doubles(3)), ("Unknown 5", .doubles(3))]
+                        layout += pad(12)
+                        layout.append(("Unknown 6", .int))
+                        layout += pad(8)
+                        layout.append(("Unknown 7", .doubles(4)))
+                        layout.append(("Unknown 8", .doubles(4)))
+                        layout += pad(1)
+                        layout.append(("Unknown 9", .byte))
+                        builder.add(section, "\(index)  Target Bend Roll Data", at: body, layout)
+                    case 10:
+                        builder.add(section, "\(index)  Target Bend ST Roll Data", at: body, [
+                            ("Bone", .hash), ("Bend Source", .double), ("Bend Target", .double), ("Roll", .double), ("Pivot Offset", .doubles(3)), ("Aim", .doubles(3)),
+                            ("Up", .doubles(3)), ("Unknown 3", .double), ("Unknown 4", .doubles(4)), ("Unknown 5", .doubles(4)), ("Unknown 6", .double), ("Unknown 7", .int),
+                            ("Unknown 8", .byte),
+                        ])
+                    case 8:
+                        var layout: [(String, RecordKind)] = [("Bone", .hash), ("Unknown 3", .doubles(2)), ("Unknown 4", .doubles(3))]
+                        layout += pad(12)
+                        layout.append(("Unknown 5", .int))
+                        layout += pad(8)
+                        layout.append(("Unknown 6", .doubles(4)))
+                        layout.append(("Unknown 7", .doubles(4)))
+                        layout += pad(1)
+                        layout.append(("Unknown 8", .byte))
+                        builder.add(section, "\(index)  Target Rotate Data", at: body, layout)
+                    case 7:
+                        var layout: [(String, RecordKind)] = [("Bone", .hash), ("Scale", .doubles(3))]
+                        layout += pad(12)
+                        layout += [("Unknown 3", .byte), ("Unknown 4", .byte), ("Unknown 5", .byte)]
+                        builder.add(section, "\(index)  Target Scale Data", at: body, layout)
+                    case 6:
+                        builder.add(section, "\(index)  Target Translate Data", at: body, [("Bone", .hash), ("Translate", .doubles(3)), ("Neutral Translate", .doubles(3)),
+                                                                                         ("Neutral Rotate", .doubles(4))])
+                    case 12, 13:
+                        let bones = builder.u32(body + 8), bonesAt = body + 12 + builder.u32(body + 12), weightsAt = body + 20 + builder.u32(body + 20)
+                        let extraAt = body + 28 + builder.u32(body + 28)
+                        var layout: [(String, RecordKind)] = [("Bone", .hash)]
+                        layout += pad(24)
+                        layout.append(("Unknown 3", .doubles(3)))
+                        if kind == 12 { layout += [("Unknown 4", .byte), ("Unknown 5", .byte)] }
+                        builder.add(section, "\(index)  Constraint Data", at: body, layout)
+                        guard bones >= 0, bones < 4096 else { return nil }
+                        for bone in 0..<bones {
+                            builder.add(section, "\(index)  Bone \(bone)", at: bonesAt + bone * 8, [("Bone", .hash)])
+                            builder.add(section, "\(index)  Weight \(bone)", at: weightsAt + bone * 8, [("Weight", .double)])
+                            builder.add(section, "\(index)  Offset \(bone)", at: extraAt + bone * 24, [("Unknown", .doubles(3))])
+                        }
+                    case 18:
+                        let tangent = RecordKind.choice(["Step", "Linear", "Spline", "Max"])
+                        builder.add(section, "\(index)  EZ Param Link Data", at: body, [("Start", .doubles(2)), ("Middle", .doubles(2)), ("End", .doubles(2)),
+                                                                                      ("Start Tangent", tangent), ("Middle Tangent", tangent), ("End Tangent", tangent),
+                                                                                      ("Unknown 3", .byte), ("Unknown 4", .byte), ("Unknown 5", .byte), ("Unknown 6", .byte)])
+                    case 19:
+                        builder.add(section, "\(index)  EZ Param Link Linear Data", at: body, [("Input Offset", .double), ("Scale", .double), ("Output Offset", .double),
+                                                                                             ("Clamp", .doubles(2)), ("Enable Minimum", .byte), ("Enable Maximum", .byte)])
+                    case 21:
+                        let values = builder.u32(body), valuesAt = body + 4 + builder.u32(body + 4), length = builder.u32(body + 8), textAt = body + 12 + builder.u32(body + 12)
+                        guard values >= 0, values < 4096, length >= 0, length < 65536 else { return nil }
+                        if length > 0 { builder.add(section, "\(index)  Expression", at: textAt, [("Expression", .chars(length))]) }
+                        for value in 0..<values { builder.add(section, "\(index)  Value \(value)", at: valuesAt + value * 32, [("Value", .doubles(4))]) }
+                    default: return nil
+                    }
+                }
+            case 1:
+                guard position + 16 <= b.count else { return nil }
+                pendingB = (builder.u32(position + 8), position + 12 + builder.u32(position + 12))
+            case 4: pendingE = (count, place)
+            case 5: pendingF = (count, place)
+            default: break
+            }
+        }
+        if let table = pendingB, table.count > 0, table.count < 100_000 {
+            for index in 0..<table.count {
+                builder.add("Table B", "Item \(index)", at: table.at + index * 112, [("Node", .hash), ("Unknown 1", .int), ("Unknown 2", .int), ("Unknown 3", .doubles(4)),
+                                                                                   ("Unknown 4", .doubles(4)), ("Unknown 5", .doubles(4))])
+            }
+        }
+        if let table = pendingE, table.count > 0, table.count < 100_000 {
+            for index in 0..<table.count {
+                builder.add("Table E", "Item \(index)", at: table.at + index * 20, [("Unknown 1", .int), ("Unknown 2", .int), ("Unknown 3", .int), ("Unknown 4", .int),
+                                                                                  ("Unknown 5", .int)])
+            }
+        }
+        if let table = pendingF, table.count > 0, table.count < 100_000 {
+            for index in 0..<table.count { builder.add("Table F", "Row \(index)", at: table.at + index * 8, [("Index", .int), ("X", .half), ("Y", .half)]) }
         }
         return builder.valid ? builder.records : nil
     }
