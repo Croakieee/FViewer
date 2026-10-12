@@ -119,6 +119,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var showFloor = false
     private var floor: DrawItem?
     private var sceneColor: MTLTexture?
+    private var postPipeline: MTLRenderPipelineState?
+    private var postSource: MTLTexture?
+    private var postSampler: MTLSamplerState?
+    private var quake: (amount: Float, phase: Float) = (0, 0)
     private var sceneDepth: MTLTexture?
     weak var document: EffectDocument?
     weak var app: AppModel?
@@ -158,6 +162,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         layout.layouts[0].stride = MemoryLayout<MeshVertex>.stride
         descriptor.vertexDescriptor = layout
         pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+        let post = MTLRenderPipelineDescriptor()
+        post.vertexFunction = library.makeFunction(name: "postVertex")
+        post.fragmentFunction = library.makeFunction(name: "postFragment")
+        post.colorAttachments[0].pixelFormat = .bgra8Unorm
+        postPipeline = try? device.makeRenderPipelineState(descriptor: post)
 
         let depth = MTLDepthStencilDescriptor()
         depth.depthCompareFunction = .lessEqual
@@ -178,6 +187,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         samplerDescriptor.sAddressMode = .repeat
         samplerDescriptor.tAddressMode = .repeat
         sampler = device.makeSamplerState(descriptor: samplerDescriptor)
+        samplerDescriptor.sAddressMode = .clampToEdge
+        samplerDescriptor.tAddressMode = .clampToEdge
+        postSampler = device.makeSamplerState(descriptor: samplerDescriptor)
 
         let whiteDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 1, height: 1, mipmapped: false)
         white = device.makeTexture(descriptor: whiteDescriptor)
@@ -201,7 +213,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         guard let simulation = player?.simulation, showEmitters || showBindPoints else { return [] }
         var lines: [(SIMD3<Float>, SIMD4<Float>)] = []
         var points: [MeshVertex] = []
-        if showEmitters {
+        if showEmitters, PreviewRules.isOn("emitterMarkers") {
             for marker in simulation.emitterMarkers() {
                 let origin = Math3D.point(marker.world, .zero)
                 let colors: [SIMD4<Float>] = [SIMD4(0.95, 0.3, 0.3, 1), SIMD4(0.45, 0.85, 0.3, 1), SIMD4(0.3, 0.55, 1, 1)]
@@ -237,7 +249,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                     lines.append((point + right * glyph * 0.6, tint))
                 }
                 var cursor = point + right * glyph * 1.6 + up * glyph
-                for digit in String(id) {
+                for digit in PreviewRules.isOn("bindPointNumbers") ? String(id) : "" {
                     for segment in ViewportRenderer.digitSegments[Int(String(digit)) ?? 0] {
                         lines.append((cursor + right * segment.0.x * glyph + up * segment.0.y * glyph, tint))
                         lines.append((cursor + right * segment.1.x * glyph + up * segment.1.y * glyph, tint))
@@ -338,6 +350,48 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             floor = DrawItem(vertices: vb, indices: ib, count: indices.count, primitive: .triangle, tint: SIMD4(1, 1, 1, 1), lit: true, textured: false,
                              wire: false)
         }
+    }
+
+    private struct PostUniforms {
+        var center: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+        var shape: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+        var count = SIMD4<Float>(0, 1, 0, 0)
+    }
+
+    private func applyPost(_ effects: [ScreenEffect], buffer: MTLCommandBuffer, target: MTLTexture, viewProjection: simd_float4x4) {
+        guard let postPipeline, !target.isFramebufferOnly else { return }
+        if postSource?.width != target.width || postSource?.height != target.height {
+            let copy = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: target.pixelFormat, width: target.width, height: target.height, mipmapped: false)
+            copy.usage = [.shaderRead]
+            copy.storageMode = .private
+            postSource = device.makeTexture(descriptor: copy)
+        }
+        guard let postSource, let blit = buffer.makeBlitCommandEncoder() else { return }
+        blit.copy(from: target, to: postSource)
+        blit.endEncoding()
+        var uniforms = PostUniforms()
+        uniforms.count = SIMD4(Float(effects.count), Float(target.width) / Float(max(target.height, 1)), 0, 0)
+        withUnsafeMutableBytes(of: &uniforms) { raw in
+            let values = raw.bindMemory(to: SIMD4<Float>.self)
+            for (index, effect) in effects.enumerated() {
+                let clip = viewProjection * SIMD4(effect.position.x, effect.position.y, effect.position.z, 1)
+                let w = abs(clip.w) < 1e-5 ? 1e-5 : clip.w
+                let center = SIMD2(clip.x / w * 0.5 + 0.5, 0.5 - clip.y / w * 0.5)
+                values[index] = SIMD4(center.x, center.y, Float(effect.kind), clip.w > 0 ? effect.strength : 0)
+                values[4 + index] = SIMD4(min(max(effect.length, 0), 1) * (effect.kind == 7 ? 0.5 : 0.12), effect.inner, effect.outer, effect.angle)
+            }
+        }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].storeAction = .store
+        guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.setRenderPipelineState(postPipeline)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<PostUniforms>.stride, index: 0)
+        encoder.setFragmentTexture(postSource, index: 0)
+        encoder.setFragmentSamplerState(postSampler ?? sampler, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
     }
 
     private func sceneTextures(_ drawable: MTLTexture, depth: MTLTexture) -> Bool {
@@ -512,7 +566,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let aspect = Float(view.drawableSize.width / max(view.drawableSize.height, 1))
         let near = max(camera.distance * 0.01, 0.01)
         let projection = ViewportRenderer.perspective(fovY: 0.75, aspect: aspect, near: near, far: 2000)
-        let viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
+        var viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
+        if quake.amount > 0 {
+            let reach = min(quake.amount, 4) * camera.distance * 0.012
+            var shake = matrix_identity_float4x4
+            shake.columns.3 = SIMD4(sin(quake.phase * 2.9) * reach, sin(quake.phase * 3.7 + 1.3) * reach, 0, 1)
+            viewMatrix = shake * viewMatrix
+        }
         let viewProjection = projection * viewMatrix
         lastViewProjection = viewProjection
         lastViewSize = view.bounds.size
@@ -524,6 +584,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let cameraState = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: simd_cross(forward, right), z: forward),
                                       fovY: 0.75, viewportHeight: Float(view.drawableSize.height))
         let effect = effectDraws(elapsed: elapsed, camera: cameraState)
+        let screen = effect != nil ? player?.simulation?.screenEffects(camera: camera.eye, filter: filter) : nil
+        quake = (screen?.quake ?? 0, screen?.phase ?? 0)
         let lights = Array((effect != nil ? player?.simulation?.lights(filter: filter) : nil ?? []) ?? []).prefix(4)
         let split = effect.map { particleRenderer?.needsScene($0.particles) ?? false } ?? false
         let depthTarget = descriptor.depthAttachment.texture
@@ -623,6 +685,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             }
         }
         encoder.endEncoding()
+        if let effects = screen?.effects, !effects.isEmpty, let postPipeline { applyPost(Array(effects.prefix(4)), buffer: buffer, target: drawable.texture, viewProjection: viewProjection) }
         if let request = captureRequest, effect != nil {
             captureRequest = nil
             let texture = drawable.texture

@@ -243,9 +243,10 @@ enum GameFiles {
         guard !data.isEmpty else { return nil }
         var format: [UInt8] = []
         if audio.format == 0x0C {
-            let at = audio.offset + 0x20
-            guard audio.headerSize >= 16, at + audio.headerSize <= b.count else { return nil }
-            format = Array(b[at..<at + audio.headerSize])
+            let aux = scdAux(b, audio)
+            let at = audio.offset + 0x20 + aux
+            guard audio.headerSize - aux >= 16, at + audio.headerSize - aux <= b.count else { return nil }
+            format = Array(b[at..<at + audio.headerSize - aux])
         } else if audio.format == 0x01 {
             format.append(contentsOf: [1, 0, UInt8(audio.channels & 0xFF), 0])
             format.appendU32(UInt32(audio.sampleRate))

@@ -276,6 +276,16 @@ struct REffector {
     var distance: RCurve?
     var attenuation: Int
     var position: RCurve3
+    var strength: RCurve?
+    var length: RCurve?
+    var inner: RCurve?
+    var outer: RCurve?
+    var angle: RCurve?
+    var quake: RCurve?
+    var quakeIn: RCurve?
+    var quakeOut: RCurve?
+    var fadeStart: Float = 0
+    var fadeEnd: Float = 0
 }
 
 struct REffectSchema {
@@ -489,7 +499,10 @@ enum AvfxSchemaReader {
             let data = block.child("Data")
             return REffector(index: index, type: block.int("EfVT"), loopStart: block.int("LpSt"), loopEnd: block.int("LpEd"),
                              color: color(data?.child("Col")), distance: curve(data?.child("DstS")), attenuation: data?.int("Attn") ?? 0,
-                             position: curve3(data?.child("Pos")))
+                             position: curve3(data?.child("Pos")), strength: curve(data?.child("Str")), length: curve(data?.child("Len")),
+                             inner: curve(data?.child("IRad")), outer: curve(data?.child("ORad")), angle: curve(data?.child("Ang")),
+                             quake: curve(data?.child("Att")), quakeIn: curve(data?.child("RdI")), quakeOut: curve(data?.child("RdO")),
+                             fadeStart: data?.float("FSDc") ?? 0, fadeEnd: data?.float("FEDc") ?? 0)
         }
         result.emitterEffectors = root.childrenNamed("Emit").map { $0.int("EfNo", -1) }
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }

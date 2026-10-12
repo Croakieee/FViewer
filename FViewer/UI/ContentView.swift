@@ -52,6 +52,7 @@ struct TopBar: View {
                     Button("Extract File by Game Path…") { app.extractFromGamePrompt() }.disabled(app.gameRoot == nil)
                     Button("Fetch Missing Textures") { app.fetchMissingTextures() }.disabled(app.gameRoot == nil || app.document == nil)
                     Divider()
+                    Button("Game Catalog…") { app.showCatalog = true }
                     Button("Effects of Timeline by Game Path…") { app.listEffectsOfGamePath() }.disabled(app.gameRoot == nil)
                     Button("Effects of Timeline File (.tmb, .pap)…") { app.listEffectsOfFile() }
                     Divider()
@@ -230,6 +231,7 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { app.modList != nil }, set: { if !$0 { app.modList = nil } })) { ModListSheet().environmentObject(app) }
         .sheet(isPresented: Binding(get: { app.timelineHits != nil }, set: { if !$0 { app.timelineHits = nil } })) { TimelineHitsSheet().environmentObject(app) }
         .sheet(item: $app.effectList) { list in EffectListSheet(list: list).environmentObject(app) }
+        .sheet(isPresented: $app.showCatalog) { CatalogSheet().environmentObject(app) }
         .sheet(isPresented: $app.modExport) {
             if let document = app.document { ExportModSheet(document: document).environmentObject(app) }
         }

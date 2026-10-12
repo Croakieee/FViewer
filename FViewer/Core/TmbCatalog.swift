@@ -98,6 +98,45 @@ enum TmbCatalog {
         restructure(file, block: block) { bytes, local in track < local.items.count ? createLocal(bytes, block: local, magic: magic, track: local.items[track]) : nil }
     }
 
+    static func createContainer(_ file: [UInt8], block: TmbBlock, parent: Int) -> [UInt8]? {
+        restructure(file, block: block) { bytes, local in parent < local.items.count ? containerLocal(bytes, block: local, parent: local.items[parent]) : nil }
+    }
+
+    static func childKind(_ magic: String) -> String? {
+        switch magic {
+        case "TMAL": return "TMAC"
+        case "TMAC": return "TMTR"
+        default: return nil
+        }
+    }
+
+    static func isEmptyContainer(_ b: [UInt8], _ item: TmbItem) -> Bool {
+        guard item.magic == "TMAC" || item.magic == "TMTR", let field = listField(item.magic) else { return false }
+        return idList(b, item: item, field: field).ids.isEmpty
+    }
+
+    private static func containerLocal(_ b: [UInt8], block: TmbBlock, parent: TmbItem) -> [UInt8]? {
+        guard let kind = childKind(parent.magic), let type = types[kind], let listAt = listField(parent.magic) else { return nil }
+        let anchor = block.items.last { $0.magic == kind } ?? block.items.last { $0.magic == parent.magic || $0.magic == "TMAL" }
+        guard let anchor else { return nil }
+        let fresh = (block.items.map(\.itemID).max() ?? 0) + 1
+        var item = [UInt8](repeating: 0, count: type.size)
+        for (slot, byte) in Array(kind.utf8).enumerated() { item[slot] = byte }
+        GameFiles.put32(&item, 4, UInt32(type.size))
+        GameFiles.put16(&item, 8, fresh)
+        var out = b
+        let position = anchor.offset + anchor.size
+        shiftPointers(&out, items: block.items, before: position, by: type.size)
+        out.insert(contentsOf: item, at: position)
+        let parentStart = parent.offset < position ? parent.offset : parent.offset + type.size
+        var ids = idList(out, item: TmbItem(id: parent.id, offset: parentStart, magic: parent.magic, size: parent.size, itemID: parent.itemID, time: parent.time), field: listAt).ids
+        ids.append(fresh)
+        appendList(&out, ids: ids, trackStart: parentStart, listAt: listAt)
+        GameFiles.put32(&out, 4, UInt32(out.count))
+        GameFiles.put32(&out, 8, UInt32(block.items.count + 1))
+        return out
+    }
+
     static func setString(_ file: [UInt8], block: TmbBlock, index: Int, field: Int, text: String) -> [UInt8]? {
         restructure(file, block: block) { bytes, local in
             guard index < local.items.count else { return nil }
@@ -173,10 +212,10 @@ enum TmbCatalog {
     }
 
     private static func removeLocal(_ b: [UInt8], block: TmbBlock, entry: TmbItem) -> [UInt8]? {
-        guard entry.magic.hasPrefix("C") else { return nil }
+        guard entry.magic.hasPrefix("C") || isEmptyContainer(b, entry) else { return nil }
         var out = b
-        for item in block.items where item.magic == "TMTR" {
-            guard let field = listField("TMTR") else { continue }
+        for item in block.items {
+            guard let field = listField(item.magic) else { continue }
             let list = idList(out, item: item, field: field)
             guard let index = list.ids.firstIndex(of: entry.itemID) else { continue }
             var ids = list.ids

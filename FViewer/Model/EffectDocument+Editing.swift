@@ -533,8 +533,15 @@ extension EffectDocument {
                 }
                 if type == 6 { notes.append("Particle \(i): the trail is drawn facing the camera over half its point count in frames") }
             }
-            for (i, effector) in root.childrenNamed("Efct").enumerated() where effector.int("EfVT") != 0 {
-                notes.append("Effector \(i): \(catalog.enumCaseName("EffectorType", effector.int("EfVT")) ?? "?") is not previewed")
+            for (i, effector) in root.childrenNamed("Efct").enumerated() {
+                let kind = effector.int("EfVT")
+                let name = catalog.enumCaseName("EffectorType", kind) ?? "?"
+                switch kind {
+                case 0: break
+                case 3, 4, 5, 7: notes.append("Effector \(i): \(name) is shown as an approximate screen filter")
+                case 6, 9: notes.append("Effector \(i): \(name) shakes the view by an approximate amount")
+                default: notes.append("Effector \(i): \(name) is not previewed")
+                }
             }
             sections.append(("Preview Notes", notes.isEmpty ? ["Everything in this effect is covered by the preview"] : notes))
         } else if let root = jsonRoot {

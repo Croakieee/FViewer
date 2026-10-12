@@ -19,17 +19,18 @@ struct FViewerApp: App {
     var body: some Scene {
         Window("FViewer", id: "main") {
             ContentView()
+                .id(app.themeToken)
                 .environmentObject(app)
                 .frame(minWidth: 960, minHeight: 600)
         }
         .defaultLaunchBehavior(.presented)
         Window("Texture Editor", id: "texture") {
-            TextureEditorView().environmentObject(app)
+            TextureEditorView().id(app.themeToken).environmentObject(app)
         }
         .defaultSize(width: 1100, height: 720)
         .defaultLaunchBehavior(.suppressed)
         Window("File Inspector", id: "gamefile") {
-            GameFileView().environmentObject(app)
+            GameFileView().id(app.themeToken).environmentObject(app)
         }
         .defaultSize(width: 1000, height: 640)
         .defaultLaunchBehavior(.suppressed)
@@ -39,12 +40,12 @@ struct FViewerApp: App {
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
         Window("Item Editor", id: "item") {
-            ItemEditorView().environmentObject(app)
+            ItemEditorView().id(app.themeToken).environmentObject(app)
         }
         .defaultSize(width: 1320, height: 820)
         .defaultLaunchBehavior(.suppressed)
         Window("Model Editor", id: "model") {
-            ModelEditorView().environmentObject(app)
+            ModelEditorView().id(app.themeToken).environmentObject(app)
         }
         .defaultSize(width: 980, height: 620)
         .defaultLaunchBehavior(.suppressed)

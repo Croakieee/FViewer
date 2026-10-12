@@ -395,10 +395,9 @@ struct SettingsView: View {
                 CheckBox(isOn: Theme.light, label: "Light theme") { on in
                     UserDefaults.standard.set(on, forKey: "theme.light")
                     refresh += 1
-                    app.objectWillChange.send()
+                    app.themeToken += 1
                     app.document?.liveChanged()
                 }
-                HelpBadge(text: "Windows that are already open pick the theme up fully after they are reopened.")
             }
             row("Game folder") {
                 Text(app.gameRoot?.path ?? "not set").font(Theme.font).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.head)

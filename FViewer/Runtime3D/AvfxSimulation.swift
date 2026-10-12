@@ -8,6 +8,16 @@ struct CameraState {
     var viewportHeight: Float
 }
 
+struct ScreenEffect {
+    var kind: Int
+    var position: Vec3
+    var strength: Float
+    var length: Float
+    var inner: Float
+    var outer: Float
+    var angle: Float
+}
+
 struct LightDraw {
     var position: Vec3
     var color: Vec3
@@ -716,6 +726,52 @@ final class AvfxSimulation {
         }
     }
 
+    private func effectorTime(_ effector: REffector, _ start: Float) -> Float {
+        var age = start
+        if !released, PreviewRules.isOn("loopEffectors"), effector.loopEnd > effector.loopStart, effector.loopStart >= 0, age >= Float(effector.loopEnd) {
+            let span = Float(effector.loopEnd - effector.loopStart)
+            age = Float(effector.loopStart) + (age - Float(effector.loopStart)).truncatingRemainder(dividingBy: span)
+        }
+        return age
+    }
+
+    func screenEffects(camera: Vec3, filter: VisibilityFilter = VisibilityFilter()) -> (effects: [ScreenEffect], quake: Float, phase: Float) {
+        var effects: [ScreenEffect] = []
+        var quake: Float = 0, phase: Float = 0
+        for e in emitters where e.schema.index < schema.emitterEffectors.count {
+            let index = schema.emitterEffectors[e.schema.index]
+            guard index >= 0, index < schema.effectors.count else { continue }
+            if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
+            let effector = schema.effectors[index]
+            let age = effectorTime(effector, e.age)
+            let t = CurveTime(age)
+            let origin = Math3D.point(e.world, Vec3(0, 0, 0))
+            let distance = simd_length(camera - origin)
+            switch effector.type {
+            case 3, 4, 5, 7:
+                guard PreviewRules.isOn("postEffects") else { continue }
+                var strength = Eval.curve(effector.strength, t, 1) * fade
+                if effector.fadeEnd > effector.fadeStart { strength *= 1 - min(max((distance - effector.fadeStart) / (effector.fadeEnd - effector.fadeStart), 0), 1) }
+                guard strength > 0.001 else { continue }
+                effects.append(ScreenEffect(kind: effector.type, position: origin, strength: strength, length: Eval.curve(effector.length, t, 0.1),
+                                            inner: Eval.curve(effector.inner, t, 0), outer: Eval.curve(effector.outer, t, 0), angle: Eval.curve(effector.angle, t, 0)))
+            case 6, 9:
+                guard PreviewRules.isOn("cameraQuake") else { continue }
+                let position = Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1))
+                let reach = simd_length(camera - position)
+                let near = Eval.curve(effector.quakeIn, t, 0), far = Eval.curve(effector.quakeOut, t, 0)
+                var amount = abs(Eval.curve(effector.quake, t, 0)) * fade
+                if far > near { amount *= 1 - min(max((reach - near) / (far - near), 0), 1) } else if far > 0, reach > far { amount = 0 }
+                if amount > quake {
+                    quake = amount
+                    phase = e.age
+                }
+            default: continue
+            }
+        }
+        return (effects, quake, phase)
+    }
+
     func lights(filter: VisibilityFilter = VisibilityFilter()) -> [LightDraw] {
         var result: [LightDraw] = []
         guard PreviewRules.isOn("lights") else { return result }
@@ -724,12 +780,7 @@ final class AvfxSimulation {
             guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 0 else { continue }
             if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
             let effector = schema.effectors[index]
-            var age = e.age
-            if !released, effector.loopEnd > effector.loopStart, effector.loopStart >= 0, age >= Float(effector.loopEnd) {
-                let span = Float(effector.loopEnd - effector.loopStart)
-                age = Float(effector.loopStart) + (age - Float(effector.loopStart)).truncatingRemainder(dividingBy: span)
-            }
-            let t = CurveTime(age)
+            let t = CurveTime(effectorTime(effector, e.age))
             let color = Eval.color(effector.color, t, e.seed)
             let peak = max(color.x, color.y, color.z, 1e-6)
             let strength = peak * max(0, color.w) * fade

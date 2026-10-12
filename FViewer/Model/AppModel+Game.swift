@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 extension AppModel {
     static let gameBookmarkKey = "gameBookmark"
@@ -315,13 +316,21 @@ extension AppModel {
 
     func exportScdStream(_ file: GameFileDocument, _ audio: ScdAudio) {
         let wave = GameFiles.scdWave(file.bytes, audio)
-        let data = wave ?? GameFiles.scdStream(file.bytes, audio)
+        let data = wave ?? GameFiles.scdOgg(file.bytes, audio) ?? GameFiles.scdStream(file.bytes, audio)
         guard !data.isEmpty else { return }
         let panel = NSSavePanel()
         panel.title = "Export Sound"
         panel.nameFieldStringValue = file.url.deletingPathExtension().lastPathComponent + "_\(audio.id)." + (wave != nil ? "wav" : audio.format == 0x06 ? "ogg" : "bin")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         try? Data(data).write(to: url, options: .atomic)
+    }
+
+    func replaceScdSound(_ file: GameFileDocument, _ audio: ScdAudio) {
+        let panel = NSOpenPanel()
+        panel.title = "Replace Sound"
+        panel.allowedContentTypes = [.audio]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        file.replaceAudio(audio, from: url)
     }
 
     func locateGameFile(_ gamePath: String) -> URL? {
@@ -333,6 +342,21 @@ extension AppModel {
         for start in 0..<parts.count { candidates.append(parts[start...].reduce(root) { $0.appendingPathComponent($1) }) }
         candidates.append(parts.reduce(root.deletingLastPathComponent()) { $0.appendingPathComponent($1) })
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    func openCatalogPath(_ gamePath: String) {
+        guard let url = locateGameFile(gamePath) else {
+            catalogNote = "Not found in the open folder" + (game == nil ? "; no game folder is set" : " or the game archives")
+            return
+        }
+        catalogNote = nil
+        showCatalog = false
+        if gamePath.hasSuffix(".avfx") {
+            open(url)
+            if let document, document.url == url, document.gamePath.isEmpty { document.gamePath = PenumbraExport.normalized(gamePath) }
+        } else {
+            inspectGameFile(url)
+        }
     }
 
     func openEffect(gamePath: String) {

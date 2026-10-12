@@ -66,5 +66,61 @@ fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u
     }
     return color;
 }
+
+struct PostOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+struct PostUniforms {
+    float4 center[4];
+    float4 shape[4];
+    float4 count;
+};
+
+vertex PostOut postVertex(uint id [[vertex_id]]) {
+    PostOut out;
+    float2 p = float2(float((id << 1) & 2), float(id & 2));
+    out.position = float4(p * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = float2(p.x, 1.0 - p.y);
+    return out;
+}
+
+fragment float4 postFragment(PostOut in [[stage_in]], constant PostUniforms &u [[buffer(0)]],
+                             texture2d<float> map [[texture(0)]], sampler mapSampler [[sampler(0)]]) {
+    float3 color = map.sample(mapSampler, in.uv).rgb;
+    float aspect = u.count.y;
+    for (int i = 0; i < int(u.count.x); i++) {
+        float2 center = u.center[i].xy;
+        int kind = int(u.center[i].z + 0.5);
+        float strength = clamp(u.center[i].w, 0.0, 1.0);
+        float reach = u.shape[i].x;
+        float2 away = in.uv - center;
+        float distance = length(away * float2(aspect, 1.0));
+        float inner = u.shape[i].y, outer = u.shape[i].z;
+        float weight = outer > inner ? smoothstep(inner, outer, distance) : 1.0;
+        float3 sum = float3(0.0);
+        if (kind == 7) {
+            for (int k = 0; k < 16; k++) sum += map.sample(mapSampler, in.uv - away * reach * weight * (float(k) / 15.0)).rgb;
+            color = mix(color, sum / 16.0, strength);
+        } else if (kind == 5) {
+            float2 direction = float2(cos(u.shape[i].w), sin(u.shape[i].w)) * float2(1.0 / aspect, 1.0) * reach;
+            for (int k = 0; k < 16; k++) sum += map.sample(mapSampler, in.uv + direction * (float(k) / 15.0 - 0.5)).rgb;
+            color = mix(color, sum / 16.0, strength);
+        } else if (kind == 4) {
+            for (int k = 0; k < 16; k++) {
+                float turn = float(k) * 2.39996;
+                float2 offset = float2(cos(turn), sin(turn)) * sqrt((float(k) + 0.5) / 16.0) * reach * float2(1.0 / aspect, 1.0);
+                sum += map.sample(mapSampler, in.uv + offset * weight).rgb;
+            }
+            color = mix(color, sum / 16.0, strength);
+        } else if (kind == 3) {
+            float2 shift = away * reach * weight * strength;
+            color.r = map.sample(mapSampler, in.uv - shift).r;
+            color.b = map.sample(mapSampler, in.uv + shift).b;
+        }
+    }
+    return float4(color, 1.0);
+}
 """
 }

@@ -400,10 +400,19 @@ struct SimpleGridPanel: View {
         return result
     }
 
+    @State private var cell: Int?
+
+    private func cellNote(_ index: Int, count: Int) -> String {
+        let interval = max(1, simple.int("UvIv", 1))
+        if simple.int("UvNR") != 0 { return "Cell \(index) · picked at random, held \(interval) fr" }
+        return "Cell \(index) · frames \(index * interval)–\((index + 1) * interval - 1) of each \(count * interval)"
+    }
+
     var body: some View {
         let u = max(1, simple.int("UvCU", 1)), v = max(1, simple.int("UvCV", 1))
         let list = stops
-        Panel(title: "Sprite Sheet", trailing: "\(u) × \(v)") {
+        Panel(title: "Sprite Sheet", trailing: cell.flatMap { $0 < u * v ? cellNote($0, count: u * v) : nil } ?? "\(u) × \(v)") {
+            GeometryReader { area in
             ZStack {
                 CheckerBackground()
                 if let path = texturePath, let image = app.image(for: path) {
@@ -422,6 +431,12 @@ struct SimpleGridPanel: View {
                         grid.addLine(to: CGPoint(x: size.width, y: y))
                     }
                     context.stroke(grid, with: .color(Theme.changed.opacity(0.9)), lineWidth: 1)
+                    if let cell, cell < u * v {
+                        let box = CGRect(x: size.width * CGFloat(cell % u) / CGFloat(u), y: size.height * CGFloat(cell / u) / CGFloat(v),
+                                         width: size.width / CGFloat(u), height: size.height / CGFloat(v))
+                        context.fill(Path(box), with: .color(Theme.selection.opacity(0.35)))
+                        context.stroke(Path(box.insetBy(dx: 1, dy: 1)), with: .color(.white), lineWidth: 2)
+                    }
                     if u * v <= 64 {
                         for cell in 0..<(u * v) {
                             let at = CGPoint(x: size.width * (CGFloat(cell % u) + 0.08) / CGFloat(u) + 6, y: size.height * (CGFloat(cell / u) + 0.08) / CGFloat(v) + 6)
@@ -429,6 +444,14 @@ struct SimpleGridPanel: View {
                         }
                     }
                 }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { point in
+                let column = min(u - 1, max(0, Int(point.x / max(area.size.width, 1) * CGFloat(u))))
+                let line = min(v - 1, max(0, Int(point.y / max(area.size.height, 1) * CGFloat(v))))
+                let picked = line * u + column
+                cell = cell == picked ? nil : picked
+            }
             }
             .aspectRatio(1, contentMode: .fit)
             .frame(maxHeight: 220)
@@ -450,7 +473,7 @@ struct SimpleGridPanel: View {
             }
             HStack {
                 Spacer()
-                HelpBadge(text: "The first colour texture cut into UV Cell U × UV Cell V cells, numbered in the order sprites take them. Below: the four sprite colours and the frame each one is reached at.")
+                HelpBadge(text: "The first colour texture cut into UV Cell U × UV Cell V cells, numbered in the order sprites take them. Click a cell to see when a sprite shows it. Below: the four sprite colours and the frame each one is reached at.")
             }
         }
     }

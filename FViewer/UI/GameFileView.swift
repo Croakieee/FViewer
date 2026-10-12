@@ -20,6 +20,13 @@ final class GameFileDocument: ObservableObject {
         kind = GameFiles.kind(of: url, bytes: data)
     }
 
+    init(url: URL, bytes: [UInt8], kind: GameFileKind) {
+        self.url = url
+        self.kind = kind
+        original = bytes
+        self.bytes = bytes
+    }
+
     var dirty: Bool { bytes != original }
     var tmbBlocks: [TmbBlock] { GameFiles.tmbBlocks(bytes) }
 
@@ -62,6 +69,48 @@ final class GameFileDocument: ObservableObject {
     }
 
     func stop() { player?.stop() }
+
+    private var peakCache: [String: [Float]] = [:]
+
+    func peaks(_ audio: ScdAudio, buckets: Int = 240) -> [Float] {
+        let key = "\(audio.id).\(audio.offset).\(audio.dataLength).\(bytes.count)"
+        if let cached = peakCache[key] { return cached }
+        let samples = GameFiles.scdSamples(bytes, audio)
+        var result = [Float](repeating: 0, count: samples.isEmpty ? 0 : buckets)
+        if !samples.isEmpty {
+            let step = max(1, samples.count / buckets)
+            for bucket in 0..<buckets {
+                var top: Int16 = 0
+                var index = bucket * step
+                let end = min(samples.count, index + step)
+                while index < end {
+                    let value = samples[index] == Int16.min ? Int16.max : abs(samples[index])
+                    if value > top { top = value }
+                    index += max(1, step / 64)
+                }
+                result[bucket] = Float(top) / 32767
+            }
+        }
+        peakCache[key] = result
+        return result
+    }
+
+    func replaceAudio(_ audio: ScdAudio, from source: URL) {
+        do {
+            let sound = try GameFiles.pcm(from: source)
+            let aux = GameFiles.scdAux(bytes, audio)
+            let auxBytes = aux > 0 ? Array(bytes[(audio.offset + 0x20)..<(audio.offset + 0x20 + aux)]) : []
+            let entry = GameFiles.scdEntry(samples: sound.samples, channels: sound.channels, rate: sound.rate, flags: bytes.u32(audio.offset + 28), aux: auxBytes)
+            guard let next = GameFiles.scdReplacing(bytes, index: audio.id, entry: entry) else {
+                note = "This file keeps its sounds in an order this app cannot rebuild"
+                return
+            }
+            bytes = next
+            note = nil
+        } catch {
+            note = error.localizedDescription
+        }
+    }
 }
 
 struct GameFileView: View {
@@ -321,6 +370,34 @@ private struct TmbView: View {
                     HelpBadge(text: "A new entry of the chosen kind is added to the end of this track with the values the plugin gives a fresh entry.")
                 }
             }
+            if let block, let kind = TmbCatalog.childKind(item.magic) {
+                HStack(spacing: 6) {
+                    SegmentButton(title: kind == "TMAC" ? "Add Actor" : "Add Track", active: false) {
+                        if let problem = TmbCatalog.canRestructure(b, block) {
+                            file.note = problem
+                        } else if let next = TmbCatalog.createContainer(b, block: block, parent: item.id) {
+                            file.bytes = next
+                            file.note = nil
+                        }
+                    }
+                    Spacer()
+                    HelpBadge(text: kind == "TMAC" ? "A new empty actor is added to this list. Give it tracks with Add Track." : "A new empty track is added to this actor. Give it entries with Add Entry.")
+                }
+            }
+            if let block, TmbCatalog.isEmptyContainer(b, item) {
+                HStack(spacing: 6) {
+                    SegmentButton(title: item.magic == "TMAC" ? "Delete Actor" : "Delete Track", active: false) {
+                        if let problem = TmbCatalog.canRestructure(b, block) {
+                            file.note = problem
+                        } else if let next = TmbCatalog.remove(b, block: block, index: item.id) {
+                            file.bytes = next
+                            file.selection = max(0, item.id - 1)
+                            file.note = nil
+                        }
+                    }
+                    Spacer()
+                }
+            }
             if item.magic != "TMAL", item.magic != "TMPP" {
                 row("Id") { Text("\(item.itemID)").font(Theme.font).foregroundStyle(Theme.dim) }
             }
@@ -434,14 +511,40 @@ private struct ScdView: View {
                             Spacer(minLength: 4)
                             HeaderButton(symbol: "play.fill", help: "Play") { file.play(audio) }
                             HeaderButton(symbol: "stop.fill", help: "Stop") { file.stop() }
-                            HeaderButton(symbol: "square.and.arrow.up", help: "Export the stream") { app.exportScdStream(file, audio) }
+                            HeaderButton(symbol: "square.and.arrow.up", help: "Export the sound") { app.exportScdStream(file, audio) }
+                            HeaderButton(symbol: "square.and.arrow.down", help: "Replace with a sound file") { app.replaceScdSound(file, audio) }
                         }
+                        WaveStrip(peaks: file.peaks(audio))
+                    }
+                    HStack {
+                        Spacer()
+                        HelpBadge(text: "Replace takes a .wav, .aiff, .m4a or .mp3 file and stores it as MS ADPCM with the same channel count and sample rate as the source. Vorbis sounds can be exported as .ogg but are not played here.")
                     }
                     if list.isEmpty { Text("No audio entries").font(Theme.font).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading) }
                 }
             }
             .padding(.vertical, 8)
         }
+    }
+}
+
+private struct WaveStrip: View {
+    let peaks: [Float]
+
+    var body: some View {
+        Canvas { context, size in
+            guard !peaks.isEmpty else { return }
+            let width = size.width / CGFloat(peaks.count)
+            var path = Path()
+            for (index, peak) in peaks.enumerated() {
+                let height = max(1, CGFloat(peak) * size.height)
+                path.addRect(CGRect(x: CGFloat(index) * width, y: (size.height - height) / 2, width: max(1, width - 0.5), height: height))
+            }
+            context.fill(path, with: .color(Theme.selection))
+        }
+        .frame(height: peaks.isEmpty ? 0 : 26)
+        .background(peaks.isEmpty ? Color.clear : Theme.field.opacity(0.35))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 }
 

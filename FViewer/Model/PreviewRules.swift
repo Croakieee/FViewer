@@ -17,6 +17,11 @@ enum PreviewRules {
         ("axisConnectRandom", "Separate random axis link", "Random offsets of X, Y and Z follow their own Axis Connect Random setting."),
         ("tc1Luminance", "First layer as luminance", "A first colour layer with Multiply is read as brightness, not as colour."),
         ("softDepthOffset", "Soft fade after depth offset", "The soft particle fade is measured from the depth the particle is drawn at."),
+        ("postEffects", "Screen effectors", "Radial, directional and Gaussian blur and chromatic aberration effectors change the whole picture."),
+        ("cameraQuake", "Camera quake", "Camera Quake effectors shake the view while they are in reach."),
+        ("emitterMarkers", "Emitter shapes", "The selected emitter shows its shape and its create points."),
+        ("bindPointNumbers", "Bind point numbers", "Bind points of the loaded skeleton show their numbers."),
+        ("loopEffectors", "Effector loop", "Effectors repeat between Loop Start and Loop End until the effect is released."),
     ]
 
     private static var cache: [String: Bool] = [:]

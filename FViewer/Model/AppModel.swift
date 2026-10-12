@@ -23,6 +23,9 @@ final class AppModel: ObservableObject {
     @Published var showBindPoints = true
     @Published var showFloor = false
     @Published var showGizmo = true
+    @Published var themeToken = 0
+    @Published var showCatalog = false
+    @Published var catalogNote: String?
     @Published var viewportBackground = 0
     @Published var highlightSelection = true
     @Published var gameRoot: URL?
