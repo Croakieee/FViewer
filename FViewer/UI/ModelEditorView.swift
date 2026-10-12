@@ -14,7 +14,7 @@ struct ModelEditorView: View {
         }
         .frame(minWidth: 760, minHeight: 460)
         .background(Theme.panel)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
     }
 }
 
@@ -116,7 +116,7 @@ private struct ModelEditorContent: View {
             let side = fitted / extent
             let origin = CGPoint(x: (size.width - fitted) / 2 - CGFloat(low) * side, y: (size.height - fitted) / 2 - CGFloat(low) * side)
             let frame = CGRect(x: origin.x, y: origin.y, width: side, height: side)
-            context.fill(Path(frame), with: .color(Color(white: 0.12)))
+            context.fill(Path(frame), with: .color(Theme.gray(0.12)))
             for step in 1..<4 {
                 let offset = side * CGFloat(step) / 4
                 var line = Path()

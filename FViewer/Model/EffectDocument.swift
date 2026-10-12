@@ -29,11 +29,15 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published var gamePath = "" {
         didSet { if gamePath != oldValue, metaLoaded { saveMeta() } }
     }
+    @Published var sourcePath = "" {
+        didSet { if sourcePath != oldValue, metaLoaded { saveMeta() } }
+    }
     private var metaLoaded = false
 
     private struct Meta: Codable {
         var names: [String: String] = [:]
         var gamePath: String = ""
+        var sourcePath: String? = nil
     }
 
     private var metaURL: URL { url.deletingPathExtension().appendingPathExtension("fvmeta.json") }
@@ -42,14 +46,15 @@ final class EffectDocument: ObservableObject, Identifiable {
         if let data = try? Data(contentsOf: metaURL), let decoded = try? JSONDecoder().decode(Meta.self, from: data) {
             names = decoded.names
             gamePath = decoded.gamePath
+            sourcePath = decoded.sourcePath ?? ""
         }
         metaLoaded = true
     }
 
     func saveMeta() {
-        if names.isEmpty && gamePath.isEmpty {
+        if names.isEmpty && gamePath.isEmpty && sourcePath.isEmpty {
             try? FileManager.default.removeItem(at: metaURL)
-        } else if let data = try? JSONEncoder().encode(Meta(names: names, gamePath: gamePath)) {
+        } else if let data = try? JSONEncoder().encode(Meta(names: names, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath)) {
             try? data.write(to: metaURL, options: .atomic)
         }
     }
@@ -114,6 +119,10 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     private(set) var original: EffectDocument?
     @Published var showOriginal = false
+    @Published var plane = SIMD3<Double>(0, 0, 0)
+    @Published var paramOverrides: [String: Double] = [:]
+    @Published private(set) var undoTitles: [String] = []
+    @Published private(set) var redoTitles: [String] = []
     var originalFields: [String: [String: FieldValue]] = [:]
     private var changeCache: (revision: Int, set: ChangeSet)?
 
@@ -235,6 +244,16 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     private func pushUndo(_ title: String, from: Snapshot, to: Snapshot) {
         let grouped = !undoManager.isUndoing && !undoManager.isRedoing
+        if undoManager.isUndoing {
+            if !undoTitles.isEmpty { undoTitles.removeLast() }
+            redoTitles.append(title)
+        } else if undoManager.isRedoing {
+            if !redoTitles.isEmpty { redoTitles.removeLast() }
+            undoTitles.append(title)
+        } else {
+            undoTitles.append(title)
+            redoTitles = []
+        }
         if grouped { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { document in
             document.restore(from)
@@ -274,6 +293,18 @@ final class EffectDocument: ObservableObject, Identifiable {
     func redo() {
         guard undoManager.canRedo else { return }
         undoManager.redo()
+    }
+
+    func jumpHistory(to count: Int) {
+        var guardCount = 0
+        while undoTitles.count > count, undoManager.canUndo, guardCount < 2000 {
+            guardCount += 1
+            undoManager.undo()
+        }
+        while undoTitles.count < count, undoManager.canRedo, guardCount < 2000 {
+            guardCount += 1
+            undoManager.redo()
+        }
     }
 
     func sections(for node: OutlineNode) -> [PropSection] {
@@ -356,7 +387,9 @@ final class EffectDocument: ObservableObject, Identifiable {
         return names
     }
 
-    static let channelColors: [Color] = [
+    static var channelColors: [Color] { PreviewRules.curveColors() ?? defaultChannelColors }
+
+    static let defaultChannelColors: [Color] = [
         Color(red: 0.93, green: 0.33, blue: 0.31), Color(red: 0.47, green: 0.80, blue: 0.33), Color(red: 0.31, green: 0.56, blue: 0.95),
         Color(red: 0.93, green: 0.72, blue: 0.27), Color(red: 0.72, green: 0.48, blue: 0.90), Color(red: 0.36, green: 0.82, blue: 0.82),
         Color(red: 0.92, green: 0.52, blue: 0.75), Color(red: 0.75, green: 0.75, blue: 0.75),

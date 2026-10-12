@@ -285,7 +285,7 @@ struct TextureEditorView: View {
         }
         .frame(minWidth: 860, minHeight: 540)
         .background(Theme.window)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
         .onAppear { reload() }
         .onChange(of: app.textureEditorTarget) { _, _ in reload() }
     }
@@ -317,7 +317,7 @@ struct TextureEditorView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
-        .background(Color(white: 0.094))
+        .background(Theme.gray(0.094))
     }
 
     private var fileMenu: some View {
@@ -420,7 +420,7 @@ struct TextureEditorView: View {
         GeometryReader { geometry in
             let size = geometry.size
             surface(size)
-                .background(Color(white: 0.2))
+                .background(Theme.gray(0.2))
             .background(ScrollMonitor(
                 onScroll: { delta, flags, point in
                     if flags.contains(.command) {
@@ -593,7 +593,7 @@ struct TextureEditorView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 20)
-        .background(Color(white: 0.094))
+        .background(Theme.gray(0.094))
     }
 
     private func applyToEffect() {

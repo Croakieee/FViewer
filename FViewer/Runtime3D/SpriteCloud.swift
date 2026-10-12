@@ -20,7 +20,7 @@ final class SpriteCloud {
         var world = false
     }
 
-    private static let flatteryScale: Float = 12.5
+    private static var flatteryScale: Float { PreviewRules.isOn("spriteDamping") ? 12.5 : 0 }
     private static let lineWidth: Float = 0.012
 
     let anim: RSimple

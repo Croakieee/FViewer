@@ -52,6 +52,7 @@ struct ViewportScene {
     var showEmitters = false
     var showBindPoints = false
     var showFloor = false
+    var showGizmo = true
     var filter = VisibilityFilter()
     var highlight: VisibilityKey?
     var texture: CGImage?
@@ -97,11 +98,20 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var effectShading = 0
     private var showEmitters = false
     private var showBindPoints = false
-    private var filter = VisibilityFilter()
+    var filter = VisibilityFilter()
     private var highlight: VisibilityKey?
     private var highlightDraws: [ParticleDraw] = []
     private var particleRenderer: ParticleRenderer?
-    private var player: AvfxPlayer?
+    var player: AvfxPlayer?
+    let gizmo = GizmoState()
+    static weak var main: ViewportRenderer?
+    var captureRequest: ((CGImage) -> Void)?
+    private var rulesToken = -1
+    var lastDraws: [ParticleDraw] = []
+    var lastViewProjection = matrix_identity_float4x4
+    var lastViewSize = CGSize(width: 1, height: 1)
+    var showGizmo = true
+    private var alwaysDepthState: MTLDepthStencilState?
     private var effectTextures: [String: LoadedTexture] = [:]
     private var texturePaths: [String] = []
     private var libraryToken = -1
@@ -120,6 +130,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         self.camera = camera
         super.init()
         build()
+        if ViewportRenderer.main == nil { ViewportRenderer.main = self }
     }
 
     private func build() {
@@ -156,6 +167,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         overlay.depthCompareFunction = .lessEqual
         overlay.isDepthWriteEnabled = false
         overlayDepthState = device.makeDepthStencilState(descriptor: overlay)
+        let always = MTLDepthStencilDescriptor()
+        always.depthCompareFunction = .always
+        always.isDepthWriteEnabled = false
+        alwaysDepthState = device.makeDepthStencilState(descriptor: always)
 
         let samplerDescriptor = MTLSamplerDescriptor()
         samplerDescriptor.minFilter = .linear
@@ -210,6 +225,26 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                     lines.append((point + axis, color))
                 }
             }
+            let used = Set(simulation.schema.binders.compactMap { $0.bindTargetPoint == 3 ? $0.bindPointId : nil })
+            let forward = simd_normalize(camera.eye - camera.target)
+            let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
+            let up = simd_cross(forward, right)
+            let glyph = max(0.012, simd_distance(camera.eye, camera.target) * 0.004)
+            for (id, point) in AvfxSimulation.bindPoints {
+                let tint: SIMD4<Float> = used.contains(id) ? SIMD4(1, 0.63, 0.16, 1) : SIMD4(1, 1, 1, 0.3)
+                if !used.contains(id) {
+                    lines.append((point - right * glyph * 0.6, tint))
+                    lines.append((point + right * glyph * 0.6, tint))
+                }
+                var cursor = point + right * glyph * 1.6 + up * glyph
+                for digit in String(id) {
+                    for segment in ViewportRenderer.digitSegments[Int(String(digit)) ?? 0] {
+                        lines.append((cursor + right * segment.0.x * glyph + up * segment.0.y * glyph, tint))
+                        lines.append((cursor + right * segment.1.x * glyph + up * segment.1.y * glyph, tint))
+                    }
+                    cursor += right * glyph * 1.5
+                }
+            }
             let body = SIMD4<Float>(1, 1, 1, 0.35)
             let figure: [(SIMD3<Float>, SIMD3<Float>)] = [
                 (SIMD3(0, 0, 0), SIMD3(0, 1.45, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(0.2, 1.42, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(-0.33, 0.78, 0)),
@@ -240,13 +275,15 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if player?.document !== document { player = AvfxPlayer(document: document) }
         guard let player else { return nil }
         let token = app?.libraryToken ?? 0
-        if player.schemaChanged || token != libraryToken {
+        if player.schemaChanged || token != libraryToken || rulesToken != PreviewRules.token {
+            rulesToken = PreviewRules.token
             if token != libraryToken { effectTextures = [:] }
             libraryToken = token
             texturePaths = document.textureSlots.map(\.path)
             particleRenderer?.reset()
         }
         let draws = player.frame(elapsed: elapsed, camera: state, filter: filter)
+        lastDraws = draws
         highlightDraws = []
         if let highlight, filter.isolated == nil, effectShading == 0, let simulation = player.simulation {
             highlightDraws = simulation.render(camera: state, filter: VisibilityFilter(hidden: filter.hidden, isolated: highlight))
@@ -254,7 +291,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         return (draws, player.simulation?.schema.particles ?? [])
     }
 
-    private func lineItem(_ points: [(SIMD3<Float>, SIMD4<Float>)]) -> DrawItem? {
+    fileprivate func lineItem(_ points: [(SIMD3<Float>, SIMD4<Float>)]) -> DrawItem? {
         let vertices = points.map { MeshVertex(position: $0.0, normal: SIMD3(0, 1, 0), color: $0.1, uv: .zero) }
         guard !vertices.isEmpty,
               let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<MeshVertex>.stride * vertices.count) else { return nil }
@@ -321,6 +358,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         showEmitters = scene.showEmitters
         showBindPoints = scene.showBindPoints
         showFloor = scene.showFloor
+        showGizmo = scene.showGizmo
         filter = scene.filter
         highlight = scene.highlight
         guard scene.revision != sceneRevision else { return }
@@ -388,10 +426,64 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    static let digitSegments: [[(SIMD2<Float>, SIMD2<Float>)]] = {
+        let a = (SIMD2<Float>(0, 2), SIMD2<Float>(1, 2)), b = (SIMD2<Float>(1, 2), SIMD2<Float>(1, 1)), c = (SIMD2<Float>(1, 1), SIMD2<Float>(1, 0))
+        let d = (SIMD2<Float>(0, 0), SIMD2<Float>(1, 0)), e = (SIMD2<Float>(0, 1), SIMD2<Float>(0, 0)), f = (SIMD2<Float>(0, 2), SIMD2<Float>(0, 1))
+        let g = (SIMD2<Float>(0, 1), SIMD2<Float>(1, 1))
+        return [[a, b, c, d, e, f], [b, c], [a, b, g, e, d], [a, b, g, c, d], [f, g, b, c], [a, f, g, c, d], [a, f, g, e, c, d], [a, b, c], [a, b, c, d, e, f, g],
+                [a, b, c, d, f, g]]
+    }()
+
+    private func gizmoItems() -> [DrawItem] {
+        guard showGizmo, let simulation = player?.simulation else {
+            gizmo.handles = []
+            return []
+        }
+        updateGizmo(simulation)
+        var lines: [(SIMD3<Float>, SIMD4<Float>)] = []
+        var tips: [MeshVertex] = []
+        for handle in gizmo.handles {
+            let hot = gizmo.active?.index == handle.index
+            let color = hot ? SIMD4<Float>(1, 1, 1, 1) : handle.color
+            for i in 1..<handle.points.count {
+                lines.append((handle.points[i - 1], color))
+                lines.append((handle.points[i], color))
+            }
+            if handle.kind != 1, let tip = handle.points.last, handle.kind != 3 || true { tips.append(MeshVertex(position: tip, normal: .zero, color: color, uv: .zero)) }
+        }
+        var result: [DrawItem] = []
+        if let item = lineItem(lines) { result.append(item) }
+        if !tips.isEmpty, let buffer = device.makeBuffer(bytes: tips, length: MemoryLayout<MeshVertex>.stride * tips.count) {
+            result.append(DrawItem(vertices: buffer, indices: nil, count: tips.count, primitive: .point, tint: SIMD4(1, 1, 1, 1), lit: false,
+                                   textured: false, wire: false, pointSize: 11))
+        }
+        return result
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func pick(at point: CGPoint, in size: CGSize) {
         guard showEffect, size.width > 1, size.height > 1, let document, document.format == .avfx, let simulation = player?.simulation else { return }
+        if showBindPoints, let selected = document.selectionID, selected.hasPrefix("avfx/Bind/"), let node = document.node(selected) {
+            var best: (id: Int, distance: CGFloat)?
+            for (id, world) in AvfxSimulation.bindPoints {
+                let clip = lastViewProjection * SIMD4<Float>(world.x, world.y, world.z, 1)
+                guard clip.w > 1e-5 else { continue }
+                let screen = CGPoint(x: CGFloat((clip.x / clip.w) * 0.5 + 0.5) * size.width, y: CGFloat((clip.y / clip.w) * 0.5 + 0.5) * size.height)
+                let d = hypot(screen.x - point.x, screen.y - point.y)
+                if d < 12, d < (best?.distance ?? .infinity) { best = (id, d) }
+            }
+            if let best {
+                let holders = [node] + node.children
+                for holder in holders {
+                    if let field = document.sections(for: holder).flatMap(\.fields).first(where: { $0.tag == "BPID" }) {
+                        document.commit(field, from: field.read(), to: .int(best.id))
+                        AppDelegate.model?.notice = "Bind point \(best.id) set on \(holder.title)"
+                        return
+                    }
+                }
+            }
+        }
         let forward = simd_normalize(camera.eye - camera.target)
         let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
         let up = simd_cross(forward, right)
@@ -415,6 +507,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let projection = ViewportRenderer.perspective(fovY: 0.75, aspect: aspect, near: near, far: 2000)
         let viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
         let viewProjection = projection * viewMatrix
+        lastViewProjection = viewProjection
+        lastViewSize = view.bounds.size
         let now = CACurrentMediaTime()
         let elapsed = now - lastFrame
         lastFrame = now
@@ -510,8 +604,34 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 encoder.setFragmentTexture(white, index: 0)
                 encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
             }
+            for item in gizmoItems() {
+                var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
+                                        options: SIMD4(0, 0, item.pointSize, 0))
+                encoder.setDepthStencilState(alwaysDepthState ?? overlayDepthState)
+                encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
+                encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentTexture(white, index: 0)
+                encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
+            }
         }
         encoder.endEncoding()
+        if let request = captureRequest, effect != nil {
+            captureRequest = nil
+            let texture = drawable.texture
+            buffer.addCompletedHandler { _ in
+                let w = texture.width, h = texture.height
+                guard w > 0, h > 0, !texture.isFramebufferOnly else { return }
+                var bytes = [UInt8](repeating: 0, count: w * h * 4)
+                texture.getBytes(&bytes, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+                for i in stride(from: 0, to: bytes.count, by: 4) { bytes.swapAt(i, i + 2) }
+                guard let provider = CGDataProvider(data: Data(bytes) as CFData),
+                      let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider, decode: nil,
+                                          shouldInterpolate: true, intent: .defaultIntent) else { return }
+                DispatchQueue.main.async { request(image) }
+            }
+        }
         buffer.present(drawable)
         buffer.commit()
     }
@@ -540,19 +660,31 @@ final class ViewportMTKView: MTKView {
 
     private var pressPoint: NSPoint?
 
+    private var draggingGizmo = false
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         pressPoint = event.locationInWindow
+        draggingGizmo = (delegate as? ViewportRenderer)?.gizmoBegin(at: convert(event.locationInWindow, from: nil)) ?? false
     }
 
     override func mouseUp(with event: NSEvent) {
         defer { pressPoint = nil }
+        if draggingGizmo {
+            draggingGizmo = false
+            (delegate as? ViewportRenderer)?.gizmoEnd()
+            return
+        }
         guard let pressPoint, hypot(event.locationInWindow.x - pressPoint.x, event.locationInWindow.y - pressPoint.y) < 3 else { return }
         let point = convert(event.locationInWindow, from: nil)
         (delegate as? ViewportRenderer)?.pick(at: point, in: bounds.size)
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if draggingGizmo {
+            (delegate as? ViewportRenderer)?.gizmoMove(to: convert(event.locationInWindow, from: nil))
+            return
+        }
         if event.modifierFlags.contains(.shift) {
             camera?.pan(dx: Float(event.deltaX), dy: Float(event.deltaY))
         } else if event.modifierFlags.contains(.control) || event.modifierFlags.contains(.command) {

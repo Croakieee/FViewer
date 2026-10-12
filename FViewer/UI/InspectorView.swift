@@ -198,12 +198,21 @@ struct TexturePreview: View {
     @EnvironmentObject var app: AppModel
     let path: String
     var height: CGFloat = 150
+    @State private var mip = 0
+
+    private var mipImage: (image: CGImage, levels: Int, size: String)? {
+        guard let url = app.textureURL(path), url.pathExtension.lowercased() != "png", let data = try? Data(contentsOf: url),
+              let decoded = try? Atex.decode([UInt8](data), mip: mip), let image = decoded.makeImage() else { return nil }
+        return (image, decoded.mipLevels, "\(decoded.width)×\(decoded.height)")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ZStack {
                 CheckerBackground()
-                if let image = app.image(for: path) {
+                if mip > 0, let shown = mipImage {
+                    Image(decorative: shown.image, scale: 1).resizable().interpolation(.none).aspectRatio(contentMode: .fit)
+                } else if let image = app.image(for: path) {
                     Image(decorative: image, scale: 1).resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
                 } else {
                     Image(systemName: "photo").font(.system(size: 22)).foregroundStyle(Theme.dim)
@@ -211,6 +220,20 @@ struct TexturePreview: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            if let levels = app.decodedTexture(for: path)?.mipLevels, levels > 1 {
+                HStack(spacing: 4) {
+                    Text("Mip").font(Theme.small).foregroundStyle(Theme.dim)
+                    ForEach(0..<min(levels, 10), id: \.self) { level in
+                        Text("\(level)").font(Theme.small).foregroundStyle(mip == level ? .white : Theme.text)
+                            .frame(width: 18, height: 16)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(mip == level ? Theme.accent : Theme.field.opacity(0.5)))
+                            .contentShape(Rectangle())
+                            .onTapGesture { mip = level }
+                    }
+                    Spacer(minLength: 0)
+                    if mip > 0, let shown = mipImage { Text(shown.size).font(Theme.small).foregroundStyle(Theme.dim) }
+                }
+            }
             Text((path as NSString).lastPathComponent).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
             Text(app.textureDescription(path)).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(2)
         }
@@ -240,14 +263,15 @@ struct InspectorView: View {
                     tabButton(0, "wrench.adjustable", "Properties")
                     tabButton(1, "photo", "Textures")
                     tabButton(2, "info.circle", "Effect Info")
+                    tabButton(3, "clock.arrow.circlepath", "Undo History")
                     Spacer()
                 }
                 .padding(.top, 6)
                 .frame(width: 30)
-                .background(Color(white: 0.157))
+                .background(Theme.gray(0.157))
                 ScrollView {
                     VStack(spacing: 6) {
-                        if tab == 0 { properties } else if tab == 1 { textures } else { info }
+                        if tab == 0 { properties } else if tab == 1 { textures } else if tab == 2 { info } else { history }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
@@ -370,6 +394,9 @@ struct InspectorView: View {
                     ForEach(node.children) { child in contentRow(child) }
                 }
             }
+            if let text = document.jsonText(of: node) {
+                JSONTextPanel(document: document, node: node, original: text).id(node.id + "#\(document.revision)")
+            }
         }
     }
 
@@ -386,7 +413,7 @@ struct InspectorView: View {
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 6)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -495,7 +522,61 @@ struct InspectorView: View {
         }
     }
 
+    @ViewBuilder private var history: some View {
+        let done = document.undoTitles, undone = document.redoTitles
+        Panel(title: "Undo History", trailing: "\(done.count)") {
+            historyRow("Opened File", active: done.isEmpty, dim: false) { document.jumpHistory(to: 0) }
+            ForEach(Array(done.enumerated()), id: \.offset) { index, title in
+                historyRow(title, active: index == done.count - 1, dim: false) { document.jumpHistory(to: index + 1) }
+            }
+            ForEach(Array(undone.reversed().enumerated()), id: \.offset) { index, title in
+                historyRow(title, active: false, dim: true) { document.jumpHistory(to: done.count + index + 1) }
+            }
+        }
+    }
+
+    private func pathRow(_ label: String, _ value: String, _ change: @escaping (String) -> Void) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).frame(width: 78, alignment: .trailing)
+            TextValueField(value: value, action: change)
+            Menu {
+                ForEach(app.recentGamePaths, id: \.self) { path in Button(path) { change(path) } }
+            } label: {
+                Image(systemName: "clock").font(.system(size: 10)).foregroundStyle(Theme.text).frame(width: 22, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(app.recentGamePaths.isEmpty)
+        }
+    }
+
+    private func historyRow(_ title: String, active: Bool, dim: Bool, _ action: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: active ? "arrowtriangle.right.fill" : "circle.fill").font(.system(size: active ? 7 : 3)).foregroundStyle(active ? Theme.accent : Theme.dim)
+                .frame(width: 12)
+            Text(title).font(Theme.font).foregroundStyle(dim ? Theme.dim : Theme.text).lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.selection : Theme.field.opacity(0.3)))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
+    }
+
     @ViewBuilder private var info: some View {
+        if document.format == .avfx {
+            Panel(title: "Game Paths") {
+                pathRow("Loaded from", document.sourcePath) { document.sourcePath = PenumbraExport.normalized($0) }
+                pathRow("Replaces", document.gamePath) {
+                    document.gamePath = PenumbraExport.normalized($0)
+                    app.rememberGamePath($0)
+                }
+            }
+        }
         ForEach(Array(document.report.enumerated()), id: \.offset) { _, section in
             Panel(title: section.title) {
                 ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
@@ -571,5 +652,42 @@ struct RawBlockRow: View {
                 ForEach(Array(children.prefix(400).enumerated()), id: \.offset) { _, child in RawBlockRow(block: child, depth: depth + 1) }
             }
         }
+    }
+}
+
+struct JSONTextPanel: View {
+    @ObservedObject var document: EffectDocument
+    let node: OutlineNode
+    let original: String
+    @State private var text = ""
+    @State private var problem: String?
+
+    var body: some View {
+        Panel(title: "JSON") {
+            TextEditor(text: $text)
+                .font(.system(size: 11, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .foregroundStyle(Theme.text)
+                .frame(minHeight: 140, maxHeight: 320)
+                .padding(4)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
+            HStack(spacing: 6) {
+                if let problem { Text(problem).font(Theme.small).foregroundStyle(Color.orange).lineLimit(2) }
+                Spacer(minLength: 0)
+                SegmentButton(title: "Revert", active: false) {
+                    text = original
+                    problem = nil
+                }
+                SegmentButton(title: "Apply", active: text != original) {
+                    do {
+                        try document.applyJSON(text, to: node)
+                        problem = nil
+                    } catch {
+                        problem = "\(error)"
+                    }
+                }
+            }
+        }
+        .onAppear { text = original }
     }
 }

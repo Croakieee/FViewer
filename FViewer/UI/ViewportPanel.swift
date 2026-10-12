@@ -54,7 +54,7 @@ struct SoloButton: View {
         .foregroundStyle(Theme.text)
         .padding(.horizontal, 7)
         .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(document.soloPreview ? Theme.changed.opacity(0.75) : Color(white: 0.22)))
+        .background(RoundedRectangle(cornerRadius: 4).fill(document.soloPreview ? Theme.changed.opacity(0.75) : Theme.gray(0.22)))
         .contentShape(Rectangle())
         .onTapGesture { document.setSolo(!document.soloPreview) }
         .help("Play only the selected emitter or particle, looping over the frames where it is alive. Edits show up on the next loop")
@@ -75,6 +75,7 @@ struct ViewportPanel: View {
         scene.showEmitters = app.showEmitters
         scene.showBindPoints = app.showBindPoints
         scene.showFloor = app.showFloor
+        scene.showGizmo = app.showGizmo
         scene.filter = document.visibilityFilter
         scene.highlight = app.highlightSelection ? document.visibilityKey(forNodeID: document.selectionID) : nil
         let selected = document.selectionID ?? ""
@@ -162,9 +163,12 @@ struct ViewportPanel: View {
                             document.showOriginal.toggle()
                         }
                     }
+                    HeaderButton(symbol: "move.3d", active: app.showGizmo,
+                                 help: "Show move, rotate and radius handles on the selected emitter or particle") { app.showGizmo.toggle() }
                     HeaderButton(symbol: "square.fill.on.square", active: app.showFloor, help: "Show a floor that effect lights and soft particles react to") {
                         app.showFloor.toggle()
                     }
+                    PlaneButton(document: document, clock: document.clock)
                     isolateButton
                     shadingButtons
                 }
@@ -249,5 +253,57 @@ struct ViewportPanel: View {
         }
         .onChange(of: document.id) { _, _ in frameAll() }
         .onReceive(NotificationCenter.default.publisher(for: .viewportFrameAll)) { _ in frameAll() }
+    }
+}
+
+struct PlaneButton: View {
+    @ObservedObject var document: EffectDocument
+    @ObservedObject var clock: PlaybackClock
+    @State private var shown = false
+
+    private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).frame(width: 96, alignment: .trailing)
+            content().frame(width: 110)
+        }
+    }
+
+    var body: some View {
+        HeaderButton(symbol: "perspective", active: shown || document.plane != .zero || !document.paramOverrides.isEmpty,
+                     help: "Effect plane, seed and parameters of the preview") { shown.toggle() }
+            .popover(isPresented: $shown, arrowEdge: .bottom) {
+                VStack(spacing: 4) {
+                    row("Tilt X") {
+                        NumberField(label: nil, value: document.plane.x, suffix: "°", step: 1, onLive: { document.plane.x = $0 }, onCommit: { _, v in document.plane.x = v })
+                    }
+                    row("Tilt Y") {
+                        NumberField(label: nil, value: document.plane.y, suffix: "°", step: 1, onLive: { document.plane.y = $0 }, onCommit: { _, v in document.plane.y = v })
+                    }
+                    row("Perspective") {
+                        NumberField(label: nil, value: document.plane.z, step: 0.01, onLive: { document.plane.z = max(0, $0) },
+                                    onCommit: { _, v in document.plane.z = max(0, v) })
+                    }
+                    row("Seed") {
+                        NumberField(label: nil, value: Double(clock.seed), isInteger: true, onLive: { _ in },
+                                    onCommit: { _, v in clock.seed = Int(min(max(v, 1), 999_999)) })
+                    }
+                    ForEach(document.effectParams, id: \.name) { param in
+                        row(param.name) {
+                            NumberField(label: nil, value: document.paramOverrides[param.name] ?? param.value, step: 0.05,
+                                        onLive: { document.paramOverrides[param.name] = $0 }, onCommit: { _, v in document.paramOverrides[param.name] = v })
+                        }
+                    }
+                    row("") {
+                        SegmentButton(title: "Reset", active: false) {
+                            document.plane = .zero
+                            document.paramOverrides = [:]
+                            document.liveChanged()
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Theme.panel)
+                .preferredColorScheme(Theme.scheme)
+            }
     }
 }

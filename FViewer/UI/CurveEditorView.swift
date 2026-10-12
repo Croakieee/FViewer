@@ -195,7 +195,7 @@ struct CurveEditorView: View {
                 sidebar.frame(width: sidebarWidth(outer.size.width))
             }
         }
-        .background(Color(white: 0.157))
+        .background(Theme.gray(0.157))
         .onChange(of: group?.id, initial: true) { _, _ in
             ghost = [:]
             selection = []
@@ -243,7 +243,7 @@ struct CurveEditorView: View {
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 6)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -915,7 +915,7 @@ struct CurveEditorView: View {
                                 })
                     if channel.colorComponent == nil {
                         Text(["S", "L", "St"][min(max(key.interpolation, 0), 2)]).font(Theme.small).foregroundStyle(Theme.text)
-                            .frame(width: 20, height: 20).background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                            .frame(width: 20, height: 20).background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 change(channel, "Set Interpolation") { keys in if index < keys.count { keys[index].interpolation = (keys[index].interpolation + 1) % 3 } }
@@ -1089,7 +1089,7 @@ struct CurveEditorView: View {
                     .help("Click to use this colour")
             }
             Image(systemName: "plus").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 16, height: 16)
-                .background(RoundedRectangle(cornerRadius: 3).fill(Color(white: 0.22)))
+                .background(RoundedRectangle(cornerRadius: 3).fill(Theme.gray(0.22)))
                 .contentShape(Rectangle())
                 .onTapGesture {
                     let color = current()

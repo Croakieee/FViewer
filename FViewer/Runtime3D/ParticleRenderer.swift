@@ -175,7 +175,7 @@ final class ParticleRenderer {
         let slots = [0, 1, 3, 4]
         var loaded: [LoadedTexture?] = [nil, nil, nil, nil]
         var flags: [Vec4] = [.zero, .zero, .zero, .zero]
-        let copiesScene = ps.tc1?.enabled == true && ps.tc1?.screenCopy == true
+        let copiesScene = PreviewRules.isOn("screenCopy") && ps.tc1?.enabled == true && ps.tc1?.screenCopy == true
         for (i, layer) in layers.enumerated() {
             if i == 0, copiesScene { continue }
             guard let layer, layer.enabled, let first = layer.textures.first, let texture = textureProvider(first) else { continue }
@@ -189,7 +189,7 @@ final class ParticleRenderer {
         m.uniforms.layer = (flags[0], flags[1], flags[2], flags[3])
         if let tc1 = ps.tc1, loaded[0] != nil { m.frames = tc1.textures.map { textureProvider($0)?.texture } }
         var distortion: RTextureLayer?
-        if let td = ps.distortion, td.enabled, let first = td.textures.first, let texture = textureProvider(first) {
+        if PreviewRules.isOn("distortion"), let td = ps.distortion, td.enabled, let first = td.textures.first, let texture = textureProvider(first) {
             distortion = td
             m.textures[2] = texture.texture
             m.samplers[2] = sampler(td.borderU, td.borderV)
@@ -201,7 +201,7 @@ final class ParticleRenderer {
         m.uniforms.distortLayers = Vec4(distorted(layers[0], loaded[0] != nil), distorted(layers[1], loaded[1] != nil),
                                         distorted(layers[2], loaded[2] != nil), distorted(layers[3], loaded[3] != nil))
         var palette = false
-        if let tp = ps.palette, tp.enabled, tp.texture >= 0, let texture = textureProvider(tp.texture) {
+        if PreviewRules.isOn("paletteAlpha"), let tp = ps.palette, tp.enabled, tp.texture >= 0, let texture = textureProvider(tp.texture) {
             palette = true
             m.textures[5] = texture.texture
             m.samplers[5] = sampler(tp.border, tp.border)
@@ -225,7 +225,7 @@ final class ParticleRenderer {
         m.uniforms.flags = Vec4(vertexColors ? 1 : 0, fresnel ? 1 : 0, sprites ? 1 : 0, lineGradient ? 1 : 0)
         m.uniforms.flags2 = Vec4(premultiply, distortion != nil ? 1 : 0, palette ? 1 : 0, 1)
         m.hasColorEnds = fresnel || lineGradient
-        m.soft = ps.softParticle
+        m.soft = ps.softParticle && PreviewRules.isOn("softParticles")
         if copiesScene {
             let shifted = distortion != nil && (ps.tc1.map { $0.uvSet >= 0 && $0.uvSet < 4 && distortion?.targets[$0.uvSet] == true } ?? false)
             m.screenCopy = shifted ? 2 : 1

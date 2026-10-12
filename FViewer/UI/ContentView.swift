@@ -54,6 +54,9 @@ struct TopBar: View {
                     Divider()
                     Button("Effects of Timeline by Game Path…") { app.listEffectsOfGamePath() }.disabled(app.gameRoot == nil)
                     Button("Effects of Timeline File (.tmb, .pap)…") { app.listEffectsOfFile() }
+                    Divider()
+                    Button("Inspect Game File…") { app.inspectGameFilePanel() }
+                    Button("Inspect File by Game Path…") { app.inspectGameFileByPath() }.disabled(app.gameRoot == nil)
                 }
                 Menu("Open Recent") {
                     ForEach(app.recentFiles, id: \.self) { url in Button(url.lastPathComponent) { app.openRecent(url) } }
@@ -75,6 +78,10 @@ struct TopBar: View {
                 Button("Reload from Disk") { app.reloadDocument() }.disabled(app.document == nil)
                 Button("Show Autosaves") { app.revealAutosaves() }
                 Divider()
+                Button("Save Workspace Archive…") { app.saveWorkspaceArchive() }.disabled(app.libraryRoot == nil)
+                Button("Open Workspace Archive…") { app.openWorkspaceArchive() }
+                Divider()
+                Button("Browse Penumbra Mods…") { app.browsePenumbraMods() }
                 Button("Import Penumbra Mod (.pmp)…") { app.importPenumbraMod() }
                 Button("Import Nodes…") { app.importNodesPanel() }.disabled(app.document?.format != .avfx)
                 Button("Merge Effect…") { app.mergeEffectPanel() }.disabled(app.document?.format != .avfx)
@@ -89,6 +96,8 @@ struct TopBar: View {
                 Button("Convert Textures to Custom Paths") { app.convertTextures() }.disabled(app.document?.format != .avfx)
                 Button("Convert Images…") { app.convertImages = true }
                 Button("Export All Textures as PNG…") { app.exportAllTextures() }.disabled(app.document == nil)
+                Divider()
+                Button("Settings…") { app.openSettingsWindow?() }
             }
             Spacer()
             if let document = app.document {
@@ -114,7 +123,7 @@ struct TopBar: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
-        .background(Color(white: 0.094))
+        .background(Theme.gray(0.094))
     }
 
     private func menuButton<Items: View>(_ title: String, @ViewBuilder items: () -> Items) -> some View {
@@ -157,7 +166,7 @@ struct ContentView: View {
                             } else {
                                 VStack(spacing: 0) {
                                     EditorHeader(symbol: "list.bullet.indent", title: "Outliner") { Spacer() }
-                                    Color(white: 0.157)
+                                    Theme.gray(0.157)
                                 }
                             }
                         }
@@ -206,13 +215,16 @@ struct ContentView: View {
             app.openModelWindow = { openWindow(id: "model") }
             app.openTextureWindow = { openWindow(id: "texture") }
             app.openItemWindow = { openWindow(id: "item") }
+            app.openSettingsWindow = { openWindow(id: "settings") }
+            app.openGameFileWindow = { openWindow(id: "gamefile") }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
         .sheet(isPresented: Binding(get: { app.document?.exportRequest != nil }, set: { if !$0 { app.document?.exportRequest = nil } })) {
             if let document = app.document { ExportNodesSheet(document: document, selected: document.exportRequest ?? []) }
         }
         .dropDestination(for: URL.self) { urls, _ in app.openDropped(urls) }
         .sheet(isPresented: $app.convertImages) { ConvertImagesSheet().environmentObject(app) }
+        .sheet(isPresented: Binding(get: { app.modList != nil }, set: { if !$0 { app.modList = nil } })) { ModListSheet().environmentObject(app) }
         .sheet(item: $app.effectList) { list in EffectListSheet(list: list).environmentObject(app) }
         .sheet(isPresented: $app.modExport) {
             if let document = app.document { ExportModSheet(document: document).environmentObject(app) }
@@ -234,7 +246,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(white: 0.24))
+        .background(Theme.gray(0.24))
     }
 
     private func welcomeButton(_ title: String, _ symbol: String, _ action: @escaping () -> Void) -> some View {
@@ -259,7 +271,7 @@ struct ContentView: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 20)
-        .background(Color(white: 0.094))
+        .background(Theme.gray(0.094))
     }
 
 }

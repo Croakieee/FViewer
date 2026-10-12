@@ -343,4 +343,23 @@ extension EffectDocument {
         }
         return rows
     }
+
+    var effectParams: [(name: String, value: Double)] {
+        (jsonRoot?["params"]?.members ?? []).compactMap { member in
+            if let number = member.node.number { return (member.key, number) }
+            if let number = member.node["default"]?.number ?? member.node["value"]?.number { return (member.key, number) }
+            return nil
+        }
+    }
+
+    func jsonText(of node: OutlineNode) -> String? {
+        guard case .json(let json) = node.payload else { return nil }
+        return json.serialized()
+    }
+
+    func applyJSON(_ text: String, to node: OutlineNode) throws {
+        guard case .json(let json) = node.payload else { return }
+        let parsed = try JSONParser.parse(Data(text.utf8))
+        performStructural("Edit JSON") { json.value = parsed.value }
+    }
 }

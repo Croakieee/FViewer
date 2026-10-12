@@ -18,7 +18,7 @@ struct ItemEditorView: View {
         }
         .frame(minWidth: 980, minHeight: 560)
         .background(Theme.panel)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
     }
 }
 
@@ -122,7 +122,7 @@ struct ItemEditor: View {
                 .foregroundStyle(Theme.text)
                 .padding(.horizontal, 8)
                 .frame(height: 20)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
@@ -147,7 +147,7 @@ struct ItemEditor: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
-        .background(Color(white: 0.157))
+        .background(Theme.gray(0.157))
     }
 
     private var sidebar: some View {
@@ -159,7 +159,7 @@ struct ItemEditor: View {
             }
             .padding(.vertical, 4)
         }
-        .background(Color(white: 0.157))
+        .background(Theme.gray(0.157))
     }
 
     private func pageRow(_ page: EditorPage, selected: Bool, changes: ChangeSet) -> some View {
@@ -323,12 +323,49 @@ private struct ItemPage: View {
                 HeaderButton(symbol: "circle.lefthalf.filled", active: changedOnly, help: "Show only parameters changed since the file was opened") {
                     changedOnly.toggle()
                 }
+                presetMenu
                 if changedCount > 0 {
                     HeaderButton(symbol: "arrow.counterclockwise", help: "Reset the \(changedCount) changed parameters of this page to the opened file") { resetPage() }
                 }
             }
         }
         .padding(.horizontal, 10)
+    }
+
+    private var presetMenu: some View {
+        let presets = ParameterClipboard.presets(for: node)
+        return Menu {
+            Button("Save Page as Preset…") {
+                guard let name = app.prompt("Save Preset", placeholder: "Name", value: node.title) else { return }
+                if ParameterClipboard.savePreset(name, from: node, in: document) != nil { app.notice = "Preset \(name) saved" }
+            }
+            if !presets.isEmpty { Divider() }
+            ForEach(presets, id: \.url) { preset in
+                Button(preset.name) {
+                    let changed = ParameterClipboard.applyPreset(preset.url, to: node, in: document)
+                    app.notice = changed ? "Preset \(preset.name) applied" : "Preset \(preset.name) matches this page already"
+                }
+            }
+            if !presets.isEmpty {
+                Divider()
+                Menu("Delete Preset") {
+                    ForEach(presets, id: \.url) { preset in
+                        Button(preset.name, role: .destructive) {
+                            try? FileManager.default.trashItem(at: preset.url, resultingItemURL: nil)
+                            app.objectWillChange.send()
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "square.stack.3d.down.right").font(.system(size: 11)).foregroundStyle(Theme.text).frame(width: 24, height: 20)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Presets: save the parameters and curves of this page, or apply a saved set")
     }
 
     private func actionButton(_ action: NodeAction) -> some View {
@@ -409,7 +446,7 @@ private struct ItemPage: View {
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 6)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

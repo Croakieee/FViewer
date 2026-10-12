@@ -92,7 +92,7 @@ struct ExportModSheet: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
             ScrollView {
                 VStack(spacing: 6) {
                     Panel(title: "Mod") {
@@ -164,11 +164,11 @@ struct ExportModSheet: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 38)
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
         }
         .frame(width: 620)
         .background(Theme.panel)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
         .onAppear {
             guard !prepared else { return }
             prepared = true

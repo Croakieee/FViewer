@@ -30,7 +30,7 @@ struct SequencerView: View {
             }
         } label: {
             Image(systemName: "bolt").font(.system(size: 11)).foregroundStyle(Theme.text).frame(width: 24, height: 20)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -208,7 +208,7 @@ struct SequencerView: View {
                     .frame(height: rulerHeight + CGFloat(rows.count) * rowHeight + 8)
                 }
             }
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
         }
         .background(GeometryReader { geometry in
             Color.clear

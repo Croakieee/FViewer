@@ -55,7 +55,7 @@ struct OutlinerView: View {
                         }
                     } label: {
                         Image(systemName: "plus").font(.system(size: 11)).foregroundStyle(Theme.text).frame(width: 24, height: 20)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
                     }
                     .menuStyle(.button)
                     .buttonStyle(.plain)
@@ -86,11 +86,15 @@ struct OutlinerView: View {
                     if let id { withAnimation(.none) { proxy.scrollTo(id) } }
                 }
             }
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
             .dropDestination(for: URL.self) { urls, _ in
                 let nodes = urls.filter { ["vfxedit", "vfxedit2"].contains($0.pathExtension.lowercased()) }
-                guard document.format == .avfx, !nodes.isEmpty else { return false }
+                let images = urls.filter { AppModel.imageSourceTypes.contains($0.pathExtension.lowercased()) }
+                guard document.format == .avfx, !nodes.isEmpty || !images.isEmpty else { return false }
                 nodes.forEach { AppDelegate.model?.importFromNodeLibrary($0) }
+                for image in images {
+                    if let index = AppDelegate.model?.addTextureAsset(image, to: document) { document.selectionID = "avfx/Tex/\(index)" }
+                }
                 return true
             }
         }
@@ -171,11 +175,14 @@ struct OutlinerView: View {
 struct LibraryView: View {
     @EnvironmentObject var app: AppModel
     @Binding var mode: Int
+    @State private var filter = ""
 
     private var groups: [(folder: String, files: [LibraryFile])] {
         let favorites = app.favorites
-        var result = Dictionary(grouping: app.files, by: \.folder).map { (folder: $0.key, files: $0.value) }.sorted { $0.folder < $1.folder }
-        let starred = app.files.filter { favorites.contains($0.url.path) }
+        let needle = filter.lowercased()
+        let shown = needle.isEmpty ? app.files : app.files.filter { $0.name.lowercased().contains(needle) || $0.folder.lowercased().contains(needle) }
+        var result = Dictionary(grouping: shown, by: \.folder).map { (folder: $0.key, files: $0.value) }.sorted { $0.folder < $1.folder }
+        let starred = shown.filter { favorites.contains($0.url.path) }
         if !starred.isEmpty { result.insert((folder: "★ Favorites", files: starred), at: 0) }
         return result
     }
@@ -184,9 +191,22 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             EditorHeader(symbol: "folder", title: "File Browser") {
                 Spacer(minLength: 0)
+                HeaderButton(symbol: "photo.on.rectangle", help: "Show the textures and models of the open folder") { mode = 3 }
+                HeaderButton(symbol: "clock", help: "Show the history of opened effects") { mode = 2 }
                 HeaderButton(symbol: "shippingbox", help: "Show the Node Library") { mode = 1 }
                 HeaderButton(symbol: "folder.badge.plus", help: "Open Folder (⇧⌘O)") { app.chooseLibrary() }
                 HeaderButton(symbol: "doc.badge.plus", help: "Open File (⌘O)") { app.openFilePanel() }
+            }
+            if app.files.count > 12 {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                    TextField("", text: $filter).textFieldStyle(.plain).font(Theme.font).foregroundStyle(Theme.text)
+                    if !filter.isEmpty { Image(systemName: "xmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.dim).onTapGesture { filter = "" } }
+                    Text("\(app.files.count)").font(Theme.small).foregroundStyle(Theme.dim)
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 20)
+                .background(Theme.fieldDark)
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -232,7 +252,7 @@ struct LibraryView: View {
                     }
                 }
             }
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
         }
     }
 }

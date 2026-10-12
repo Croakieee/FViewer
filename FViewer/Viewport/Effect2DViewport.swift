@@ -12,6 +12,9 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     private var libraryToken = -1
     private var loadedTextures: Set<String> = []
     private var duration: Double = 30
+    private var appliedSeed = 1
+    private var appliedPlane: SIMD3<Double>?
+    private var appliedParams: [String: Double] = [:]
     private var hasLoops = false
     private var appliedRelease = false
     private var appliedTriggers = 0
@@ -82,8 +85,10 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
         loadedFilter = document.visibilityFilter
         duration = document.duration
         for slot in document.textureSlots where !loadedTextures.contains(slot.name) {
-            guard let url = app.textureURL(slot.name), url.pathExtension.lowercased() == "png" else { continue }
-            let modes = app.addressModes(for: slot.name)
+            let found = app.textureURL(slot.name)
+            guard let url = found ?? PlaceholderTextures.url(for: slot.name), url.pathExtension.lowercased() == "png" else { continue }
+            var modes = app.addressModes(for: slot.name)
+            if found == nil, PlaceholderTextures.isMirrored(slot.name) { modes = ("mirror-repeat", "mirror-repeat") }
             if renderer.loadTexture(name: slot.name, url: url, u: AddressMode(rawValue: modes.u) ?? .repeat_, v: AddressMode(rawValue: modes.v) ?? .repeat_) {
                 loadedTextures.insert(slot.name)
             }
@@ -99,7 +104,10 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
         let data = document.pixiData(filter: loadedFilter)
         hasLoops = String(decoding: data, as: UTF8.self).contains("\"loop\"")
         do {
-            let created = try EffectCore(json: data, options: EffectCoreOptions(views: renderer, models: models, seed: 1))
+            let created = try EffectCore(json: data, options: EffectCoreOptions(views: renderer, models: models, seed: UInt32(max(1, document.clock.seed))))
+            appliedSeed = document.clock.seed
+            appliedPlane = nil
+            appliedParams = [:]
             created.play()
             core = created
             document.clock.status = ""
@@ -111,7 +119,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     }
 
     private func rewind() {
-        core?.restart(seed: 1)
+        core?.restart(seed: UInt32(max(1, document?.clock.seed ?? 1)))
         appliedRelease = false
         appliedTriggers = 0
     }
@@ -127,6 +135,22 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
                 || loadedFilter != document.visibilityFilter { reload(document) }
             if let core {
                 let clock = document.clock
+                if appliedSeed != clock.seed {
+                    appliedSeed = clock.seed
+                    rewind()
+                }
+                if appliedPlane != document.plane {
+                    appliedPlane = document.plane
+                    var plane = Plane()
+                    plane.tiltX = document.plane.x * .pi / 180
+                    plane.tiltY = document.plane.y * .pi / 180
+                    plane.perspective = document.plane.z
+                    core.setPlane(plane)
+                }
+                if appliedParams != document.paramOverrides {
+                    for (name, value) in document.paramOverrides where appliedParams[name] != value { _ = core.setParam(name, value) }
+                    appliedParams = document.paramOverrides
+                }
                 clock.advance(elapsed, duration: duration, finished: core.finished, held: hasLoops && !core.released && !core.killing)
                 if clock.time < core.time - 0.01 { rewind() }
                 var steps = 0

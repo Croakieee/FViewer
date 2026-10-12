@@ -178,8 +178,8 @@ struct ChoiceField: View {
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 6)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(white: 0.24), lineWidth: 1))
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Theme.gray(0.24), lineWidth: 1))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -201,7 +201,7 @@ struct TextValueField: View {
             .padding(.horizontal, 6)
             .frame(height: 20)
             .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(focused ? Theme.accent : Color(white: 0.24), lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(focused ? Theme.accent : Theme.gray(0.24), lineWidth: 1))
             .focused($focused)
             .onAppear { text = value }
             .onChange(of: value) { _, next in if !focused { text = next } }
@@ -272,7 +272,7 @@ struct HelpBadge: View {
             .popover(isPresented: $shown, arrowEdge: .bottom) {
                 Text(text).font(Theme.font).foregroundStyle(Theme.text).lineSpacing(2)
                     .frame(width: 280, alignment: .leading).fixedSize(horizontal: false, vertical: true).padding(12)
-                    .preferredColorScheme(.dark)
+                    .preferredColorScheme(Theme.scheme)
             }
     }
 }
@@ -288,7 +288,7 @@ struct SegmentButton: View {
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 8)
             .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : Color(white: 0.22)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : Theme.gray(0.22)))
             .contentShape(Rectangle())
             .onTapGesture(perform: action)
     }
@@ -319,7 +319,7 @@ struct Panel<Content: View>: View {
                     .padding(.bottom, 8)
             }
         }
-        .background(RoundedRectangle(cornerRadius: 5).fill(Color(white: 0.24)))
+        .background(RoundedRectangle(cornerRadius: 5).fill(Theme.gray(0.24)))
         .padding(.horizontal, 6)
     }
 }
@@ -333,7 +333,7 @@ struct EditorHeader<Content: View>: View {
         HStack(spacing: 8) {
             Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(Theme.text)
                 .frame(width: 24, height: 20)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
             Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
             content()
         }
@@ -357,7 +357,7 @@ struct HeaderButton: View {
             .font(.system(size: 11))
             .foregroundStyle(Theme.text)
             .frame(width: 24, height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : hovering ? Theme.field : Color(white: 0.22)))
+            .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : hovering ? Theme.field : Theme.gray(0.22)))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onTapGesture(perform: action)

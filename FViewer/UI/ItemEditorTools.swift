@@ -87,6 +87,53 @@ struct ShapeDiagramPanel: View {
 
     var body: some View {
         let type = particle.int("PrVT")
+        if type == 4 || type == 6 {
+            let data = particle.child("Data")
+            let time = CurveTime(Float(clock.time))
+            Panel(title: type == 4 ? "Laser Shape" : "Trail Profile") {
+                Canvas { context, size in
+                    let mid = size.height / 2
+                    if type == 4 {
+                        let length = CGFloat(max(0.01, value(data, "Len", 1, time))), width = CGFloat(max(0.001, value(data, "Wdt", 1, time)))
+                        let scale = min((size.width - 24) / length, (size.height - 16) / width)
+                        let rect = CGRect(x: 12, y: mid - width * scale / 2, width: length * scale, height: width * scale)
+                        context.fill(Path(rect), with: .color(NodeTint.particle.color.opacity(0.55)))
+                        context.fill(Path(ellipseIn: CGRect(x: 10, y: mid - 2, width: 4, height: 4)), with: .color(.white))
+                        context.draw(Text(String(format: "%.2f × %.2f m", Double(length), Double(width))).font(.system(size: 9)).foregroundStyle(.white),
+                                     at: CGPoint(x: size.width / 2, y: 9))
+                    } else {
+                        let base = CGFloat(value(data, "Wd", 1, time))
+                        let widths = [CGFloat(value(data, "WdB", 1, time)), CGFloat(value(data, "WdC", 1, time)), CGFloat(value(data, "WdE", 1, time))].map { $0 * base }
+                        let points = max(2, data?.int("PnC", 2) ?? 2)
+                        let centre = min(1, max(0, CGFloat(data?.int("PnCC") ?? 0) / CGFloat(points - 1)))
+                        let peak = max(widths.max() ?? 1, 0.001)
+                        let scale = (size.height / 2 - 6) / peak
+                        let xs: [CGFloat] = [10, 10 + (size.width - 20) * centre, size.width - 10]
+                        var path = Path()
+                        path.move(to: CGPoint(x: xs[0], y: mid - widths[0] * scale))
+                        path.addLine(to: CGPoint(x: xs[1], y: mid - widths[1] * scale))
+                        path.addLine(to: CGPoint(x: xs[2], y: mid - widths[2] * scale))
+                        path.addLine(to: CGPoint(x: xs[2], y: mid + widths[2] * scale))
+                        path.addLine(to: CGPoint(x: xs[1], y: mid + widths[1] * scale))
+                        path.addLine(to: CGPoint(x: xs[0], y: mid + widths[0] * scale))
+                        path.closeSubpath()
+                        context.fill(path, with: .color(NodeTint.particle.color.opacity(0.55)))
+                        for i in 0..<points {
+                            let x = 10 + (size.width - 20) * CGFloat(i) / CGFloat(points - 1)
+                            context.fill(Path(CGRect(x: x - 0.5, y: mid - 2, width: 1, height: 4)), with: .color(Color.white.opacity(0.6)))
+                        }
+                        context.fill(Path(ellipseIn: CGRect(x: 8, y: mid - 2, width: 4, height: 4)), with: .color(.white))
+                    }
+                }
+                .frame(height: 90)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.14)))
+                HStack {
+                    Spacer()
+                    HelpBadge(text: type == 4 ? "The beam at the playhead: length along the beam, width across it. The dot is the particle origin."
+                        : "Half width of the trail from its head (left, at the particle) through the centre point to its tail, at the playhead. Ticks are the trail points.")
+                }
+            }
+        }
         if type == 12 || type == 11 {
             let data = particle.child("Data")
             let time = CurveTime(Float(clock.time))
@@ -133,7 +180,7 @@ struct ShapeDiagramPanel: View {
                     context.fill(Path(ellipseIn: CGRect(x: centre.x - 2, y: centre.y - 2, width: 4, height: 4)), with: .color(.white))
                 }
                 .frame(height: 150)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.14)))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.14)))
                 HStack {
                     Spacer()
                     HelpBadge(text: "Top view of the shape at the playhead, built from the radius, width and angle values of the Data block. The dot is the particle origin.")

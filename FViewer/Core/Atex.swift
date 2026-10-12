@@ -52,13 +52,14 @@ enum TexError: LocalizedError {
 enum Atex {
     private static let header = 80
 
-    static func decode(_ data: [UInt8]) throws -> DecodedTexture {
+    static func decode(_ data: [UInt8], mip: Int = 0) throws -> DecodedTexture {
         guard data.count >= header else { throw TexError.invalid("Texture file is too small (\(data.count) bytes)") }
         let rawFormat = data.u32(4)
-        let width = Int(data.u16(8))
-        let height = Int(data.u16(10))
         let mips = Int(data[14] & 0x7f)
-        let surface = Int(data.u32(28))
+        let level = min(max(mip, 0), max(mips - 1, 0), 12)
+        let width = max(1, Int(data.u16(8)) >> level)
+        let height = max(1, Int(data.u16(10)) >> level)
+        let surface = Int(data.u32(28 + level * 4))
         guard width > 0, height > 0 else { throw TexError.invalid("Texture has zero size") }
         guard surface >= header, surface <= data.count else { throw TexError.invalid("Invalid surface offset") }
         guard let format = TexFormat(rawValue: rawFormat) else {

@@ -81,7 +81,7 @@ struct UvSetPreview: View {
         let result = render(path.flatMap { app.decodedTexture(for: $0) }, side: 160, time: max(0, clock.time))
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
-                Color(white: 0.12)
+                Theme.gray(0.12)
                 if let image = result.image {
                     Image(decorative: image, scale: 1).resizable().interpolation(.medium).aspectRatio(1, contentMode: .fit)
                 }

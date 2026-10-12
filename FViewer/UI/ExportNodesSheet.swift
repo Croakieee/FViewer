@@ -18,7 +18,7 @@ struct ExportNodesSheet: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 32)
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(EffectDocument.exchangeTags, id: \.self) { tag in
@@ -59,10 +59,10 @@ struct ExportNodesSheet: View {
             }
             .padding(.horizontal, 12)
             .frame(height: 38)
-            .background(Color(white: 0.157))
+            .background(Theme.gray(0.157))
         }
         .frame(width: 440)
         .background(Theme.panel)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.scheme)
     }
 }

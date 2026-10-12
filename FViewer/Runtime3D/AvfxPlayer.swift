@@ -6,6 +6,7 @@ final class AvfxPlayer {
     private(set) var simulation: AvfxSimulation?
     private var loadedRevision = -1
     private var loadedOriginal = false
+    private var loadedRules = -1
     private var loggedClips = -1
     private var duration: Double = 30
     private var appliedRelease = false
@@ -17,12 +18,13 @@ final class AvfxPlayer {
         self.document = document
     }
 
-    var schemaChanged: Bool { loadedRevision != document.revision || loadedOriginal != document.showOriginal }
+    var schemaChanged: Bool { loadedRevision != document.revision || loadedOriginal != document.showOriginal || loadedRules != PreviewRules.token }
 
     private func rebuild() {
         loadedRevision = document.revision
         duration = document.duration
         loadedOriginal = document.showOriginal
+        loadedRules = PreviewRules.token
         guard let root = (document.showOriginal ? document.original?.avfxRoot : nil) ?? document.avfxRoot else {
             simulation = nil
             return

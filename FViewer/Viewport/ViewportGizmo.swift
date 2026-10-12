@@ -1,0 +1,242 @@
+import AppKit
+import simd
+
+struct GizmoHandle {
+    var index: Int
+    var kind: Int
+    var axis: Int
+    var points: [Vec3]
+    var color: SIMD4<Float>
+}
+
+final class GizmoState {
+    var handles: [GizmoHandle] = []
+    var rootID: String?
+    var origin = Vec3.zero
+    var basis = simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
+    var unit = Vec3(1, 1, 1)
+    var size: Float = 1
+    var radiusModel: Mat4?
+    var radiusLocal = Vec3.zero
+    var radiusTags: [String] = []
+    var active: (index: Int, kind: Int, axis: Int, start: CGPoint, values: [Double], before: Any, origin: Vec3, basis: simd_quatf, unit: Vec3, size: Float,
+                 radiusModel: Mat4?, radiusLocal: Vec3)?
+}
+
+extension ViewportRenderer {
+    static let gizmoColors: [SIMD4<Float>] = [SIMD4(0.95, 0.3, 0.33, 1), SIMD4(0.5, 0.86, 0.3, 1), SIMD4(0.3, 0.56, 1, 1)]
+
+    private func gizmoRoot() -> String? {
+        guard let document, document.format == .avfx, let selected = document.selectionID else { return nil }
+        let root = selected.split(separator: "/").prefix(3).joined(separator: "/")
+        return (root.hasPrefix("avfx/Emit/") || root.hasPrefix("avfx/Ptcl/")) && document.node(root) != nil ? root : nil
+    }
+
+    private func transformField(_ root: String, _ group: String, _ axis: Int) -> PropField? {
+        guard let document, let node = document.node(root) else { return nil }
+        let id = "\(root)#transform\(group)\(["X", "Y", "Z"][axis])"
+        return document.sections(for: node).flatMap(\.fields).first { $0.id == id }
+    }
+
+    private func radiusChannels(_ root: String, _ tags: [String]) -> [CurveChannel] {
+        guard let document, let node = document.node(root) else { return [] }
+        var result: [CurveChannel] = []
+        for child in node.children {
+            guard case .avfx(let block, _, let record) = child.payload, record == nil, block.tag == "Data" else { continue }
+            for group in document.curveGroups(for: child) where tags.contains(group.tag) {
+                if let channel = group.channels.first { result.append(channel) }
+            }
+        }
+        return result
+    }
+
+    func updateGizmo(_ simulation: AvfxSimulation) {
+        if let active = gizmo.active {
+            gizmo.origin = active.origin
+            gizmo.basis = active.basis
+            gizmo.unit = active.unit
+            gizmo.size = active.size
+        }
+        guard let root = gizmoRoot(), let index = Int(root.split(separator: "/").last ?? "") else {
+            gizmo.handles = []
+            gizmo.rootID = nil
+            return
+        }
+        gizmo.rootID = root
+        gizmo.radiusModel = nil
+        gizmo.radiusTags = []
+        if gizmo.active == nil {
+            var origin: Vec3?
+            var basis = simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
+            var unit = Vec3(1, 1, 1)
+            if root.hasPrefix("avfx/Emit/") {
+                if let emitter = simulation.emitters.first(where: { $0.schema.index == index }) {
+                    origin = Math3D.position(emitter.world)
+                    let parent = Math3D.decompose(emitter.anchor())
+                    basis = parent.rotation
+                    unit = parent.scale
+                }
+            } else if let particle = simulation.particles.first(where: { $0.schema.index == index }) {
+                let parent = Math3D.decompose(particle.emitter.world)
+                basis = parent.rotation
+                unit = parent.scale
+                if let draw = lastDraws.first(where: { $0.particle == index && !$0.isSprite }) ?? lastDraws.first(where: { $0.particle == index }) {
+                    origin = Math3D.position(draw.model)
+                    let type = particle.schema.type
+                    if type == 12 || type == 11, !draw.isSprite {
+                        gizmo.radiusModel = draw.model
+                    }
+                }
+            }
+            guard let origin else {
+                gizmo.handles = []
+                return
+            }
+            gizmo.origin = origin
+            gizmo.basis = basis
+            gizmo.unit = Vec3(max(abs(unit.x), 1e-4), max(abs(unit.y), 1e-4), max(abs(unit.z), 1e-4))
+            gizmo.size = max(0.05, simd_distance(camera.eye, origin) * 0.13)
+        } else {
+            gizmo.radiusModel = gizmo.active?.radiusModel
+        }
+        var handles: [GizmoHandle] = []
+        let axes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)]
+        for axis in 0..<3 {
+            let direction = gizmo.basis.act(axes[axis])
+            handles.append(GizmoHandle(index: handles.count, kind: 0, axis: axis, points: [gizmo.origin, gizmo.origin + direction * gizmo.size],
+                                       color: ViewportRenderer.gizmoColors[axis]))
+        }
+        for axis in 0..<3 {
+            let direction = gizmo.basis.act(axes[axis])
+            var color = ViewportRenderer.gizmoColors[axis]
+            color.w = 0.8
+            handles.append(GizmoHandle(index: handles.count, kind: 3, axis: axis,
+                                       points: [gizmo.origin + direction * gizmo.size * 1.12, gizmo.origin + direction * gizmo.size * 1.34], color: color))
+        }
+        for axis in 0..<3 {
+            let u = gizmo.basis.act(axes[(axis + 1) % 3]), v = gizmo.basis.act(axes[(axis + 2) % 3])
+            var ring: [Vec3] = []
+            for step in 0...40 {
+                let a = Float(step) / 40 * 2 * .pi
+                ring.append(gizmo.origin + (u * cos(a) + v * sin(a)) * gizmo.size * 0.72)
+            }
+            var color = ViewportRenderer.gizmoColors[axis]
+            color.w = 0.55
+            handles.append(GizmoHandle(index: handles.count, kind: 1, axis: axis, points: ring, color: color))
+        }
+        if let model = gizmo.radiusModel, let document, let node = document.node(root), case .avfx(let block, _, _) = node.payload {
+            let type = block.int("PrVT")
+            let tags = type == 12 ? ["RB", "RE"] : ["WID"]
+            let channels = radiusChannels(root, tags)
+            if let first = channels.first {
+                let value = Float(first.read().first?.value ?? (type == 12 ? 1 : 0.1))
+                let local = gizmo.active?.radiusLocal ?? (type == 12 ? Vec3(value, 0, 0) : Vec3(0.5 + value, 0.01, 0))
+                gizmo.radiusLocal = type == 12 ? Vec3(value, 0, 0) : Vec3(0.5 + value, 0.01, 0)
+                gizmo.radiusTags = tags
+                let centre = Math3D.point(model, .zero)
+                handles.append(GizmoHandle(index: handles.count, kind: 2, axis: 0, points: [centre, Math3D.point(model, gizmo.active == nil ? gizmo.radiusLocal : local)],
+                                           color: SIMD4(1, 0.72, 0.28, 1)))
+            }
+        }
+        gizmo.handles = handles
+    }
+
+    private func project(_ world: Vec3) -> CGPoint? {
+        let clip = lastViewProjection * SIMD4<Float>(world.x, world.y, world.z, 1)
+        guard clip.w > 1e-5 else { return nil }
+        return CGPoint(x: CGFloat((clip.x / clip.w) * 0.5 + 0.5) * lastViewSize.width, y: CGFloat((clip.y / clip.w) * 0.5 + 0.5) * lastViewSize.height)
+    }
+
+    private func distance(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let length = dx * dx + dy * dy
+        let t = length > 0 ? min(max(((p.x - a.x) * dx + (p.y - a.y) * dy) / length, 0), 1) : 0
+        return hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t))
+    }
+
+    func gizmoHandle(at point: CGPoint) -> GizmoHandle? {
+        var best: (GizmoHandle, CGFloat)?
+        for handle in gizmo.handles {
+            var nearest = CGFloat.infinity
+            for i in 1..<handle.points.count {
+                guard let a = project(handle.points[i - 1]), let b = project(handle.points[i]) else { continue }
+                nearest = min(nearest, distance(point, a, b))
+            }
+            let reach: CGFloat = handle.kind == 1 ? 5 : 8
+            let score = nearest - (handle.kind == 2 ? 2 : handle.kind == 1 ? 0 : 1)
+            if nearest <= reach, score < (best?.1 ?? .infinity) { best = (handle, score) }
+        }
+        return best?.0
+    }
+
+    func gizmoBegin(at point: CGPoint) -> Bool {
+        guard showGizmo, let document, let root = gizmo.rootID, let handle = gizmoHandle(at: point) else { return false }
+        var values: [Double] = []
+        switch handle.kind {
+        case 0: values = (0..<3).map { transformField(root, "Pos", $0)?.read().number ?? 0 }
+        case 1: values = (0..<3).map { transformField(root, "Rot", $0)?.read().number ?? 0 }
+        case 3: values = (0..<3).map { transformField(root, "Scl", $0)?.read().number ?? 1 }
+        default: values = radiusChannels(root, gizmo.radiusTags).map { $0.read().first?.value ?? 0 }
+        }
+        gizmo.active = (handle.index, handle.kind, handle.axis, point, values, document.snapshot(), gizmo.origin, gizmo.basis, gizmo.unit, gizmo.size,
+                        gizmo.radiusModel, gizmo.radiusLocal)
+        return true
+    }
+
+    func gizmoMove(to point: CGPoint) {
+        guard let active = gizmo.active, let document, let root = gizmo.rootID else { return }
+        let axes = [Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1)]
+        let dx = point.x - active.start.x, dy = point.y - active.start.y
+        switch active.kind {
+        case 0:
+            let direction = active.basis.act(axes[active.axis])
+            guard let a = project(active.origin), let b = project(active.origin + direction * active.size), let field = transformField(root, "Pos", active.axis) else { return }
+            let sx = b.x - a.x, sy = b.y - a.y
+            let length = sx * sx + sy * sy
+            guard length > 1 else { return }
+            let amount = Double((dx * sx + dy * sy) / length) * Double(active.size) / Double(active.unit[active.axis])
+            document.setLive(field, .double(((active.values[active.axis] + amount) * 10000).rounded() / 10000))
+        case 1:
+            guard let centre = project(active.origin), let field = transformField(root, "Rot", active.axis) else { return }
+            let from = atan2(active.start.y - centre.y, active.start.x - centre.x), to = atan2(point.y - centre.y, point.x - centre.x)
+            var delta = Double(to - from)
+            while delta > .pi { delta -= 2 * .pi }
+            while delta < -.pi { delta += 2 * .pi }
+            let facing = simd_dot(active.basis.act(axes[active.axis]), camera.eye - active.origin) >= 0 ? 1.0 : -1.0
+            document.setLive(field, .double(((active.values[active.axis] + delta * facing * 180 / .pi) * 100).rounded() / 100))
+        case 3:
+            let direction = active.basis.act(axes[active.axis])
+            guard let a = project(active.origin), let b = project(active.origin + direction * active.size), let field = transformField(root, "Scl", active.axis) else { return }
+            let sx = b.x - a.x, sy = b.y - a.y
+            let length = sx * sx + sy * sy
+            guard length > 1 else { return }
+            let factor = max(0.01, 1 + Double((dx * sx + dy * sy) / length))
+            let base = abs(active.values[active.axis]) < 1e-6 ? 1 : active.values[active.axis]
+            document.setLive(field, .double((base * factor * 10000).rounded() / 10000))
+        default:
+            guard let model = active.radiusModel, let a = project(Math3D.point(model, active.radiusLocal)),
+                  let b = project(Math3D.point(model, active.radiusLocal + Vec3(1, 0, 0))) else { return }
+            let sx = b.x - a.x, sy = b.y - a.y
+            let length = sx * sx + sy * sy
+            guard length > 0.01 else { return }
+            let amount = Double((dx * sx + dy * sy) / length)
+            for (slot, channel) in radiusChannels(root, gizmo.radiusTags).enumerated() where slot < active.values.count {
+                var keys = channel.read()
+                if keys.isEmpty {
+                    keys = [CurveKeyPoint(time: 0, value: active.values[slot] + amount, interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0)]
+                } else {
+                    let shift = active.values[slot] + amount - keys[0].value
+                    for i in keys.indices { keys[i].value = ((keys[i].value + shift) * 10000).rounded() / 10000 }
+                }
+                channel.write(keys)
+            }
+            document.touch()
+        }
+    }
+
+    func gizmoEnd() {
+        guard let active = gizmo.active, let document else { return }
+        gizmo.active = nil
+        document.registerUndo(active.kind == 0 ? "Move" : active.kind == 1 ? "Rotate" : active.kind == 3 ? "Scale" : "Resize", since: active.before)
+    }
+}

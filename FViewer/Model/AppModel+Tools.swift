@@ -367,8 +367,8 @@ extension AppModel {
             } else if ext == "vfxedit" || ext == "vfxedit2" {
                 importFromNodeLibrary(url)
                 handled = true
-            } else if ext == "tmb" || ext == "pap" {
-                if let data = try? Data(contentsOf: url) { listEffects(of: data, title: url.lastPathComponent) }
+            } else if ["tmb", "pap", "eid", "scd", "mdl", "mtrl", "sklb", "skp", "phyb", "kdb", "pbd", "atch", "shpk", "shcd", "uld"].contains(ext) {
+                inspectGameFile(url)
                 handled = true
             } else if ext == "fvworkspace", libraryRoot != nil {
                 openWorkspace(url)
@@ -393,6 +393,105 @@ extension AppModel {
             notice = "Merged \(url.lastPathComponent): \(result.nodes) node\(result.nodes == 1 ? "" : "s"), \(result.timelines) timeline\(result.timelines == 1 ? "" : "s") scheduled"
         } catch {
             errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    var thumbnailFolder: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let folder = base.appendingPathComponent("FViewer/Thumbnails", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    func thumbnailURL(for file: URL) -> URL? {
+        let key = String(format: "%08x", ZipWriter.crc32(Array(file.standardizedFileURL.path.utf8)))
+        return thumbnailFolder?.appendingPathComponent(key + ".png")
+    }
+
+    func thumbnail(for file: URL) -> NSImage? {
+        guard let url = thumbnailURL(for: file), FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    func saveThumbnail(_ image: CGImage, for file: URL) {
+        guard let url = thumbnailURL(for: file) else { return }
+        let width = 240, height = max(1, image.height * 240 / max(image.width, 1))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let scaled = context.makeImage(), let data = NSBitmapImageRep(cgImage: scaled).representation(using: .png, properties: [:]) else { return }
+        try? data.write(to: url, options: .atomic)
+        objectWillChange.send()
+    }
+
+    func scheduleThumbnail(for file: URL) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, self.document?.url == file else { return }
+            ViewportRenderer.main?.captureRequest = { [weak self] image in self?.saveThumbnail(image, for: file) }
+        }
+    }
+
+    func note(for file: URL) -> String {
+        (UserDefaults.standard.dictionary(forKey: "file.notes") as? [String: String])?[file.standardizedFileURL.path] ?? ""
+    }
+
+    func setNote(_ text: String, for file: URL) {
+        var notes = UserDefaults.standard.dictionary(forKey: "file.notes") as? [String: String] ?? [:]
+        let key = file.standardizedFileURL.path
+        if text.isEmpty { notes.removeValue(forKey: key) } else { notes[key] = text }
+        UserDefaults.standard.set(notes, forKey: "file.notes")
+        objectWillChange.send()
+    }
+
+    func editNote(for file: URL) {
+        let alert = NSAlert()
+        alert.messageText = "Note for \(file.lastPathComponent)"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.stringValue = note(for: file)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        setNote(field.stringValue.trimmingCharacters(in: .whitespaces), for: file)
+    }
+
+    func forgetRecent(_ file: URL) {
+        let list = (UserDefaults.standard.array(forKey: "recent.bookmarks") as? [Data] ?? []).filter { data in
+            var stale = false
+            return (try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], bookmarkDataIsStale: &stale))?.standardizedFileURL != file.standardizedFileURL
+        }
+        UserDefaults.standard.set(list, forKey: "recent.bookmarks")
+        if let url = thumbnailURL(for: file) { try? FileManager.default.removeItem(at: url) }
+        objectWillChange.send()
+    }
+
+    func flatModelJSON(_ block: AvfxBlock) -> Data {
+        let mesh = MeshData.fromAvfx(block)
+        func round(_ value: Float) -> Double { (Double(value) * 100000).rounded() / 100000 }
+        var positions: [Double] = [], depth: [Double] = [], uvs: [Double] = [], color: [Double] = [], alpha: [Double] = []
+        for vertex in mesh.vertices {
+            positions.append(contentsOf: [round(vertex.position.x), round(vertex.position.z)])
+            depth.append(round(vertex.position.y))
+            uvs.append(contentsOf: [round(vertex.uv.x), round(vertex.uv.y)])
+            color.append(contentsOf: [round(vertex.color.x), round(vertex.color.y), round(vertex.color.z)])
+            alpha.append(round(vertex.color.w))
+        }
+        let object: [String: Any] = ["positions": positions, "z": depth, "indices": mesh.indices.map { Int($0) }, "uvs": [uvs], "color": color, "alpha": alpha]
+        return (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
+    }
+
+    func exportFlatModel(_ block: AvfxBlock, name: String) {
+        let panel = NSSavePanel()
+        panel.title = "Export Flat JSON Model"
+        panel.nameFieldStringValue = name + ".json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try flatModelJSON(block).write(to: url, options: .atomic)
+            notice = "Model written to \(url.lastPathComponent)"
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

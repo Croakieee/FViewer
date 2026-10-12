@@ -143,7 +143,7 @@ struct NodeGraphView: View {
                             let resolved = context.resolve(text)
                             let box = resolved.measure(in: CGSize(width: 200, height: 20))
                             context.fill(Path(roundedRect: CGRect(x: mid.x - box.width / 2 - 4, y: mid.y - box.height / 2 - 1, width: box.width + 8, height: box.height + 2),
-                                              cornerRadius: 3), with: .color(Color(white: 0.12)))
+                                              cornerRadius: 3), with: .color(Theme.gray(0.12)))
                             context.draw(resolved, at: mid)
                         }
                     }
@@ -213,7 +213,7 @@ struct NodeGraphView: View {
                         .foregroundStyle(Color(red: 1, green: 0.5, blue: 0.45))
                         .padding(.horizontal, 8)
                         .frame(height: 20)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.22)))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
                         .onTapGesture {
                             remove()
                             self.selectedEdge = nil
@@ -223,13 +223,13 @@ struct NodeGraphView: View {
                     if let linkNote {
                         Text(linkNote).font(Theme.small).foregroundStyle(Color.orange).lineLimit(1)
                             .padding(.horizontal, 8).frame(height: 20)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.16)))
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
                     }
                 }
                 .padding(6)
             }
             .clipped()
-            .background(Color(white: 0.115))
+            .background(Theme.gray(0.115))
             .focusable()
             .focusEffectDisabled()
             .focused($focused)

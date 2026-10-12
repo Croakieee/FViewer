@@ -390,6 +390,9 @@ extension EffectDocument {
         }
         if block.tag == "Modl" {
             actions.insert(NodeAction(id: node.id + "!editor", title: "Open Model Editor…", symbol: "macwindow") { AppDelegate.model?.requestModelEditor(node.id) }, at: 0)
+            actions.insert(NodeAction(id: node.id + "!flat", title: "Export Flat JSON…", symbol: "curlybraces") {
+                AppDelegate.model?.exportFlatModel(block, name: node.title.replacingOccurrences(of: " ", with: "_").lowercased())
+            }, at: 0)
             actions.insert(NodeAction(id: node.id + "!gltfout", title: "Export glTF…", symbol: "square.and.arrow.up") {
                 AppDelegate.model?.exportModel(block, name: node.title.replacingOccurrences(of: " ", with: "_"))
             }, at: 0)

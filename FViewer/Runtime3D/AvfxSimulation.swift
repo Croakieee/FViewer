@@ -112,7 +112,7 @@ final class EmitterInstance {
     private var onVertex: Bool { [2, 3, 6, 7].contains(schema.generateMethod) }
 
     func nextPoint(_ random: inout SeededRandom) -> EmitPoint? {
-        if schema.type == 1 || schema.type == 2 {
+        if (schema.type == 1 || schema.type == 2) && PreviewRules.isOn("coneEmitters") {
             let at = CurveTime(age)
             let half = max(0, Eval.curve(schema.coneAngle, at, 0) + Eval.curve(schema.coneAngleRandom, at, 0) * (random.next() * 2 - 1))
             let cosine = 1 - random.next() * (1 - cos(min(half, .pi)))
@@ -357,7 +357,7 @@ final class AvfxSimulation {
 
     private func binderMatrix(_ index: Int) -> () -> Mat4 {
         var object = matrix_identity_float4x4
-        if index >= 0, index < schema.binders.count, schema.binders[index].type == 3 {
+        if index >= 0, index < schema.binders.count, schema.binders[index].type == 3, PreviewRules.isOn("cameraBinder") {
             let distance = schema.binders[index].distance
             return { [weak self] in
                 guard let self else { return matrix_identity_float4x4 }
@@ -625,7 +625,7 @@ final class AvfxSimulation {
     }
 
     private func spawnParticle(_ ps: RParticle, _ item: REmitterItem, _ e: EmitterInstance, copyIndex: Int) -> ParticleInstance {
-        let trail = ps.type == ParticleKind.polyline ? ps.polyline.map { PolylineTrail($0) } : nil
+        let trail = ps.type == ParticleKind.polyline && PreviewRules.isOn("trails") ? ps.polyline.map { PolylineTrail($0) } : nil
         let shape = trail?.geometry ?? geometry(for: ps)
         var cloud: SpriteCloud?
         if shape != nil, let simple = ps.simple, ps.type == ParticleKind.powder || ps.type == ParticleKind.line {
@@ -714,6 +714,7 @@ final class AvfxSimulation {
 
     func lights(filter: VisibilityFilter = VisibilityFilter()) -> [LightDraw] {
         var result: [LightDraw] = []
+        guard PreviewRules.isOn("lights") else { return result }
         for e in emitters where e.schema.index < schema.emitterEffectors.count {
             let index = schema.emitterEffectors[e.schema.index]
             guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 0 else { continue }
@@ -902,9 +903,11 @@ final class AvfxSimulation {
 
             var color = Eval.color(s.color, t, p.seed)
             color.w *= fadeNow
-            color.x *= schema.revisedColor.x
-            color.y *= schema.revisedColor.y
-            color.z *= schema.revisedColor.z
+            if PreviewRules.isOn("revisedColor") {
+                color.x *= schema.revisedColor.x
+                color.y *= schema.revisedColor.y
+                color.z *= schema.revisedColor.z
+            }
             if p.item.influenceColor != 0 { color *= p.emitter.color }
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
@@ -927,7 +930,7 @@ final class AvfxSimulation {
                 let uv = s.uvSets[layer.uvSet]
                 let scale = Eval.axes(uv.scale, t, 1, p.seed, 11)
                 let scroll = Eval.axes(uv.scroll, t, 0, p.seed, 13)
-                let rotation = -Eval.curve(uv.rotation, t)
+                let rotation = (PreviewRules.isOn("uvRotationReversed") ? -1 : 1) * Eval.curve(uv.rotation, t)
                 let c = cos(rotation), sn = sin(rotation)
                 draw.uvMatrix[slot] = Vec4(scale.x * c, scale.x * sn, -scale.y * sn, scale.y * c)
                 draw.uvOffset[slot] = SIMD2(scroll.x, scroll.y)

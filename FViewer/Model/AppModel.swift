@@ -22,11 +22,15 @@ final class AppModel: ObservableObject {
     @Published var showEmitters = false
     @Published var showBindPoints = true
     @Published var showFloor = false
+    @Published var showGizmo = true
     @Published var viewportBackground = 0
     @Published var highlightSelection = true
     @Published var gameRoot: URL?
     @Published var convertImages = false
     @Published var effectList: EffectList?
+    @Published var modList: [PenumbraMod]?
+    @Published var gameFile: GameFileDocument?
+    var openGameFileWindow: (() -> Void)?
     var game: GameArchive?
 
     static let backgrounds: [(name: String, value: Double)] = [("Dark Grey", 0.24), ("Black", 0.02), ("Mid Grey", 0.5), ("Light", 0.82)]
@@ -159,6 +163,7 @@ final class AppModel: ObservableObject {
             documents[url] = opened
             remember(url)
             document = opened
+            scheduleThumbnail(for: url)
             documentSink = opened.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         } catch {
             errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
@@ -222,6 +227,7 @@ final class AppModel: ObservableObject {
 
     @Published var itemEditorTarget: String?
     var openItemWindow: (() -> Void)?
+    var openSettingsWindow: (() -> Void)?
 
     static func itemEditorRoot(_ id: String) -> String? {
         let parts = id.split(separator: "/").map(String.init)
@@ -988,6 +994,51 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    var textureAssets: [(name: String, relative: String, url: URL)] {
+        texturePaths.map { (($0.key as NSString).lastPathComponent, $0.key, $0.value) }.sorted { $0.1 < $1.1 }
+    }
+
+    var modelAssets: [(name: String, url: URL)] { modelFiles.map { ($0.key, $0.value) }.sorted { $0.0 < $1.0 } }
+
+    func assetImage(_ url: URL) -> CGImage? {
+        if let cached = imageCache[url] { return cached }
+        var image: CGImage?
+        if url.pathExtension.lowercased() == "png" {
+            image = CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        } else if let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data), mip: 1) {
+            image = decoded.makeImage()
+        }
+        if let image { imageCache[url] = image }
+        return image
+    }
+
+    func gamePath(forAsset url: URL) -> String? {
+        let parts = url.standardizedFileURL.path.lowercased().split(separator: "/").map(String.init)
+        guard let start = parts.lastIndex(where: { ["vfx", "chara", "bg", "bgcommon"].contains($0) }) else { return nil }
+        return parts[start...].joined(separator: "/")
+    }
+
+    @discardableResult func addTextureAsset(_ url: URL, to document: EffectDocument) -> Int? {
+        guard let root = document.avfxRoot else { return nil }
+        let ext = url.pathExtension.lowercased()
+        if (ext == "atex" || ext == "tex"), let path = gamePath(forAsset: url) {
+            if let existing = root.childrenNamed("Tex").firstIndex(where: { $0.stringValue.lowercased() == path }) { return existing }
+            document.addTexture(path: path)
+            return root.childrenNamed("Tex").count - 1
+        }
+        guard AppModel.imageSourceTypes.contains(ext) else { return nil }
+        document.undoManager.beginUndoGrouping()
+        defer { document.undoManager.endUndoGrouping() }
+        document.addTexture(path: customPrefix + url.deletingPathExtension().lastPathComponent.lowercased() + ".atex")
+        guard let block = root.childrenNamed("Tex").last else { return nil }
+        do {
+            _ = try installTexture(from: url, for: block, in: document)
+        } catch {
+            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
+        return root.childrenNamed("Tex").count - 1
     }
 
     func textureURL(_ path: String) -> URL? {
