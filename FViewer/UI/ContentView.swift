@@ -113,14 +113,13 @@ struct TopBar: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(RoundedRectangle(cornerRadius: 3).fill(document.format == .avfx ? NodeTint.particle.color : NodeTint.emitter.color))
                 Text(document.title + (document.isDirty ? " •" : "")).font(Theme.font).foregroundStyle(Theme.text)
-                if let exact = document.roundTripExact {
+                if document.roundTripExact == false {
                     HStack(spacing: 3) {
-                        Image(systemName: exact ? "checkmark.seal.fill" : "exclamationmark.triangle.fill").font(.system(size: 9))
-                        Text(exact ? "Verified" : "Not byte-exact").font(Theme.small)
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
+                        Text("Not byte-exact").font(Theme.small)
                     }
-                    .foregroundStyle(exact ? Color(red: 0.45, green: 0.8, blue: 0.45) : Color.orange)
-                    .help(exact ? "The file was re-encoded right after loading and matched the original byte for byte, so saving cannot damage untouched data"
-                          : "Re-encoding this file does not reproduce it byte for byte. Keep a backup: saving may change data you did not edit")
+                    .foregroundStyle(Color.orange)
+                    .help("Re-encoding this file does not reproduce it byte for byte. Keep a backup: saving may change data you did not edit")
                 }
             }
             Spacer()
