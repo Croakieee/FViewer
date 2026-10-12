@@ -872,9 +872,10 @@ final class AvfxSimulation {
             let localPosition = Eval.axes(s.position, t, 0, p.seed, 1)
             var localRotation = Eval.axes(s.rotation, t, 0, p.seed, 4)
             let spun = p.totalAge * p.timeScale
-            localRotation.x += Eval.curve(s.rotVelX, t) * spun
-            localRotation.y += Eval.curve(s.rotVelY, t) * spun
-            localRotation.z += Eval.curve(s.rotVelZ, t) * spun
+            let spinRandom = PreviewRules.isOn("rotationVelocityRandom")
+            localRotation.x += (spinRandom ? Eval.withRandom(s.rotVelX, s.rotVelRandom[0], t, 0, p.seed.get(20)) : Eval.curve(s.rotVelX, t)) * spun
+            localRotation.y += (spinRandom ? Eval.withRandom(s.rotVelY, s.rotVelRandom[1], t, 0, p.seed.get(21)) : Eval.curve(s.rotVelY, t)) * spun
+            localRotation.z += (spinRandom ? Eval.withRandom(s.rotVelZ, s.rotVelRandom[2], t, 0, p.seed.get(22)) : Eval.curve(s.rotVelZ, t)) * spun
             let injection = Math3D.euler(p.item.injectionAngle * Float(p.copyIndex), order: s.rotationOrder)
             let hasInjection = simd_length_squared(p.item.injectionAngle) > 0 && p.copyIndex != 0
             let treeQuadFixed = s.type == ParticleKind.quad && s.rotationBase == Base.treeBillboard
@@ -989,6 +990,16 @@ final class AvfxSimulation {
                 color.z *= schema.revisedColor.z
             }
             if p.item.influenceColor != 0 { color *= p.emitter.color }
+            if PreviewRules.isOn("clipDistance"), s.clipNear != nil || s.clipFar != nil {
+                let place = Vec3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+                let reach = simd_length(place - (s.clipFromCaster ? Vec3(0, 0, 0) : camera.position))
+                func ramp(_ a: Float, _ b: Float) -> Float {
+                    let low = min(a, b), high = max(a, b)
+                    return high - low < 1e-5 ? (reach >= high ? 1 : 0) : min(max((reach - low) / (high - low), 0), 1)
+                }
+                if let near = s.clipNear { color.w *= ramp(near.start, near.end) }
+                if let far = s.clipFar { color.w *= 1 - ramp(far.start, far.end) }
+            }
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
             var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? matrix_identity_float4x4 : m, color: color)
@@ -1010,7 +1021,8 @@ final class AvfxSimulation {
                 let uv = s.uvSets[layer.uvSet]
                 let scale = Eval.axes(uv.scale, t, 1, p.seed, 11)
                 let scroll = Eval.axes(uv.scroll, t, 0, p.seed, 13)
-                let rotation = (PreviewRules.isOn("uvRotationReversed") ? -1 : 1) * Eval.curve(uv.rotation, t)
+                let turn = PreviewRules.isOn("uvRotationRandom") ? Eval.withRandom(uv.rotation, uv.rotationRandom, t, 0, p.seed.get(23)) : Eval.curve(uv.rotation, t)
+                let rotation = (PreviewRules.isOn("uvRotationReversed") ? -1 : 1) * turn
                 let c = cos(rotation), sn = sin(rotation)
                 draw.uvMatrix[slot] = Vec4(scale.x * c, scale.x * sn, -scale.y * sn, scale.y * c)
                 draw.uvOffset[slot] = SIMD2(scroll.x, scroll.y)

@@ -150,17 +150,17 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     float tc1Alpha = t.a;
     if (u.layer[1].x > 0.5) {
         float4 l = sampleLayer(map2, s2, uv2, u.layer[1]);
-        t = combine(t, l, u.layer[1]);
+        t = hasT ? combine(t, l, u.layer[1]) : l;
         hasT = true;
     }
     if (u.layer[2].x > 0.5) {
         float4 l = sampleLayer(map4, s4, uv4, u.layer[2]);
-        t = combine(t, l, u.layer[2]);
+        t = hasT ? combine(t, l, u.layer[2]) : l;
         hasT = true;
     }
     if (u.layer[3].x > 0.5) {
         float4 l = sampleLayer(map5, s5, uv5, u.layer[3]);
-        t = combine(t, l, u.layer[3]);
+        t = hasT ? combine(t, l, u.layer[3]) : l;
     }
     if (u.flags2.z > 0.5) {
         t.a *= map6.sample(s6, float2(tc1Alpha + u.misc.z, 0.5)).a;

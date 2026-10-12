@@ -145,21 +145,36 @@ final class ParticleRenderer {
         buffers = [:]
     }
 
+    private static var mipQueue: MTLCommandQueue?
+
     static func makeTexture(_ device: MTLDevice, _ decoded: DecodedTexture) -> MTLTexture? {
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: decoded.width, height: decoded.height, mipmapped: false)
+        let mipped = decoded.width > 1 && decoded.height > 1
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: decoded.width, height: decoded.height, mipmapped: mipped)
+        descriptor.usage = mipped ? [.shaderRead, .renderTarget] : [.shaderRead]
         guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
         texture.replace(region: MTLRegionMake2D(0, 0, decoded.width, decoded.height), mipmapLevel: 0, withBytes: decoded.rgba,
                         bytesPerRow: decoded.width * 4)
+        if mipped {
+            if mipQueue == nil { mipQueue = device.makeCommandQueue() }
+            if let buffer = mipQueue?.makeCommandBuffer(), let blit = buffer.makeBlitCommandEncoder() {
+                blit.generateMipmaps(for: texture)
+                blit.endEncoding()
+                buffer.commit()
+            }
+        }
         return texture
     }
 
-    private func sampler(_ u: Int, _ v: Int) -> MTLSamplerState? {
-        let key = u * 3 + v
+    private func sampler(_ u: Int, _ v: Int, filter: Int = 1) -> MTLSamplerState? {
+        let level = PreviewRules.isOn("textureFilter") ? min(max(filter, 0), 4) : 1
+        let key = u * 3 + v + level * 16
         if let cached = samplers[key] { return cached }
         func mode(_ border: Int) -> MTLSamplerAddressMode { border == 1 ? .clampToEdge : border == 2 ? .mirrorRepeat : .repeat }
         let d = MTLSamplerDescriptor()
         d.minFilter = .linear
         d.magFilter = .linear
+        d.mipFilter = .linear
+        d.maxAnisotropy = level >= 2 ? [4, 8, 16][level - 2] : 1
         d.sAddressMode = mode(u)
         d.tAddressMode = mode(v)
         let state = device.makeSamplerState(descriptor: d)
@@ -184,7 +199,7 @@ final class ParticleRenderer {
             if i > 0, (calcColor == 1 && texture.alphaOnly) || calcColor == 5 { calcColor = 9 }
             flags[i] = Vec4(1, Float(calcColor), Float(layer.calcAlpha), layer.colorToAlpha ? 1 : 0)
             m.textures[slots[i]] = texture.texture
-            m.samplers[slots[i]] = sampler(layer.borderU, layer.borderV)
+            m.samplers[slots[i]] = sampler(layer.borderU, layer.borderV, filter: layer.filter)
         }
         m.uniforms.layer = (flags[0], flags[1], flags[2], flags[3])
         if let tc1 = ps.tc1, loaded[0] != nil { m.frames = tc1.textures.map { textureProvider($0)?.texture } }
@@ -192,7 +207,7 @@ final class ParticleRenderer {
         if PreviewRules.isOn("distortion"), let td = ps.distortion, td.enabled, let first = td.textures.first, let texture = textureProvider(first) {
             distortion = td
             m.textures[2] = texture.texture
-            m.samplers[2] = sampler(td.borderU, td.borderV)
+            m.samplers[2] = sampler(td.borderU, td.borderV, filter: td.filter)
         }
         func distorted(_ layer: RTextureLayer?, _ present: Bool) -> Float {
             guard let distortion, let layer, present, layer.uvSet >= 0, layer.uvSet < 4 else { return 0 }

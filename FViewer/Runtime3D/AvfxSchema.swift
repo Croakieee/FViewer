@@ -121,6 +121,7 @@ struct RUvSet {
     var scale: RCurve3
     var scroll: RCurve3
     var rotation: RCurve?
+    var rotationRandom: RCurve? = nil
 }
 
 struct RTextureLayer {
@@ -137,6 +138,7 @@ struct RTextureLayer {
     var targets: [Bool] = [false, false, false, false]
     var power: RCurve?
     var screenCopy = false
+    var filter = 1
 }
 
 struct RPalette {
@@ -258,6 +260,10 @@ struct RParticle {
     var disc: RDisc?
     var polyline: RPolyline?
     var softParticle = false
+    var rotVelRandom: [RCurve?] = [nil, nil, nil]
+    var clipNear: (start: Float, end: Float)? = nil
+    var clipFar: (start: Float, end: Float)? = nil
+    var clipFromCaster = false
 }
 
 struct RBinder {
@@ -368,7 +374,7 @@ enum AvfxSchemaReader {
                              borderV: block.int("TBVT"), calcColor: block.int("TCCT"), calcAlpha: block.int("TCAT"),
                              textures: textures.filter { $0 >= 0 }, texN: curve(block.child("TxN")), texNRandom: curve(block.child("TxNR")),
                              targets: [block.bool("bT1"), block.bool("bT2"), block.bool("bT3"), block.bool("bT4")], power: curve(block.child("DPow")),
-                             screenCopy: block.bool("bUSC"))
+                             screenCopy: block.bool("bUSC"), filter: block.int("TFT", 1))
     }
 
     static func simple(_ block: AvfxBlock?) -> RSimple? {
@@ -476,14 +482,17 @@ enum AvfxSchemaReader {
                 airResistanceRandom: curve(p.child("ARsR")), scale: curve3(p.child("Scl")), rotation: curve3(p.child("Rot")),
                 position: curve3(p.child("Pos")), rotVelX: curve(p.child("VRX")), rotVelY: curve(p.child("VRY")), rotVelZ: curve(p.child("VRZ")),
                 color: color(p.child("Col")),
-                uvSets: p.childrenNamed("UvSt").map { RUvSet(scale: curve3($0.child("Scl")), scroll: curve3($0.child("Scr")), rotation: curve($0.child("Rot"))) },
+                uvSets: p.childrenNamed("UvSt").map { RUvSet(scale: curve3($0.child("Scl")), scroll: curve3($0.child("Scr")), rotation: curve($0.child("Rot")), rotationRandom: curve($0.child("RotR"))) },
                 tc1: layer(p.child("TC1")), tc2: layer(p.child("TC2")), tc3: layer(p.child("TC3")), tc4: layer(p.child("TC4")),
                 palette: palette, distortion: layer(p.child("TD")), modelIndex: modelIndex, colorBegin: optionalColor(data?.child("ColB")),
                 colorEnd: optionalColor(data?.child("ColE")), lineLength: curve(data?.child("Len")), lineLengthRandom: curve(data?.child("LenR")),
                 laserWidth: curve(data?.child("Wdt")), laserWidthRandom: curve(data?.child("WdtR")), fresnelType: data?.int("FrsT") ?? 0,
                 windmillUvType: data?.int("WUvT") ?? 0, ringWidth: curve(data?.child("WID")), ringWidthRandom: curve(data?.child("WIDR")),
                 ringFan: data?.float("RF", 1) ?? 1, simple: p.bool("bSCt") ? simple(p.child("Smpl")) : nil, disc: type == 12 ? disc(data) : nil,
-                polyline: type == 6 ? polyline(data) : nil, softParticle: p.bool("DsSp"))
+                polyline: type == 6 ? polyline(data) : nil, softParticle: p.bool("DsSp"),
+                rotVelRandom: [curve(p.child("VRXR")), curve(p.child("VRYR")), curve(p.child("VRZR"))],
+                clipNear: p.bool("bNea") ? (p.float("NeSt"), p.float("NeEd")) : nil, clipFar: p.bool("bFar") ? (p.float("FaSt"), p.float("FaEd")) : nil,
+                clipFromCaster: p.int("FaBP") == 1)
         }
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
