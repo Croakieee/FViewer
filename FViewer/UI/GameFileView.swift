@@ -30,13 +30,11 @@ final class GameFileDocument: ObservableObject {
         guard let current = GameFiles.offsetString(bytes, item: item, field: field) else { return }
         if GameFiles.setString(&bytes, at: current.at, old: current.text, new: text) {
             note = nil
-        } else if kind == .tmb, bytes.count >= 12, GameFiles.i32(bytes, 4) == bytes.count, !text.isEmpty {
-            let offset = bytes.count - (item.offset + 8)
-            bytes.append(contentsOf: Array(text.utf8) + [0])
-            while bytes.count % 4 != 0 { bytes.append(0) }
-            GameFiles.put32(&bytes, item.offset + field, UInt32(offset))
-            GameFiles.put32(&bytes, 4, UInt32(bytes.count))
-            note = "The longer path was added at the end of the file"
+        } else if !text.isEmpty, let owner = tmbBlocks.first(where: { item.offset >= $0.offset && item.offset < $0.offset + $0.size }),
+                  let index = owner.items.firstIndex(where: { $0.offset == item.offset }),
+                  let next = TmbCatalog.setString(bytes, block: owner, index: index, field: field, text: text) {
+            bytes = next
+            note = "The longer path was added at the end of the timeline"
         } else {
             note = "The path can be at most \(current.text.utf8.count) characters here"
         }
@@ -272,7 +270,7 @@ private struct TmbView: View {
                     SegmentButton(title: "Duplicate Entry", active: false) {
                         if let problem = TmbCatalog.canRestructure(b, block) {
                             file.note = problem
-                        } else if let next = TmbCatalog.duplicate(b, block: block, entry: item) {
+                        } else if let next = TmbCatalog.duplicate(b, block: block, index: item.id) {
                             file.bytes = next
                             file.selection = item.id + 1
                             file.note = nil
@@ -281,14 +279,46 @@ private struct TmbView: View {
                     SegmentButton(title: "Delete Entry", active: false) {
                         if let problem = TmbCatalog.canRestructure(b, block) {
                             file.note = problem
-                        } else if let next = TmbCatalog.remove(b, block: block, entry: item) {
+                        } else if let next = TmbCatalog.remove(b, block: block, index: item.id) {
                             file.bytes = next
                             file.selection = max(0, item.id - 1)
                             file.note = nil
                         }
                     }
                     Spacer()
-                    HelpBadge(text: "A duplicate gets a new id and goes into the same track right after this entry. Both work in standalone .tmb files; inside a .pap only values can be edited.")
+                    HelpBadge(text: "A duplicate gets a new id and goes into the same track right after this entry. To add an entry of another kind, select a track and use Add Entry.")
+                }
+            }
+            if item.magic == "TMTR", let block {
+                HStack(spacing: 6) {
+                    Menu {
+                        ForEach(TmbCatalog.entryTypes, id: \.magic) { entry in
+                            Button("\(entry.magic)  \(entry.name)") {
+                                if let problem = TmbCatalog.canRestructure(b, block) {
+                                    file.note = problem
+                                } else if let next = TmbCatalog.create(b, block: block, magic: entry.magic, track: item.id) {
+                                    file.bytes = next
+                                    file.selection = block.items.count
+                                    file.note = nil
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus").font(.system(size: 9, weight: .bold))
+                            Text("Add Entry").font(Theme.font)
+                        }
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 8)
+                        .frame(height: 20)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    Spacer()
+                    HelpBadge(text: "A new entry of the chosen kind is added to the end of this track with the values the plugin gives a fresh entry.")
                 }
             }
             if item.magic != "TMAL", item.magic != "TMPP" {
@@ -418,6 +448,20 @@ private struct ScdView: View {
 private struct RawFileView: View {
     @ObservedObject var file: GameFileDocument
 
+    private func edit(_ label: String, _ value: String, slot: Int) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.dim).frame(width: 130, alignment: .trailing)
+            TextValueField(value: value) { text in
+                guard let at = GameFiles.mtrlStringOffset(file.bytes, slot: slot) else { return }
+                if GameFiles.setString(&file.bytes, at: at, old: value, new: text) {
+                    file.note = nil
+                } else {
+                    file.note = "The text can be at most \(value.utf8.count) characters here"
+                }
+            }
+        }
+    }
+
     private func line(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label).font(Theme.font).foregroundStyle(Theme.dim).frame(width: 130, alignment: .trailing)
@@ -433,8 +477,12 @@ private struct RawFileView: View {
             VStack(spacing: 6) {
                 if ext == "mtrl", let summary = GameFiles.mtrlSummary(file.bytes) {
                     Panel(title: "Material") {
-                        line("Shader", summary.shader)
-                        ForEach(Array(summary.textures.enumerated()), id: \.offset) { index, path in line("Texture \(index)", path) }
+                        edit("Shader", summary.shader, slot: -1)
+                        ForEach(Array(summary.textures.enumerated()), id: \.offset) { index, path in edit("Texture \(index)", path, slot: index) }
+                        HStack {
+                            Spacer()
+                            HelpBadge(text: "The shader and texture paths can be replaced by text of the same length or shorter; the file layout stays as it is.")
+                        }
                         ForEach(Array(summary.uvSets.enumerated()), id: \.offset) { index, name in line("UV Set \(index)", name) }
                         ForEach(Array(summary.colorSets.enumerated()), id: \.offset) { index, name in line("Colour Set \(index)", name) }
                     }

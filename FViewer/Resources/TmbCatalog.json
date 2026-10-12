@@ -5,7 +5,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 50.0
    },
    {
     "at": 16,
@@ -59,7 +60,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 50.0
    },
    {
     "at": 16,
@@ -83,7 +85,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 50.0
    },
    {
     "at": 16,
@@ -149,7 +152,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 30.0
    },
    {
     "at": 16,
@@ -219,7 +223,8 @@
     "at": 26,
     "name": "Bind Point 1",
     "size": 2,
-    "type": "Short"
+    "type": "Short",
+    "value": -1.0
    },
    {
     "at": 28,
@@ -277,13 +282,15 @@
     "at": 30,
     "name": "Bind Point 2",
     "size": 2,
-    "type": "Short"
+    "type": "Short",
+    "value": -1.0
    },
    {
     "at": 32,
     "name": "Scale",
     "size": 8,
-    "type": "OffsetFloat3"
+    "type": "OffsetFloat3",
+    "value": 1.0
    },
    {
     "at": 40,
@@ -301,7 +308,8 @@
     "at": 56,
     "name": "RGBA",
     "size": 8,
-    "type": "OffsetFloat4"
+    "type": "OffsetFloat4",
+    "value": 1.0
    },
    {
     "at": 64,
@@ -749,7 +757,8 @@
     "at": 12,
     "name": "Loop/Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 1.0
    },
    {
     "at": 16,
@@ -761,6 +770,7 @@
     "at": 20,
     "name": "Path",
     "size": 4,
+    "text": "sound/replace_me.scd",
     "type": "OffsetString"
    },
    {
@@ -827,13 +837,15 @@
     "at": 20,
     "name": "Color 1",
     "size": 8,
-    "type": "OffsetFloat4"
+    "type": "OffsetFloat4",
+    "value": 1.0
    },
    {
     "at": 28,
     "name": "Color 2",
     "size": 8,
-    "type": "OffsetFloat4"
+    "type": "OffsetFloat4",
+    "value": 1.0
    }
   ],
   "name": "Shade Color",
@@ -863,7 +875,8 @@
     "at": 24,
     "name": "Scale",
     "size": 8,
-    "type": "OffsetFloat3"
+    "type": "OffsetFloat3",
+    "value": 1.0
    },
    {
     "at": 32,
@@ -881,7 +894,8 @@
     "at": 48,
     "name": "RGBA",
     "size": 8,
-    "type": "OffsetFloat4"
+    "type": "OffsetFloat4",
+    "value": 1.0
    },
    {
     "at": 56,
@@ -995,7 +1009,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 30.0
    },
    {
     "at": 16,
@@ -1007,13 +1022,15 @@
     "at": 20,
     "name": "Color 1",
     "size": 8,
-    "type": "OffsetFloat4"
+    "type": "OffsetFloat4",
+    "value": 1.0
    },
    {
     "at": 28,
     "name": "Color 2",
     "size": 8,
-    "type": "OffsetFloat4"
+    "type": "OffsetFloat4",
+    "value": 1.0
    },
    {
     "at": 36,
@@ -1199,7 +1216,8 @@
     "at": 12,
     "name": "Transition Time",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 1.0
    },
    {
     "at": 16,
@@ -1211,7 +1229,8 @@
     "at": 20,
     "name": "Unknown 3",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 100.0
    }
   ],
   "name": "Animation Transition",
@@ -1223,7 +1242,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 1.0
    },
    {
     "at": 16,
@@ -1235,7 +1255,8 @@
     "at": 20,
     "name": "Wave Type",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 100.0
    }
   ],
   "name": "Controller Vibration",
@@ -1271,7 +1292,8 @@
     "at": 12,
     "name": "Duration",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 1.0
    },
    {
     "at": 16,
@@ -1549,7 +1571,8 @@
     "at": 12,
     "name": "Loop / Wait",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 1.0
    },
    {
     "at": 16,
@@ -1619,7 +1642,8 @@
     "at": 26,
     "name": "Bind Point 1",
     "size": 2,
-    "type": "Short"
+    "type": "Short",
+    "value": -1.0
    },
    {
     "at": 28,
@@ -1917,7 +1941,8 @@
     "at": 32,
     "name": "Scale Delay",
     "size": 4,
-    "type": "Int"
+    "type": "Int",
+    "value": 1.0
    },
    {
     "at": 36,

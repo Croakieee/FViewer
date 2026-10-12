@@ -291,6 +291,15 @@ enum GameFiles {
                 ((textures + uvSets)..<(textures + uvSets + colorSets)).map(name))
     }
 
+    static func mtrlStringOffset(_ b: [UInt8], slot: Int) -> Int? {
+        guard b.count >= 16 else { return nil }
+        let count = Int(b[12]) + Int(b[13]) + Int(b[14])
+        let table = 16 + count * 4
+        if slot < 0 { return table + Int(b.u16(10)) }
+        guard slot < count else { return nil }
+        return table + Int(b.u16(16 + slot * 4))
+    }
+
     static func mdlSummary(_ b: [UInt8]) -> [(label: String, value: String)]? {
         guard b.count >= 0x48 else { return nil }
         let declarations = Int(b.u16(12)), materials = Int(b.u16(14))
@@ -309,5 +318,29 @@ enum GameFiles {
         let paths = names.filter { $0.contains("/") }, bones = names.filter { $0.hasPrefix("j_") || $0.hasPrefix("n_") }
         return [("Version", String(format: "0x%08X", b.u32(0))), ("Vertex Declarations", "\(declarations)"), ("Materials", "\(materials)"), ("LODs", "\(b[0x40])"),
                 ("Names", "\(names.count)"), ("Bones", "\(bones.count)"), ("Material Paths", paths.joined(separator: "\n"))]
+    }
+
+    static func papReplacing(_ file: [UInt8], block: TmbBlock, with fresh: [UInt8]) -> [UInt8]? {
+        guard file.count >= 0x1A, file[0] == 0x70, file[1] == 0x61, file[2] == 0x70 else { return nil }
+        let footer = i32(file, 0x16)
+        guard footer > 0, footer <= file.count else { return nil }
+        let blocks = tmbBlocks(file).filter { $0.offset >= footer }.sorted { $0.offset < $1.offset }
+        guard !blocks.isEmpty, blocks[0].offset == footer else { return nil }
+        let remainder = footer % 4
+        var out = Array(file[..<footer])
+        var cursor = footer
+        for (index, item) in blocks.enumerated() {
+            guard item.offset == cursor else { return nil }
+            out.append(contentsOf: item.offset == block.offset ? fresh : Array(file[item.offset..<(item.offset + item.size)]))
+            cursor = item.offset + item.size
+            if index < blocks.count - 1 {
+                let over = (cursor - remainder) % 4
+                if over != 0 { cursor += 4 - over }
+                let overOut = (out.count - remainder) % 4
+                if overOut != 0 { out.append(contentsOf: [UInt8](repeating: 0, count: 4 - overOut)) }
+            }
+        }
+        if cursor < file.count { out.append(contentsOf: file[cursor...]) }
+        return out
     }
 }
