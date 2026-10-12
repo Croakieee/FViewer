@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     @Published var document: EffectDocument?
     @Published var libraryRoot: URL?
     @Published var files: [LibraryFile] = []
+    @Published var gameFiles: [LibraryFile] = []
     @Published var errorMessage: String?
     @Published var bottomTab = 0
     @Published var viewportMode = 0
@@ -39,6 +40,7 @@ final class AppModel: ObservableObject {
     @Published var gameFile: GameFileDocument?
     @Published var skeletonName: String?
     @Published var timelineHits: [URL]?
+    @Published var timelineHitsTitle = "Timelines Using This Effect"
     var openGameFileWindow: (() -> Void)?
     var game: GameArchive?
 
@@ -103,6 +105,7 @@ final class AppModel: ObservableObject {
         modelFiles = [:]
         textureAddress = [:]
         var found: [LibraryFile] = []
+        var others: [LibraryFile] = []
         let skipped: Set<String> = ["node_modules", ".git", ".idea", "reference", "Dalamud-VFXEditor-main"]
         let rootPath = root.standardizedFileURL.path
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return }
@@ -132,12 +135,15 @@ final class AppModel: ObservableObject {
                           let text = String(data: data, encoding: .utf8), text.contains("\"emitters\""), text.contains("\"particles\"") {
                     found.append(LibraryFile(url: url, folder: folder))
                 }
+            case "tmb", "pap", "eid", "scd", "mdl", "mtrl", "sklb", "skp", "phyb", "kdb", "pbd", "atch", "shpk", "shcd", "uld", "imc":
+                others.append(LibraryFile(url: url, folder: folder))
             default:
                 let name = url.lastPathComponent.lowercased()
                 if name.hasPrefix("~"), name.count >= 9, textureFiles[name] == nil { textureFiles[name] = url }
             }
         }
         files = found.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
+        gameFiles = others.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
         imageCache = [:]
         meshCache = [:]
         decodedCache = [:]

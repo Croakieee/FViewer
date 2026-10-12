@@ -204,6 +204,7 @@ struct LibraryView: View {
             EditorHeader(symbol: "folder", title: "File Browser") {
                 Spacer(minLength: 0)
                 HeaderButton(symbol: "photo.on.rectangle", help: "Show the textures and models of the open folder") { mode = 3 }
+                HeaderButton(symbol: "doc.text.magnifyingglass", help: "Show the other game files of the open folder") { mode = 4 }
                 HeaderButton(symbol: "clock", help: "Show the history of opened effects") { mode = 2 }
                 HeaderButton(symbol: "shippingbox", help: "Show the Node Library") { mode = 1 }
                 HeaderButton(symbol: "folder.badge.plus", help: "Open Folder (⇧⌘O)") { app.chooseLibrary() }

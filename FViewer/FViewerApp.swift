@@ -63,8 +63,9 @@ struct FViewerApp: App {
                 Button("Save As…") { app.saveAs() }.keyboardShortcut(AppShortcuts.key("saveAs"), modifiers: [.command, .shift]).disabled(app.document == nil)
             }
             CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { app.document?.undo() }.keyboardShortcut(AppShortcuts.key("undo"))
-                Button("Redo") { app.document?.redo() }.keyboardShortcut(AppShortcuts.key("redo"), modifiers: [.command, .shift])
+                Button("Undo") { if NSApp.keyWindow?.title == "File Inspector" { app.gameFile?.undo() } else { app.document?.undo() } }.keyboardShortcut(AppShortcuts.key("undo"))
+                Button("Redo") { if NSApp.keyWindow?.title == "File Inspector" { app.gameFile?.redo() } else { app.document?.redo() } }
+                    .keyboardShortcut(AppShortcuts.key("redo"), modifiers: [.command, .shift])
             }
         }
     }

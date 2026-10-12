@@ -53,6 +53,7 @@ struct TopBar: View {
                     Button("Fetch Missing Textures") { app.fetchMissingTextures() }.disabled(app.gameRoot == nil || app.document == nil)
                     Divider()
                     Button("Game Catalog…") { app.showCatalog = true }
+                    Button("Find Effects Using a Texture or Model…") { app.findEffectsPrompt() }.disabled(app.files.isEmpty)
                     Button("Effects of Timeline by Game Path…") { app.listEffectsOfGamePath() }.disabled(app.gameRoot == nil)
                     Button("Effects of Timeline File (.tmb, .pap)…") { app.listEffectsOfFile() }
                     Divider()

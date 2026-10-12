@@ -218,6 +218,15 @@ enum GameFiles {
         }
     }
 
+    static func papAnimationOffset(_ b: [UInt8], index: Int) -> Int? {
+        guard b.count >= 0x1A, b[0] == 0x70, b[1] == 0x61, b[2] == 0x70 else { return nil }
+        let count = i16(b, 8), havok = i32(b, 0x12)
+        guard count > 0, index >= 0, index < count, havok > 0x1A, havok <= b.count else { return nil }
+        let size = (havok - 0x1A) / count
+        guard size >= 37 else { return nil }
+        return 0x1A + index * size
+    }
+
     static func scdAudio(_ b: [UInt8]) -> [ScdAudio] {
         guard b.count >= 0x50, string(b, 0, max: 8) == "SEDBSSCF" else { return [] }
         let header = i16(b, 0x0E)

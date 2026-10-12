@@ -6,7 +6,38 @@ final class GameFileDocument: ObservableObject {
     let url: URL
     let kind: GameFileKind
     let original: [UInt8]
-    @Published var bytes: [UInt8]
+    @Published var bytes: [UInt8] {
+        didSet {
+            guard !travelling, oldValue != bytes else { return }
+            undoStack.append(oldValue)
+            if undoStack.count > 40 { undoStack.removeFirst() }
+            redoStack.removeAll()
+        }
+    }
+    private var undoStack: [[UInt8]] = []
+    private var redoStack: [[UInt8]] = []
+    private var travelling = false
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+
+    func undo() {
+        guard let last = undoStack.popLast() else { return }
+        travelling = true
+        redoStack.append(bytes)
+        bytes = last
+        travelling = false
+        note = nil
+    }
+
+    func redo() {
+        guard let next = redoStack.popLast() else { return }
+        travelling = true
+        undoStack.append(bytes)
+        bytes = next
+        travelling = false
+        note = nil
+    }
+
     @Published var selection = 0
     @Published var block = 0
     @Published var note: String?
@@ -147,8 +178,38 @@ private struct GameFileContent: View {
                 if file.kind == .phyb {
                     SegmentButton(title: "Show in Viewport", active: app.physicsShown == file.url) { app.togglePhysics(file) }
                 }
+                if file.url.pathExtension.lowercased() == "mdl" {
+                    SegmentButton(title: "Show in Viewport", active: app.referenceModelName == file.url.lastPathComponent) {
+                        if app.referenceModelName == file.url.lastPathComponent {
+                            app.clearReferenceModel()
+                        } else {
+                            do { try app.loadReferenceModel(file.url) } catch { file.note = error.localizedDescription }
+                        }
+                    }
+                }
+                if file.url.pathExtension.lowercased() == "sklb" {
+                    SegmentButton(title: "Show in Viewport", active: app.skeletonName == file.url.lastPathComponent) {
+                        do { try app.loadSkeleton(file.url) } catch { file.note = error.localizedDescription }
+                    }
+                }
+                if file.kind == .eid { SegmentButton(title: "Show in Viewport", active: false) { app.showBindPoints(of: file) } }
+                if ["tex", "atex", "mdl"].contains(file.url.pathExtension.lowercased()) {
+                    SegmentButton(title: "Find Effects", active: false) { app.findFiles(containing: file.url.lastPathComponent, effects: true) }
+                }
+                if file.kind == .tmb || file.kind == .pap { SegmentButton(title: "Effects", active: false) { app.listEffects(of: file.url) } }
+                if file.dirty {
+                    let changed = zip(file.bytes, file.original).reduce(abs(file.bytes.count - file.original.count)) { $0 + ($1.0 == $1.1 ? 0 : 1) }
+                    Text("\(changed) bytes changed").font(Theme.small).foregroundStyle(Theme.dim)
+                }
+                HeaderButton(symbol: "arrow.uturn.backward", help: "Undo (⌘Z)") { file.undo() }.opacity(file.canUndo ? 1 : 0.35)
+                HeaderButton(symbol: "arrow.uturn.forward", help: "Redo (⇧⌘Z)") { file.redo() }.opacity(file.canRedo ? 1 : 0.35)
+                HeaderButton(symbol: "doc.on.doc", help: "Copy the game path of this file") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(app.gamePath(forAsset: file.url) ?? file.url.lastPathComponent, forType: .string)
+                }
                 if file.dirty {
                     SegmentButton(title: "Revert", active: false) { file.revert() }
+                    SegmentButton(title: "Export Mod", active: false) { app.exportGameFileMod(file) }
                     SegmentButton(title: "Save Copy", active: true) { app.saveGameFile(file) }
                 }
             }
@@ -235,13 +296,29 @@ private struct TmbView: View {
                     if !animations.isEmpty, let current, current.id < animations.count {
                         let animation = animations[current.id]
                         Panel(title: "Animation") {
-                            row("Name") { Text(animation.name).font(Theme.font).foregroundStyle(Theme.text).textSelection(.enabled) }
-                            row("Type") { Text("\(animation.type)").font(Theme.font).foregroundStyle(Theme.text) }
-                            row("Havok Index") { Text("\(animation.havokIndex)").font(Theme.font).foregroundStyle(Theme.text) }
-                            row("Face Animation") { Text(animation.face ? "Yes" : "No").font(Theme.font).foregroundStyle(Theme.text) }
+                            if let at = GameFiles.papAnimationOffset(file.bytes, index: animation.id) {
+                                row("Name") {
+                                    TextValueField(value: animation.name) { text in
+                                        let raw = Array(text.utf8.prefix(31))
+                                        for slot in 0..<32 { file.bytes[at + slot] = slot < raw.count ? raw[slot] : 0 }
+                                    }
+                                    .frame(width: 260)
+                                }
+                                number("Type", Double(animation.type), integer: true) { file.setShort(at + 32, Int($0)) }
+                                number("Havok Index", Double(animation.havokIndex), integer: true) { file.setShort(at + 34, Int($0)) }
+                                row("Face Animation") { CheckBox(isOn: animation.face, label: "") { file.bytes[at + 36] = $0 ? 1 : 0 }.frame(width: 40) }
+                            }
                         }
                     }
                     if let item { detail(item) }
+                    let problems = TmbCatalog.problems(file.bytes)
+                    if !problems.isEmpty {
+                        Panel(title: "Problems", trailing: "\(problems.count)") {
+                            ForEach(Array(problems.prefix(30).enumerated()), id: \.offset) { _, text in
+                                Text(text).font(Theme.font).foregroundStyle(Color.orange).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                    }
                 }
                 .padding(.vertical, 8)
             }
@@ -285,6 +362,9 @@ private struct TmbView: View {
                 row(field.name) {
                     TextValueField(value: path.text) { file.setPath(item: item, field: field.at, to: $0) }
                     if path.text.hasSuffix(".avfx") { SegmentButton(title: "Open", active: true) { app.openEffect(gamePath: path.text) } }
+                    if !path.text.hasSuffix(".avfx"), path.text.contains("/"), path.text.contains(".") {
+                        SegmentButton(title: "Inspect", active: false) { app.openCatalogPath(path.text) }
+                    }
                 }
             } else {
                 row(field.name) { Text("not set").font(Theme.font).foregroundStyle(Theme.dim) }
@@ -341,8 +421,10 @@ private struct TmbView: View {
                             file.note = nil
                         }
                     }
+                    SegmentButton(title: "Move Up", active: false) { if let next = TmbCatalog.move(b, block: block, index: item.id, by: -1) { file.bytes = next } }
+                    SegmentButton(title: "Move Down", active: false) { if let next = TmbCatalog.move(b, block: block, index: item.id, by: 1) { file.bytes = next } }
                     Spacer()
-                    HelpBadge(text: "A duplicate gets a new id and goes into the same track right after this entry. To add an entry of another kind, select a track and use Add Entry.")
+                    HelpBadge(text: "A duplicate gets a new id and goes into the same track right after this entry. Move Up and Move Down change the order of the entry inside its track. To add an entry of another kind, select a track and use Add Entry.")
                 }
             }
             if item.magic == "TMTR", let block {
@@ -1025,6 +1107,16 @@ private struct RawFileView: View {
         let ext = file.url.pathExtension.lowercased()
         ScrollView {
             VStack(spacing: 6) {
+                if ext == "tex" || ext == "atex", let decoded = try? Atex.decode(file.bytes), let image = decoded.makeImage() {
+                    Panel(title: "Texture", trailing: "\(decoded.width) × \(decoded.height) · \(decoded.formatName) · \(decoded.mipLevels) mips") {
+                        ZStack {
+                            CheckerBackground()
+                            Image(decorative: image, scale: 1).resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
+                        }
+                        .frame(maxWidth: 420, maxHeight: 420)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                }
                 if ext == "mtrl", let layout = MtrlLayout.parse(file.bytes) { MtrlPanels(file: file, layout: layout) }
                 if ext == "sklb", let skeleton = GameSkeleton.parse(file.bytes) {
                     Panel(title: "Bones", trailing: "\(skeleton.names.count)") {

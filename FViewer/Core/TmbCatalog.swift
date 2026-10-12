@@ -137,6 +137,22 @@ enum TmbCatalog {
         return out
     }
 
+    static func move(_ file: [UInt8], block: TmbBlock, index: Int, by step: Int) -> [UInt8]? {
+        guard index < block.items.count, let listAt = listField("TMTR") else { return nil }
+        let entry = block.items[index]
+        for track in block.items where track.magic == "TMTR" {
+            let list = idList(file, item: track, field: listAt)
+            guard let place = list.ids.firstIndex(of: entry.itemID) else { continue }
+            let target = place + step
+            guard target >= 0, target < list.ids.count else { return nil }
+            var out = file
+            GameFiles.put16(&out, list.at + place * 2, list.ids[target])
+            GameFiles.put16(&out, list.at + target * 2, list.ids[place])
+            return out
+        }
+        return nil
+    }
+
     static func setString(_ file: [UInt8], block: TmbBlock, index: Int, field: Int, text: String) -> [UInt8]? {
         restructure(file, block: block) { bytes, local in
             guard index < local.items.count else { return nil }

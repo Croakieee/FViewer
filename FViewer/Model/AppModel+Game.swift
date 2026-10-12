@@ -382,6 +382,28 @@ extension AppModel {
         document?.liveChanged()
     }
 
+    func gameFileModArchive(_ file: GameFileDocument, gamePath: String) throws -> Data {
+        if let problem = PenumbraExport.problem(in: gamePath) { throw AvfxError.malformed(problem) }
+        var mod = ModDescription()
+        mod.name = file.url.deletingPathExtension().lastPathComponent
+        mod.author = UserDefaults.standard.string(forKey: "mod.author") ?? ""
+        return Data(PenumbraExport.archive(mod, files: [(PenumbraExport.normalized(gamePath), file.bytes, 0)]))
+    }
+
+    func exportGameFileMod(_ file: GameFileDocument) {
+        guard let path = prompt("Game Path of This File", placeholder: "chara/…/name." + file.url.pathExtension, value: gamePath(forAsset: file.url) ?? "") else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export Mod"
+        panel.nameFieldStringValue = file.url.deletingPathExtension().lastPathComponent + ".pmp"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try gameFileModArchive(file, gamePath: path).write(to: url, options: .atomic)
+            notice = "Exported \(url.lastPathComponent)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func openCatalogPath(_ gamePath: String) {
         guard let url = locateGameFile(gamePath) else {
             catalogNote = "Not found in the open folder" + (game == nil ? "; no game folder is set" : " or the game archives")
@@ -509,18 +531,22 @@ extension AppModel {
 
     func monsterCode(for document: EffectDocument) -> String? {
         let text = (document.gamePath.isEmpty ? "" : document.gamePath + " ") + document.url.path
-        guard let range = text.range(of: "[md][0-9]{4}", options: .regularExpression) else { return nil }
+        guard let range = text.range(of: "[mdw][0-9]{4}", options: .regularExpression) else { return nil }
         return String(text[range])
     }
 
     func loadModelForEffect() {
         guard let document, let code = monsterCode(for: document) else {
-            errorMessage = "The effect path names no monster (m0000) or demihuman (d0000) model"
+            errorMessage = "The effect path names no monster (m0000), weapon (w0000) or demihuman (d0000) model"
             return
         }
-        let kind = code.hasPrefix("m") ? "monster" : "demihuman"
+        let kind = code.hasPrefix("m") ? "monster" : code.hasPrefix("w") ? "weapon" : "demihuman"
         let base = "chara/\(kind)/\(code)"
-        let modelPath = kind == "monster" ? "\(base)/obj/body/b0001/model/\(code)b0001.mdl" : "\(base)/obj/equipment/e0001/model/\(code)e0001_top.mdl"
+        let text = (document.gamePath + " " + document.url.path)
+        var body = "b0001"
+        if let codeRange = text.range(of: code), let found = text.range(of: "b[0-9]{4}", options: .regularExpression, range: codeRange.upperBound..<text.endIndex) { body = String(text[found]) }
+        var modelPath = kind == "demihuman" ? "\(base)/obj/equipment/e0001/model/\(code)e0001_top.mdl" : "\(base)/obj/body/\(body)/model/\(code)\(body).mdl"
+        if kind != "demihuman", locateGameFile(modelPath) == nil { modelPath = "\(base)/obj/body/b0001/model/\(code)b0001.mdl" }
         guard let model = locateGameFile(modelPath) else {
             errorMessage = "\(modelPath) was not found in the open folder" + (game == nil ? "" : " or the game archives")
             return
@@ -612,7 +638,85 @@ extension AppModel {
         return (hits, scanned)
     }
 
+    nonisolated static func files(containing needle: [UInt8], among urls: [URL]) -> [URL] {
+        var hits: [URL] = []
+        let pattern = Data(needle)
+        guard !needle.isEmpty else { return hits }
+        for url in urls {
+            guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { continue }
+            if data.range(of: pattern) != nil { hits.append(url) }
+            if hits.count >= 400 { break }
+        }
+        return hits
+    }
+
+    func findFiles(containing text: String, effects: Bool) {
+        let needle = Array(text.lowercased().utf8)
+        let urls = effects ? files.filter(\.isAvfx).map(\.url) : gameFiles.filter { ["tmb", "pap", "mtrl", "mdl"].contains($0.url.pathExtension.lowercased()) }.map(\.url)
+        guard !needle.isEmpty, !urls.isEmpty else {
+            notice = urls.isEmpty ? "The open folder has no files to search" : nil
+            return
+        }
+        notice = "Searching \(urls.count) files for \(text)…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let hits = AppModel.files(containing: needle, among: urls)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.notice = "\(hits.count) file\(hits.count == 1 ? "" : "s") mention \(text) (\(urls.count) searched)"
+                self.timelineHitsTitle = (effects ? "Effects" : "Files") + " Using " + text
+                if !hits.isEmpty { self.timelineHits = hits }
+            }
+        }
+    }
+
+    func findEffectsPrompt() {
+        guard let text = prompt("Find Effects Using a Texture or Model", placeholder: "fire007bm.atex") else { return }
+        findFiles(containing: text.trimmingCharacters(in: .whitespaces), effects: true)
+    }
+
+    func listEffects(of url: URL) {
+        guard let data = try? Data(contentsOf: url) else { return }
+        let paths = AppModel.effectPaths(in: data)
+        if paths.isEmpty {
+            notice = "\(url.lastPathComponent) starts no effects"
+        } else {
+            effectList = EffectList(title: url.lastPathComponent, paths: paths)
+        }
+    }
+
+    func showBindPoints(of file: GameFileDocument) {
+        guard let skeleton = loadedSkeleton else {
+            file.note = "Load the skeleton first: File → Game → Load Skeleton"
+            return
+        }
+        guard let parsed = GameFiles.eidPoints(file.bytes) else { return }
+        let points = skeleton.bindPoints(parsed.points)
+        AvfxSimulation.skeletonBindPoints = points.isEmpty ? nil : points
+        showBindPoints = true
+        file.note = points.isEmpty ? "None of the bones in this file are in the loaded skeleton" : nil
+        PreviewRules.bump()
+        document?.liveChanged()
+    }
+
     func findTimelines(using document: EffectDocument) {
+        if !gameFiles.isEmpty {
+            var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
+            if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+            timelineHitsTitle = "Timelines Using This Effect"
+            let needle = Array((base + ".avfx").utf8)
+            let urls = gameFiles.filter { ["tmb", "pap"].contains($0.url.pathExtension.lowercased()) }.map(\.url)
+            notice = "Searching \(urls.count) timelines for \(base).avfx…"
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let hits = AppModel.files(containing: needle, among: urls)
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.notice = "\(hits.count) timeline\(hits.count == 1 ? "" : "s") use \(base).avfx (\(urls.count) files searched)"
+                    if !hits.isEmpty { self.timelineHits = hits }
+                }
+            }
+            return
+        }
+        timelineHitsTitle = "Timelines Using This Effect"
         guard let folder = chooseFolder("Folder with .tmb and .pap Files") else { return }
         var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
         if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }

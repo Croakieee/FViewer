@@ -5,7 +5,7 @@ struct BrowserPanel: View {
     @AppStorage("browser.mode") private var mode = 0
 
     var body: some View {
-        if mode == 0 { LibraryView(mode: $mode) } else if mode == 1 { NodeLibraryView(mode: $mode) } else if mode == 2 { HistoryView(mode: $mode) } else { AssetsView(mode: $mode) }
+        if mode == 0 { LibraryView(mode: $mode) } else if mode == 1 { NodeLibraryView(mode: $mode) } else if mode == 2 { HistoryView(mode: $mode) } else if mode == 4 { GameFilesView(mode: $mode) } else { AssetsView(mode: $mode) }
     }
 }
 
@@ -281,6 +281,89 @@ struct ConvertImagesSheet: View {
         .frame(width: 560)
         .background(Theme.panel)
         .preferredColorScheme(Theme.scheme)
+    }
+}
+
+struct GameFilesView: View {
+    @EnvironmentObject var app: AppModel
+    @Binding var mode: Int
+    @State private var filter = ""
+    @State private var kind = ""
+
+    var body: some View {
+        let words = filter.lowercased().split(separator: " ").map(String.init)
+        let all = app.gameFiles
+        let kinds = Array(Set(all.map { $0.url.pathExtension.lowercased() })).sorted()
+        let matched = all.filter { file in
+            if !kind.isEmpty, file.url.pathExtension.lowercased() != kind { return false }
+            if words.isEmpty { return true }
+            let text = (file.folder + "/" + file.name).lowercased()
+            return words.allSatisfy { text.contains($0) }
+        }
+        let shown = Array(matched.prefix(400))
+        VStack(spacing: 0) {
+            EditorHeader(symbol: "doc.text.magnifyingglass", title: "Game Files") {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                    TextField("", text: $filter).textFieldStyle(.plain).font(Theme.font).foregroundStyle(Theme.text)
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 20)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
+                Menu {
+                    Button("All Types") { kind = "" }
+                    Divider()
+                    ForEach(kinds, id: \.self) { name in Button("." + name) { kind = name } }
+                } label: {
+                    Text(kind.isEmpty ? "All" : "." + kind).font(Theme.small).foregroundStyle(Theme.text).lineLimit(1)
+                        .padding(.horizontal, 5).frame(height: 16).background(RoundedRectangle(cornerRadius: 3).fill(Theme.field.opacity(0.6)))
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                HeaderButton(symbol: "folder", help: "Show the File Browser") { mode = 0 }
+            }
+            HStack {
+                Text(matched.count > shown.count ? "\(shown.count) of \(matched.count)" : "\(matched.count)").font(Theme.small).foregroundStyle(Theme.dim)
+                Spacer()
+                HelpBadge(text: "Timelines, animations, models, materials, skeletons and the other game files of the open folder. Double-click one to open it in the File Inspector.")
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(shown) { file in
+                        let open = app.gameFile?.url == file.url
+                        HStack(spacing: 5) {
+                            Text(file.url.pathExtension.lowercased()).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.changed).frame(width: 30, alignment: .leading)
+                            Text(file.name).font(Theme.font).foregroundStyle(open ? .white : Theme.text).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 4)
+                            Text(file.folder).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.head).frame(maxWidth: 150, alignment: .trailing)
+                        }
+                        .padding(.horizontal, 8)
+                        .frame(height: 20)
+                        .background(open ? Theme.selection : Color.clear)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { app.inspectGameFile(file.url) }
+                        .help(file.folder + "/" + file.name)
+                        .contextMenu {
+                            let ext = file.url.pathExtension.lowercased()
+                            Button("Inspect") { app.inspectGameFile(file.url) }
+                            if ext == "tmb" || ext == "pap" { Button("Effects of This Timeline") { app.listEffects(of: file.url) } }
+                            if ext == "sklb" { Button("Load as Skeleton") { do { try app.loadSkeleton(file.url) } catch { app.errorMessage = error.localizedDescription } } }
+                            if ext == "mdl" { Button("Show Model in Viewport") { do { try app.loadReferenceModel(file.url) } catch { app.errorMessage = error.localizedDescription } } }
+                            Button("Copy Game Path") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(app.gamePath(forAsset: file.url) ?? file.name, forType: .string)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .background(Theme.panel)
     }
 }
 
@@ -627,7 +710,7 @@ struct TimelineHitsSheet: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "film").foregroundStyle(Theme.text)
-                Text("Timelines Using This Effect").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
+                Text(app.timelineHitsTitle).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
                 Spacer()
                 Text("\(hits.count)").font(Theme.small).foregroundStyle(Theme.dim)
             }
@@ -641,9 +724,9 @@ struct TimelineHitsSheet: View {
                             Text(url.lastPathComponent).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
                             Text(url.deletingLastPathComponent().path).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.head)
                             Spacer(minLength: 4)
-                            SegmentButton(title: "Inspect", active: true) {
+                            SegmentButton(title: url.pathExtension.lowercased() == "avfx" ? "Open" : "Inspect", active: true) {
                                 app.timelineHits = nil
-                                app.inspectGameFile(url)
+                                if url.pathExtension.lowercased() == "avfx" { app.open(url) } else { app.inspectGameFile(url) }
                             }
                         }
                         .padding(.horizontal, 12)
