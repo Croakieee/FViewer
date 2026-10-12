@@ -120,6 +120,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var floor: DrawItem?
     private var sceneColor: MTLTexture?
     private var postPipeline: MTLRenderPipelineState?
+    static var referenceMesh: MeshData?
+    static var referenceToken = 0
+    private var referenceToken = -1
+    private var reference: DrawItem?
     private var postSource: MTLTexture?
     private var postSampler: MTLSamplerState?
     private var quake: (amount: Float, phase: Float) = (0, 0)
@@ -610,7 +614,17 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             uniforms.options.w = lights.isEmpty ? 0 : 1
         }
         let ground = showFloor ? [floor].compactMap { $0 } : []
-        for (pass, list) in [ground, grid, items].enumerated() {
+        if referenceToken != ViewportRenderer.referenceToken {
+            referenceToken = ViewportRenderer.referenceToken
+            reference = nil
+            if let mesh = ViewportRenderer.referenceMesh, !mesh.vertices.isEmpty, !mesh.indices.isEmpty,
+               let vb = device.makeBuffer(bytes: mesh.vertices, length: MemoryLayout<MeshVertex>.stride * mesh.vertices.count),
+               let ib = device.makeBuffer(bytes: mesh.indices, length: 4 * mesh.indices.count) {
+                reference = DrawItem(vertices: vb, indices: ib, count: mesh.indices.count, primitive: .triangle, tint: SIMD4(0.62, 0.62, 0.66, 1), lit: true,
+                                     textured: false, wire: false)
+            }
+        }
+        for (pass, list) in [ground, grid, items, [reference].compactMap { $0 }].enumerated() {
             for item in list {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
                                         options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured ? 1 : 0, item.pointSize, 0))

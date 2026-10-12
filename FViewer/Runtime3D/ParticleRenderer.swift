@@ -170,7 +170,7 @@ final class ParticleRenderer {
     private func prepare(_ ps: RParticle) -> PreparedMaterial {
         var m = PreparedMaterial()
         let plainUv = ps.type == 2 || (ps.type == 1 && ps.simple == nil)
-        let isModel = ps.type == 5 || ps.type == 13
+        let isModel = ps.type == 5 || ps.type == 13 || ps.type == 14
         let layers: [RTextureLayer?] = [ps.tc1, plainUv ? nil : ps.tc2, plainUv ? nil : ps.tc3, plainUv ? nil : ps.tc4]
         let slots = [0, 1, 3, 4]
         var loaded: [LoadedTexture?] = [nil, nil, nil, nil]

@@ -529,7 +529,8 @@ extension EffectDocument {
             for (i, particle) in root.childrenNamed("Ptcl").enumerated() {
                 let type = particle.int("PrVT")
                 if unsupported.contains(type) || (type == 3 && particle.int("bSCt") == 0) {
-                    notes.append("Particle \(i): \(catalog.enumCaseName("ParticleType", type) ?? "?") is not drawn in the preview")
+                    notes.append(type == 14 ? "Particle \(i): Model Skin is drawn over the model loaded with File → Game → Load Model, without its aura settings"
+                                 : "Particle \(i): \(catalog.enumCaseName("ParticleType", type) ?? "?") is not drawn in the preview")
                 }
                 if type == 6 { notes.append("Particle \(i): the trail is drawn facing the camera over half its point count in frames") }
             }
@@ -538,6 +539,7 @@ extension EffectDocument {
                 let name = catalog.enumCaseName("EffectorType", kind) ?? "?"
                 switch kind {
                 case 0: break
+                case 1: notes.append("Effector \(i): \(name) lights the floor and the models; its ambient colour is not shown")
                 case 3, 4, 5, 7: notes.append("Effector \(i): \(name) is shown as an approximate screen filter")
                 case 6, 9: notes.append("Effector \(i): \(name) shakes the view by an approximate amount")
                 default: notes.append("Effector \(i): \(name) is not previewed")

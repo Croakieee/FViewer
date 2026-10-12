@@ -618,6 +618,10 @@ final class AvfxSimulation {
         p.travel += p.velocity * scale * frames
     }
 
+    static var skinMesh: MeshData?
+    static var skinToken = 0
+    private var skinToken = -1
+
     private func geometry(for ps: RParticle) -> RenderGeometry? {
         switch ps.type {
         case ParticleKind.model, ParticleKind.lightModel:
@@ -626,6 +630,15 @@ final class AvfxSimulation {
                 return GeometryBuilder.quad
             }
             modelGeometry[ps.modelIndex] = built
+            return built
+        case 14:
+            guard PreviewRules.isOn("modelSkin"), let mesh = AvfxSimulation.skinMesh else { return nil }
+            if skinToken == AvfxSimulation.skinToken, let cached = modelGeometry[-1000] { return cached }
+            let built = RenderGeometry()
+            for vertex in mesh.vertices { built.add(vertex.position, normal: vertex.normal, uv: vertex.uv) }
+            built.indices = mesh.indices
+            modelGeometry[-1000] = built
+            skinToken = AvfxSimulation.skinToken
             return built
         case ParticleKind.quad, ParticleKind.powder: return GeometryBuilder.quad
         case ParticleKind.line: return ps.simple != nil ? GeometryBuilder.quad : nil
@@ -777,7 +790,7 @@ final class AvfxSimulation {
         guard PreviewRules.isOn("lights") else { return result }
         for e in emitters where e.schema.index < schema.emitterEffectors.count {
             let index = schema.emitterEffectors[e.schema.index]
-            guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 0 else { continue }
+            guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 0 || schema.effectors[index].type == 1 else { continue }
             if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
             let effector = schema.effectors[index]
             let t = CurveTime(effectorTime(effector, e.age))
@@ -785,6 +798,17 @@ final class AvfxSimulation {
             let peak = max(color.x, color.y, color.z, 1e-6)
             let strength = peak * max(0, color.w) * fade
             guard strength > 0 else { continue }
+            if effector.type == 1 {
+                guard PreviewRules.isOn("directionalLights"), let rotation = effector.rotation else { continue }
+                let turn = Math3D.euler(Eval.axes(rotation, t, 0, e.seed, 1), order: 0)
+                let origin = Math3D.point(e.world, Vec3(0, 0, 0))
+                let toward = Math3D.point(e.world, turn.act(Vec3(0, 0, 1))) - origin
+                let reach = simd_length(toward)
+                guard reach > 1e-5 else { continue }
+                result.append(LightDraw(position: origin - toward / reach * 100_000, color: Vec3(color.x, color.y, color.z) / peak * strength * max(0, Eval.curve(effector.power, t, 1)),
+                                        distance: 0, decay: 0))
+                continue
+            }
             result.append(LightDraw(position: Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1)),
                                     color: Vec3(color.x, color.y, color.z) / peak * strength, distance: Eval.curve(effector.distance, t, 0),
                                     decay: Float(effector.attenuation + 1)))
@@ -905,7 +929,7 @@ final class AvfxSimulation {
                 m = Math3D.compose(parts.position, Math3D.quaternion(x: xAxis, y: yAxis, z: zAxis), parts.scale)
             } else if billboard {
                 let parts = Math3D.decompose(m)
-                let fullRotation = s.type == ParticleKind.model || s.type == ParticleKind.lightModel || s.type == ParticleKind.disc
+                let fullRotation = s.type == ParticleKind.model || s.type == ParticleKind.lightModel || s.type == ParticleKind.disc || s.type == 14
                 let roll = fullRotation ? Math3D.euler(localRotation, order: s.rotationOrder) : simd_quatf(angle: localRotation.z, axis: Vec3(0, 0, 1))
                 var facing = camera.rotation
                 if [Base.billboardAxisY, Base.cameraBillboardAxisY, Base.treeBillboard].contains(s.rotationBase) {
@@ -966,7 +990,7 @@ final class AvfxSimulation {
             if p.item.influenceColor != 0 { color *= p.emitter.color }
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
-            var draw = ParticleDraw(particle: s.index, geometry: shape, model: m, color: color)
+            var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? matrix_identity_float4x4 : m, color: color)
             draw.order = s.drawPriority * 1000 + (mode == 0 || mode == 8 ? 500 : 0) + s.index
             draw.sequence = p.sequence
             if s.colorBegin != nil || s.colorEnd != nil {

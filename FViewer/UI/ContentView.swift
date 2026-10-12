@@ -58,6 +58,8 @@ struct TopBar: View {
                     Divider()
                     Button("Load Skeleton (.sklb)…") { app.loadSkeletonPanel() }
                     Button("Remove Skeleton") { app.clearSkeleton() }.disabled(app.skeletonName == nil)
+                    Button("Load Model (.mdl)…") { app.loadReferenceModelPanel() }
+                    Button("Remove Model") { app.clearReferenceModel() }.disabled(app.referenceModelName == nil)
                     Divider()
                     Button("Inspect Game File…") { app.inspectGameFilePanel() }
                     Button("Inspect File by Game Path…") { app.inspectGameFileByPath() }.disabled(app.gameRoot == nil)

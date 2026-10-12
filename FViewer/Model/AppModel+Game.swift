@@ -417,6 +417,45 @@ extension AppModel {
         _ = try? loadSkeleton(folder.appendingPathComponent(name))
     }
 
+    @discardableResult func loadReferenceModel(_ url: URL) throws -> (vertices: Int, triangles: Int, meshes: Int) {
+        guard let parsed = GameModel.parse([UInt8](try Data(contentsOf: url))) else {
+            throw NSError(domain: "FViewer", code: 1, userInfo: [NSLocalizedDescriptionKey: "\(url.lastPathComponent) has no geometry this app can read"])
+        }
+        ViewportRenderer.referenceMesh = parsed.mesh
+        ViewportRenderer.referenceToken += 1
+        AvfxSimulation.skinMesh = parsed.mesh
+        AvfxSimulation.skinToken += 1
+        document?.liveChanged()
+        referenceModelName = url.lastPathComponent
+        return (parsed.mesh.vertices.count, parsed.mesh.indices.count / 3, parsed.meshes)
+    }
+
+    func loadReferenceModelPanel() {
+        let panel = NSOpenPanel()
+        panel.title = "Load Model"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Load"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let result = try loadReferenceModel(url)
+            notice = "Model \(url.lastPathComponent): \(result.meshes) meshes, \(result.triangles) triangles"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func clearReferenceModel() {
+        ViewportRenderer.referenceMesh = nil
+        ViewportRenderer.referenceToken += 1
+        AvfxSimulation.skinMesh = nil
+        AvfxSimulation.skinToken += 1
+        document?.liveChanged()
+        referenceModelName = nil
+    }
+
     func clearSkeleton() {
         UserDefaults.standard.removeObject(forKey: "skeletonBookmark")
         AvfxSimulation.skeletonLines = []
