@@ -83,6 +83,7 @@ struct REmitterItem {
 }
 
 struct REmitter {
+    var coordOrder = 0
     var index: Int
     var type: Int
     var loopStart: Int
@@ -260,6 +261,7 @@ struct RParticle {
     var disc: RDisc?
     var polyline: RPolyline?
     var softParticle = false
+    var coordOrder = 0
     var rotVelRandom: [RCurve?] = [nil, nil, nil]
     var clipNear: (start: Float, end: Float)? = nil
     var clipFar: (start: Float, end: Float)? = nil
@@ -517,6 +519,8 @@ enum AvfxSchemaReader {
                              rotation: curve3(data?.child("Rot")), power: curve(data?.child("Pow")))
         }
         result.emitterEffectors = root.childrenNamed("Emit").map { $0.int("EfNo", -1) }
+        for (index, block) in root.childrenNamed("Emit").enumerated() where index < result.emitters.count { result.emitters[index].coordOrder = block.int("CCOT") }
+        for (index, block) in root.childrenNamed("Ptcl").enumerated() where index < result.particles.count { result.particles[index].coordOrder = block.int("CCOT") }
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
         return result
     }

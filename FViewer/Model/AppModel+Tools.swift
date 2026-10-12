@@ -463,6 +463,7 @@ extension AppModel {
             return (try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], bookmarkDataIsStale: &stale))?.standardizedFileURL != file.standardizedFileURL
         }
         UserDefaults.standard.set(list, forKey: "recent.bookmarks")
+        recentCache = nil
         if let url = thumbnailURL(for: file) { try? FileManager.default.removeItem(at: url) }
         objectWillChange.send()
     }

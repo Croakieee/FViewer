@@ -16,6 +16,7 @@ struct Spawn {
 }
 
 final class ParticleInstance {
+    var owner = ""
     let def: ParticleDef
     let view: ParticleView
     let geometry: GeometryData

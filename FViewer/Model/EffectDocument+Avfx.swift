@@ -631,6 +631,7 @@ extension EffectDocument {
                 var row = SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end, openEnded: open && life <= 0 && emitter >= 0,
                                        tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
                 row.base = base
+                row.densityKey = emitter >= 0 ? "e\(emitter)" : "-"
                 row.startField = record.first { $0.tag == "StTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#StTm") }
                 row.endField = record.first { $0.tag == "EdTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#EdTm") }
                 row.enabledField = record.first { $0.tag == "bEna" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#bEna") }

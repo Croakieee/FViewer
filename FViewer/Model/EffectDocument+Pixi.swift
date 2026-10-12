@@ -321,6 +321,7 @@ extension EffectDocument {
                     var row = SequencerRow(id: nodeID, label: emitter, start: start, end: end, openEnded: explicitEnd == nil && life < 0,
                                            tint: .emitter, depth: 1, nodeID: nodeID)
                     row.base = base
+                    row.densityKey = emitter
                     if let startNode = item["start"] {
                         row.startField = PropField(id: nodeID + "#start", label: "start", tag: "start", kind: .double, read: { .double(startNode.number ?? 0) },
                                                    write: { startNode.value = .number($0.number) })

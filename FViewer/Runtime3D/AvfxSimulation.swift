@@ -104,8 +104,9 @@ final class EmitterInstance {
         let position = Eval.axes(schema.position, time, 0, seed, 1)
         let rotation = Eval.axes(schema.rotation, time, 0, seed, 4)
         let scale = Eval.axes(schema.scale, time, 1, seed, 8)
-        var out = anchor() * Math3D.compose(position, Math3D.euler(rotation, order: schema.rotationOrder), scale)
-        if let cameraRotation, schema.rotationBase == Base.cameraBillboardAxisY {
+        var out = anchor() * Math3D.compose(position, Math3D.euler(rotation, order: schema.rotationOrder), scale,
+                                            order: PreviewRules.isOn("coordComputeOrder") ? schema.coordOrder : 0)
+        if let cameraRotation, schema.rotationBase == Base.cameraBillboardAxisY, PreviewRules.isOn("emitterCameraBillboard") {
             let parts = Math3D.decompose(out)
             out = Math3D.compose(parts.position, cameraRotation * Math3D.euler(rotation, order: schema.rotationOrder), parts.scale)
         }
@@ -502,13 +503,13 @@ final class AvfxSimulation {
             for (item, count) in e.due(particles: true, limit: 64, random: &random) {
                 guard item.target >= 0, item.target < schema.particles.count else { continue }
                 let ps = schema.particles[item.target]
-                if ps.life.value < 0 && !item.overrideLife { e.stopParticleItem(item.index) }
-                if ps.loopEnd > ps.loopStart && ps.loopStart >= 0 { e.stopParticleItem(item.index) }
-                let first = e.injected[item.index] ?? 0
+                if PreviewRules.isOn("infiniteOnce"), ps.life.value < 0 && !item.overrideLife { e.stopParticleItem(item.index) }
+                if PreviewRules.isOn("heldOnce"), ps.loopEnd > ps.loopStart && ps.loopStart >= 0 { e.stopParticleItem(item.index) }
+                let first = PreviewRules.isOn("injectionAnglePerCreation") ? e.injected[item.index] ?? 0 : 0
                 e.injected[item.index] = first + count
                 for n in 0..<count {
                     if random.next() * 100 >= Float(item.probability) { continue }
-                    if e.schema.childLimit > 0 && e.liveChildren >= e.schema.childLimit { break }
+                    if PreviewRules.isOn("childLimit"), e.schema.childLimit > 0 && e.liveChildren >= e.schema.childLimit { break }
                     if particles.count >= maxParticles { break }
                     particles.append(spawnParticle(ps, item, e, copyIndex: first + n))
                     e.liveChildren += 1
@@ -523,7 +524,7 @@ final class AvfxSimulation {
                     var at: Mat4?
                     if let point {
                         var m = Math3D.translation(point.position)
-                        if e.schema.type == 4 { m = m * Math3D.rotationY(atan2(point.normal.x, point.normal.z)) }
+                        if e.schema.type == 4, PreviewRules.isOn("cylinderPointFrame") { m = m * Math3D.rotationY(atan2(point.normal.x, point.normal.z)) }
                         at = m
                     }
                     let follow = item.influenceCoord == Influence.allAlways || item.influenceCoord == Influence.allAlwaysNoPosition
@@ -611,7 +612,8 @@ final class AvfxSimulation {
     private func move(_ p: ParticleInstance, _ frames: Float) {
         let s = p.schema
         let t = p.curveTime
-        let gravity = Eval.curve(s.gravity, t, 0) + Eval.randomOffset(s.gravityRandom, type: s.gravity?.random ?? 0, t, p.seed.get(25))
+        let gravity = Eval.curve(s.gravity, t, 0)
+            + (PreviewRules.isOn("gravityRandom") ? Eval.randomOffset(s.gravityRandom, type: s.gravity?.random ?? 0, t, p.seed.get(25)) : 0)
         if gravity != 0 { p.velocity.y += gravity * frames }
         let scale = Eval.curve(s.airResistance, t, 1) + Eval.randomOffset(s.airResistanceRandom, type: s.airResistance?.random ?? 0, t, p.seed.get(12))
         if p.localFlight && simd_length_squared(p.localVelocity) > 0 { p.localTravel += p.localVelocity * scale * frames }
@@ -878,13 +880,14 @@ final class AvfxSimulation {
             localRotation.z += (spinRandom ? Eval.withRandom(s.rotVelZ, s.rotVelRandom[2], t, 0, p.seed.get(22)) : Eval.curve(s.rotVelZ, t)) * spun
             let injection = Math3D.euler(p.item.injectionAngle * Float(p.copyIndex), order: s.rotationOrder)
             let hasInjection = simd_length_squared(p.item.injectionAngle) > 0 && p.copyIndex != 0
-            let treeQuadFixed = s.type == ParticleKind.quad && s.rotationBase == Base.treeBillboard
+            let treeQuadFixed = s.type == ParticleKind.quad && s.rotationBase == Base.treeBillboard && PreviewRules.isOn("treeBillboardFixed")
             let billboardBases = [Base.screenBillboard, Base.cameraBillboard, Base.billboardAxisY, Base.cameraBillboardAxisY,
                                   Base.moveDirectionBillboard, Base.treeBillboard]
             let billboard = !treeQuadFixed && ((s.type == ParticleKind.powder && p.cloud == nil) || s.type == ParticleKind.windmill
                 || billboardBases.contains(s.rotationBase))
             let localScale = Eval.axes(s.scale, t, 1, p.seed, 8)
-            var local = Math3D.compose(localPosition, Math3D.euler(localRotation, order: s.rotationOrder), localScale)
+            var local = Math3D.compose(localPosition, Math3D.euler(localRotation, order: s.rotationOrder), localScale,
+                                       order: PreviewRules.isOn("coordComputeOrder") ? s.coordOrder : 0)
             if !billboard && hasInjection { local = Mat4(injection) * local }
             if s.type == ParticleKind.quad {
                 if s.rotationBase == Base.x {
@@ -914,7 +917,7 @@ final class AvfxSimulation {
             }
             if simd_length_squared(p.travel) > 0 { m = Math3D.translation(p.travel) * m }
 
-            if s.rotationBase == Base.moveDirectionBillboard {
+            if s.rotationBase == Base.moveDirectionBillboard, PreviewRules.isOn("moveDirectionStreaks") {
                 let parts = Math3D.decompose(m)
                 if p.hasLastWorld {
                     let d = parts.position - p.lastWorld
@@ -1003,7 +1006,7 @@ final class AvfxSimulation {
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
             var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? matrix_identity_float4x4 : m, color: color)
-            draw.order = s.drawPriority * 1000 + (mode == 0 || mode == 8 ? 500 : 0) + s.index
+            draw.order = s.drawPriority * 1000 + ((mode == 0 || mode == 8) && PreviewRules.isOn("blendAfterAdditive") ? 500 : 0) + s.index
             draw.sequence = p.sequence
             if s.colorBegin != nil || s.colorEnd != nil {
                 draw.colorBegin = s.colorBegin.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1)
@@ -1013,7 +1016,7 @@ final class AvfxSimulation {
                 let n = Eval.curve(tc1.texN, t, 0) + Eval.curve(tc1.texNRandom, t, 0) * p.seed.get(15)
                 draw.frame = min(tc1.textures.count - 1, max(0, Int(n.rounded(.down))))
             }
-            let plainUv = s.type == ParticleKind.windmill || (s.type == ParticleKind.powder && s.simple == nil)
+            let plainUv = PreviewRules.isOn("plainUv") && (s.type == ParticleKind.windmill || (s.type == ParticleKind.powder && s.simple == nil))
             let layers: [RTextureLayer?] = [s.tc1, s.tc2, s.distortion, s.tc3, s.tc4]
             for (slot, layer) in layers.enumerated() {
                 if slot != 2 && plainUv { continue }

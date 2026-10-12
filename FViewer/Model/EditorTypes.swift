@@ -163,6 +163,7 @@ struct SequencerRow: Identifiable {
     var startField: PropField?
     var endField: PropField?
     var enabledField: PropField?
+    var densityKey = "*"
 }
 
 struct TextureSlot: Identifiable {
@@ -173,7 +174,18 @@ struct TextureSlot: Identifiable {
 }
 
 enum Theme {
-    static var light: Bool { UserDefaults.standard.bool(forKey: "theme.light") }
+    private static var lightCache: Bool?
+    static var light: Bool {
+        if let lightCache { return lightCache }
+        let value = UserDefaults.standard.bool(forKey: "theme.light")
+        lightCache = value
+        return value
+    }
+
+    static func setLight(_ on: Bool) {
+        UserDefaults.standard.set(on, forKey: "theme.light")
+        lightCache = on
+    }
     static var scheme: ColorScheme { light ? .light : .dark }
 
     private static func pick(_ dark: Double, _ bright: Double) -> Color { Color(white: light ? bright : dark) }

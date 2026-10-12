@@ -65,6 +65,21 @@ enum Math3D {
         return m
     }
 
+    static func compose(_ position: Vec3, _ rotation: simd_quatf, _ scale: Vec3, order: Int) -> Mat4 {
+        guard order >= 1, order <= 5 else { return compose(position, rotation, scale) }
+        var t = matrix_identity_float4x4
+        t.columns.3 = Vec4(position.x, position.y, position.z, 1)
+        let r = Mat4(rotation)
+        let s = Mat4(diagonal: Vec4(scale.x, scale.y, scale.z, 1))
+        switch order {
+        case 1: return r * s * t
+        case 2: return s * t * r
+        case 3: return s * r * t
+        case 4: return r * t * s
+        default: return t * s * r
+        }
+    }
+
     static func decompose(_ m: Mat4) -> (position: Vec3, rotation: simd_quatf, scale: Vec3) {
         let c0 = Vec3(m.columns.0.x, m.columns.0.y, m.columns.0.z)
         let c1 = Vec3(m.columns.1.x, m.columns.1.y, m.columns.1.z)

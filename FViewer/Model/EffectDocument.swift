@@ -15,6 +15,9 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published var hidden: Set<VisibilityKey> = []
     @Published var isolateSelection = false
     @Published private(set) var revision = 0
+    @Published var density: [String: [Float]] = [:]
+    var densityRevision = -1
+    var densityJob: DensityJob?
     @Published private(set) var outline: [OutlineNode] = []
     @Published var selectionID: String? {
         didSet {

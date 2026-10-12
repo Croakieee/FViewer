@@ -184,7 +184,7 @@ final class ParticleRenderer {
 
     private func prepare(_ ps: RParticle) -> PreparedMaterial {
         var m = PreparedMaterial()
-        let plainUv = ps.type == 2 || (ps.type == 1 && ps.simple == nil)
+        let plainUv = PreviewRules.isOn("plainUv") && (ps.type == 2 || (ps.type == 1 && ps.simple == nil))
         let isModel = ps.type == 5 || ps.type == 13 || ps.type == 14
         let layers: [RTextureLayer?] = [ps.tc1, plainUv ? nil : ps.tc2, plainUv ? nil : ps.tc3, plainUv ? nil : ps.tc4]
         let slots = [0, 1, 3, 4]
@@ -196,7 +196,7 @@ final class ParticleRenderer {
             guard let layer, layer.enabled, let first = layer.textures.first, let texture = textureProvider(first) else { continue }
             loaded[i] = texture
             var calcColor = layer.calcColor
-            if i > 0, (calcColor == 1 && texture.alphaOnly) || calcColor == 5 { calcColor = 9 }
+            if i > 0, (calcColor == 1 && texture.alphaOnly && PreviewRules.isOn("addAlphaOnly")) || (calcColor == 5 && PreviewRules.isOn("calcColorFive")) { calcColor = 9 }
             flags[i] = Vec4(1, Float(calcColor), Float(layer.calcAlpha), layer.colorToAlpha ? 1 : 0)
             m.textures[slots[i]] = texture.texture
             m.samplers[slots[i]] = sampler(layer.borderU, layer.borderV, filter: layer.filter)
@@ -233,8 +233,8 @@ final class ParticleRenderer {
         default: m.blend = 0
         }
         let premultiply: Float = mode == 4 || mode == 3 ? 1 : mode == 1 ? 2 : 0
-        let fresnel = isModel && ps.fresnelType != 0 && (ps.colorBegin != nil || ps.colorEnd != nil)
-        let lineGradient = ps.type == 3 && (ps.colorBegin != nil || ps.colorEnd != nil)
+        let fresnel = isModel && ps.fresnelType != 0 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("modelFresnel")
+        let lineGradient = ps.type == 3 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("lineGradient")
         let sprites = ps.simple != nil && (ps.type == 1 || ps.type == 3)
         let vertexColors = isModel || ps.type == 12 || ps.type == 6
         m.uniforms.flags = Vec4(vertexColors ? 1 : 0, fresnel ? 1 : 0, sprites ? 1 : 0, lineGradient ? 1 : 0)
@@ -250,9 +250,9 @@ final class ParticleRenderer {
         if ps.type == 10 || ps.type == 11 || ps.type == 6 {
             m.cull = .none
         } else if ps.culling == 2 {
-            m.cull = .front
+            m.cull = PreviewRules.isOn("cullingWinding") ? .front : .back
         } else if ps.culling == 1 {
-            m.cull = .back
+            m.cull = PreviewRules.isOn("cullingWinding") ? .back : .front
         }
         return m
     }

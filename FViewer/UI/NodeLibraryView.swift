@@ -476,7 +476,7 @@ struct SettingsView: View {
             row("") { CheckBox(isOn: !skipQuestion, label: "Ask before opening an editor window") { skipQuestion = !$0 } }
             row("") {
                 CheckBox(isOn: Theme.light, label: "Light theme") { on in
-                    UserDefaults.standard.set(on, forKey: "theme.light")
+                    Theme.setLight(on)
                     refresh += 1
                     app.themeToken += 1
                     app.document?.liveChanged()

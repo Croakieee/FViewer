@@ -188,16 +188,7 @@ struct LibraryView: View {
         return seen.sorted()
     }
 
-    private var groups: [(folder: String, files: [LibraryFile])] {
-        let favorites = app.favorites
-        let needle = filter.lowercased()
-        let scoped = category.isEmpty ? app.files : app.files.filter { $0.folder == category || $0.folder.hasPrefix(category + "/") }
-        let shown = needle.isEmpty ? scoped : scoped.filter { $0.name.lowercased().contains(needle) || $0.folder.lowercased().contains(needle) }
-        var result = Dictionary(grouping: shown, by: \.folder).map { (folder: $0.key, files: $0.value) }.sorted { $0.folder < $1.folder }
-        let starred = shown.filter { favorites.contains($0.url.path) }
-        if !starred.isEmpty { result.insert((folder: "★ Favorites", files: starred), at: 0) }
-        return result
-    }
+    private var groups: [(folder: String, files: [LibraryFile])] { app.libraryGroups(filter: filter, category: category) }
 
     var body: some View {
         VStack(spacing: 0) {

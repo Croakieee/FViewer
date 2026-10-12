@@ -3,6 +3,7 @@ import SwiftUI
 struct SequencerView: View {
     @ObservedObject var document: EffectDocument
     @ObservedObject var clock: PlaybackClock
+    @AppStorage("timeline.density") private var showDensity = true
     @State private var dragMode = 0
     @State private var dragRow: SequencerRow?
     @State private var dragStart: Double = 0
@@ -76,6 +77,7 @@ struct SequencerView: View {
 
     var body: some View {
         let rows = document.sequencerRows
+        let densityPeak = document.density.mapValues { $0.max() ?? 0 }
         let duration = max(30, (rows.map(\.end).max() ?? 30).rounded(.up))
         let end = clock.endFrame ?? duration
         let span = currentSpan(max(end, duration))
@@ -111,6 +113,13 @@ struct SequencerView: View {
                                 onCommit: { _, next in clock.seed = Int(min(max(next, 0), 999_999)) })
                         .frame(width: 92)
                         .help("Random seed of the preview. Another seed plays another variation of the same effect")
+                    HeaderButton(symbol: "chart.xyaxis.line", active: showDensity, help: "Show how many particles are alive on each frame inside the strips") {
+                        showDensity.toggle()
+                        if showDensity { document.scheduleDensity() }
+                    }
+                    .onAppear { if showDensity { document.scheduleDensity() } }
+                    .onChange(of: document.revision) { _, _ in if showDensity { document.scheduleDensity() } }
+                    .onChange(of: document.id) { _, _ in if showDensity { document.scheduleDensity() } }
                     HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
                         viewZoom = 1
                         viewStart = 0
@@ -162,6 +171,28 @@ struct SequencerView: View {
                                                                               startPoint: CGPoint(x: bar.minX, y: 0), endPoint: CGPoint(x: bar.maxX, y: 0)))
                                 } else {
                                     context.fill(shape, with: .color(row.tint.color.opacity(row.depth == 0 ? 0.55 : 0.8)))
+                                }
+                                if showDensity, let values = document.density[row.densityKey], let peak = densityPeak[row.densityKey], peak > 0 {
+                                    let area = row.depth == 0 ? CGRect(x: bar.minX, y: top + 2, width: bar.width, height: rowHeight - 4) : bar.insetBy(dx: 0, dy: 1)
+                                    let first = max(0, Int(row.start.rounded(.down))), last = min(values.count - 1, Int(row.end.rounded(.up)))
+                                    if last > first {
+                                        var fill = Path()
+                                        var line = Path()
+                                        fill.move(to: CGPoint(x: x(Double(first), width, span), y: area.minY))
+                                        for frame in first...last {
+                                            let point = CGPoint(x: min(max(x(Double(frame), width, span), area.minX), area.maxX),
+                                                                y: area.maxY - CGFloat(values[frame] / peak) * area.height)
+                                            fill.addLine(to: point)
+                                            if frame == first { line.move(to: point) } else { line.addLine(to: point) }
+                                        }
+                                        fill.addLine(to: CGPoint(x: min(x(Double(last), width, span), area.maxX), y: area.minY))
+                                        fill.closeSubpath()
+                                        context.drawLayer { layer in
+                                            layer.clip(to: Path(roundedRect: area, cornerRadius: 3))
+                                            layer.fill(fill, with: .color(Color.black.opacity(row.depth == 0 ? 0.3 : 0.42)))
+                                            layer.stroke(line, with: .color(Color.white.opacity(0.9)), lineWidth: 1)
+                                        }
+                                    }
                                 }
                                 if row.endField != nil && !row.openEnded {
                                     context.fill(Path(CGRect(x: bar.maxX - 4, y: bar.minY + 2, width: 2, height: bar.height - 4)), with: .color(Color.black.opacity(0.35)))

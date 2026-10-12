@@ -77,6 +77,12 @@ public final class EffectCore {
     public var killing: Bool { kill != nil || killed }
     public var particleCount: Int { particleList.count }
 
+    public func particleCounts() -> [String: Int] {
+        var result: [String: Int] = [:]
+        for particle in particleList { result[particle.owner, default: 0] += 1 }
+        return result
+    }
+
     public func release() {
         if state.released == nil { state.released = time }
     }
@@ -212,7 +218,9 @@ public final class EffectCore {
                     emitter: e, time: c.time, parent: parent, seed: seed, inheritColor: item.inheritColor ?? false, life: item.life,
                     unit: unit, model: { [defs] in defs.model($0) }, state: state, perspective: { [unowned self] in self.perspective },
                     point: (points?.isEmpty == false) ? points![n % points!.count] : nil, views: views)
-                particleList.append(try ParticleInstance(def, defs.particleTextures(def), spawn))
+                let created = try ParticleInstance(def, defs.particleTextures(def), spawn)
+                created.owner = e.def.id
+                particleList.append(created)
             case .emitter(let id):
                 let creator = e
                 emitterList.append(try EmitterInstance(defs.emitter(id), parent, seed, c.time, { creator.stop }, state))

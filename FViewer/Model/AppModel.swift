@@ -512,11 +512,32 @@ final class AppModel: ObservableObject {
         }
     }()
 
+    var recentCache: [URL]?
+
     var recentFiles: [URL] {
-        (UserDefaults.standard.array(forKey: "recent.bookmarks") as? [Data] ?? []).compactMap { data in
+        if let recentCache { return recentCache }
+        let list = (UserDefaults.standard.array(forKey: "recent.bookmarks") as? [Data] ?? []).compactMap { data -> URL? in
             var stale = false
             return try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], bookmarkDataIsStale: &stale)
         }
+        recentCache = list
+        return list
+    }
+
+    private var groupCache: (key: String, value: [(folder: String, files: [LibraryFile])])?
+
+    func libraryGroups(filter: String, category: String) -> [(folder: String, files: [LibraryFile])] {
+        let stars = favorites
+        let key = "\(libraryToken)|\(files.count)|\(filter)|\(category)|\(stars.count)|\(stars.hashValue)"
+        if let groupCache, groupCache.key == key { return groupCache.value }
+        let needle = filter.lowercased()
+        let scoped = category.isEmpty ? files : files.filter { $0.folder == category || $0.folder.hasPrefix(category + "/") }
+        let shown = needle.isEmpty ? scoped : scoped.filter { $0.name.lowercased().contains(needle) || $0.folder.lowercased().contains(needle) }
+        var result = Dictionary(grouping: shown, by: \.folder).map { (folder: $0.key, files: $0.value) }.sorted { $0.folder < $1.folder }
+        let starred = shown.filter { stars.contains($0.url.path) }
+        if !starred.isEmpty { result.insert((folder: "★ Favorites", files: starred), at: 0) }
+        groupCache = (key, result)
+        return result
     }
 
     private func remember(_ url: URL) {
@@ -527,6 +548,7 @@ final class AppModel: ObservableObject {
         }
         list.insert(bookmark, at: 0)
         UserDefaults.standard.set(Array(list.prefix(12)), forKey: "recent.bookmarks")
+        recentCache = nil
     }
 
     func openRecent(_ url: URL) {
@@ -851,12 +873,19 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
-    var favorites: Set<String> { Set(UserDefaults.standard.stringArray(forKey: "favorites") ?? []) }
+    private var favoriteCache: Set<String>?
+    var favorites: Set<String> {
+        if let favoriteCache { return favoriteCache }
+        let value = Set(UserDefaults.standard.stringArray(forKey: "favorites") ?? [])
+        favoriteCache = value
+        return value
+    }
 
     func toggleFavorite(_ url: URL) {
         var list = UserDefaults.standard.stringArray(forKey: "favorites") ?? []
         if let index = list.firstIndex(of: url.path) { list.remove(at: index) } else { list.append(url.path) }
         UserDefaults.standard.set(list, forKey: "favorites")
+        favoriteCache = nil
         objectWillChange.send()
     }
 
