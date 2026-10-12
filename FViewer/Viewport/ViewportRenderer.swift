@@ -263,6 +263,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                     cursor += right * glyph * 1.5
                 }
             }
+            for segment in AvfxSimulation.physicsLines {
+                lines.append((segment.0, SIMD4(0.3, 0.85, 1, 0.8)))
+                lines.append((segment.1, SIMD4(0.3, 0.85, 1, 0.8)))
+            }
             let body = SIMD4<Float>(1, 1, 1, 0.35)
             if !AvfxSimulation.skeletonLines.isEmpty {
                 for segment in AvfxSimulation.skeletonLines {

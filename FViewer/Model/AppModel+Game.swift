@@ -359,6 +359,29 @@ extension AppModel {
         open(url)
     }
 
+    func togglePhysics(_ file: GameFileDocument) {
+        if physicsShown == file.url {
+            AvfxSimulation.physicsLines = []
+            physicsShown = nil
+        } else {
+            guard let skeleton = loadedSkeleton else {
+                file.note = "Load the skeleton first: File → Game → Load Skeleton"
+                return
+            }
+            let lines = GameRecords.physicsLines(file.bytes, skeleton: skeleton)
+            guard !lines.isEmpty else {
+                file.note = "None of the bones in this file are in the loaded skeleton"
+                return
+            }
+            AvfxSimulation.physicsLines = lines
+            physicsShown = file.url
+            showBindPoints = true
+            file.note = nil
+        }
+        PreviewRules.bump()
+        document?.liveChanged()
+    }
+
     func openCatalogPath(_ gamePath: String) {
         guard let url = locateGameFile(gamePath) else {
             catalogNote = "Not found in the open folder" + (game == nil ? "; no game folder is set" : " or the game archives")
@@ -395,6 +418,7 @@ extension AppModel {
         for (index, parent) in skeleton.parents.enumerated() where parent >= 0 { lines.append((skeleton.position(parent), skeleton.position(index))) }
         AvfxSimulation.skeletonLines = lines
         AvfxSimulation.skeletonBindPoints = points.isEmpty ? nil : points
+        loadedSkeleton = skeleton
         skeletonName = url.lastPathComponent
         PreviewRules.bump()
         document?.liveChanged()
@@ -545,6 +569,9 @@ extension AppModel {
         UserDefaults.standard.removeObject(forKey: "skeletonBookmark")
         AvfxSimulation.skeletonLines = []
         AvfxSimulation.skeletonBindPoints = nil
+        loadedSkeleton = nil
+        AvfxSimulation.physicsLines = []
+        physicsShown = nil
         skeletonName = nil
         PreviewRules.bump()
         document?.liveChanged()

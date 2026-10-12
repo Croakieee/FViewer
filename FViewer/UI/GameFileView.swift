@@ -144,6 +144,9 @@ private struct GameFileContent: View {
                 if file.dirty { ChangeDot() }
                 Spacer(minLength: 8)
                 if let note = file.note { Text(note).font(Theme.small).foregroundStyle(Color.orange).lineLimit(1) }
+                if file.kind == .phyb {
+                    SegmentButton(title: "Show in Viewport", active: app.physicsShown == file.url) { app.togglePhysics(file) }
+                }
                 if file.dirty {
                     SegmentButton(title: "Revert", active: false) { file.revert() }
                     SegmentButton(title: "Save Copy", active: true) { app.saveGameFile(file) }
@@ -576,6 +579,19 @@ private struct AtchView: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         Panel(title: entry.name + (AtchTable.weaponNames[entry.name].map { "  ·  " + $0 } ?? "")) {
+                            HStack(spacing: 6) {
+                                SegmentButton(title: "Duplicate Entry", active: false) {
+                                    change(table) { $0.addEntry(after: index) }
+                                    file.selection = index + 1
+                                }
+                                SegmentButton(title: "Delete Entry", active: false) {
+                                    change(table) { $0.removeEntry(index) }
+                                    file.selection = max(0, index - 1)
+                                }
+                                Spacer()
+                                HelpBadge(text: "A duplicate is named new; give it its own three-letter code. The table holds at most 256 entries.")
+                            }
+                            row("Code") { TextValueField(value: entry.name) { text in change(table) { $0.entries[index].name = String(text.prefix(3)) } }.frame(width: 80) }
                             row("Accessory") { CheckBox(isOn: entry.accessory, label: "") { on in change(table) { $0.entries[index].accessory = on } }.frame(width: 40) }
                         }
                         ForEach(Array(entry.states.enumerated()), id: \.offset) { slot, state in
@@ -619,6 +635,72 @@ private struct RecordsView: View {
     }
 
     private func putFloat(_ at: Int, _ value: Double) { GameFiles.put32(&file.bytes, at, Float(value).bitPattern) }
+
+    private func apply(_ next: [UInt8]?, select: Int? = nil) {
+        guard let next else {
+            file.note = "This file has a layout this app cannot rebuild"
+            return
+        }
+        file.bytes = next
+        file.note = nil
+        if let select { file.selection = max(0, select) }
+    }
+
+    private func additions(_ slot: RecordSlot?) -> [(String, PhybAddition)] {
+        var list: [(String, PhybAddition)] = PhybModel.shapeNames.enumerated().map { ($1, PhybAddition.shape($0)) } + [("Simulator", .simulator)]
+        switch slot {
+        case .parameters, .item, .chain, .chainCollision, .node:
+            list += PhybModel.listNames.enumerated().map { ($1, PhybAddition.item($0)) }
+        default: break
+        }
+        switch slot {
+        case .chain, .chainCollision, .node: list += [("Chain Collision", .chainCollision), ("Chain Node", .node)]
+        default: break
+        }
+        return list
+    }
+
+    private func addMenu(_ slot: RecordSlot?) -> some View {
+        Menu {
+            ForEach(additions(slot), id: \.1) { item in
+                Button(item.0) { apply(GameRecords.phybAdd(file.bytes, item.1, near: slot)) }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 9, weight: .bold))
+                Text("Add").font(Theme.font)
+            }
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @ViewBuilder private func tools(_ slot: RecordSlot) -> some View {
+        HStack(spacing: 6) {
+            if case .variant(let variant) = slot {
+                SegmentButton(title: "Add Variant", active: false) { apply(GameRecords.imcAdd(file.bytes, after: variant)) }
+                if variant > 0 { SegmentButton(title: "Delete Variant", active: false) { apply(GameRecords.imcRemove(file.bytes, variant: variant), select: file.selection - 1) } }
+                Spacer()
+                HelpBadge(text: "A new variant is a copy of this one and goes to the end of the list. The default entry cannot be deleted.")
+            } else {
+                addMenu(slot)
+                SegmentButton(title: { if case .parameters = slot { return "Duplicate Simulator" } else { return "Duplicate" } }(), active: false) {
+                    apply(GameRecords.phybDuplicate(file.bytes, slot))
+                }
+                SegmentButton(title: { if case .parameters = slot { return "Delete Simulator" } else { return "Delete" } }(), active: false) {
+                    apply(GameRecords.phybRemove(file.bytes, slot), select: file.selection - 1)
+                }
+                Spacer()
+                HelpBadge(text: "Add puts a new record at the end of its list; inside a simulator or a chain the menu also offers their own records. Deleting a chain or a simulator removes everything in it.")
+            }
+        }
+    }
 
     @ViewBuilder private func editor(_ field: RecordField) -> some View {
         let b = file.bytes
@@ -687,6 +769,15 @@ private struct RecordsView: View {
                 .background(Theme.gray(0.157))
                 ScrollView {
                     Panel(title: record.section + "  ·  " + record.title) {
+                        if let slot = record.slot { tools(slot) }
+                        if let slot = record.skp {
+                            HStack(spacing: 6) {
+                                SegmentButton(title: "Duplicate", active: false) { apply(GameRecords.skpEdit(file.bytes, slot, remove: false)) }
+                                SegmentButton(title: "Delete", active: false) { apply(GameRecords.skpEdit(file.bytes, slot, remove: true), select: file.selection - 1) }
+                                if case .group(let group) = slot { SegmentButton(title: "Add Element", active: false) { apply(GameRecords.skpAddElement(file.bytes, group: group)) } }
+                                Spacer()
+                            }
+                        }
                         ForEach(record.fields) { field in
                             HStack(alignment: .top, spacing: 6) {
                                 Text(field.name).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).frame(width: 170, alignment: .trailing).padding(.top, 3)
@@ -702,8 +793,11 @@ private struct RecordsView: View {
                 }
             }
         } else {
-            Text(records == nil ? "This file has a layout this app does not know" : "The file holds no records").font(Theme.font).foregroundStyle(Theme.dim)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 10) {
+                Text(records == nil ? "This file has a layout this app does not know" : "The file holds no records").font(Theme.font).foregroundStyle(Theme.dim)
+                if file.kind == .phyb, PhybModel.parse(file.bytes) != nil { addMenu(nil).frame(width: 120) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -736,7 +830,76 @@ private struct MtrlPanels: View {
         .frame(width: 150)
     }
 
+    private func change(_ mutate: (inout MtrlModel) -> Void) {
+        guard var model = MtrlModel.parse(file.bytes) else {
+            file.note = "This material has a layout this app cannot rebuild"
+            return
+        }
+        mutate(&model)
+        guard model.textures.count < 256, model.uvSets.count < 256, model.colorSets.count < 256 else { return }
+        let out = model.serialized()
+        guard out.count < 65536 else {
+            file.note = "The material would grow past its size limit"
+            return
+        }
+        file.bytes = out
+        file.note = nil
+    }
+
+    private func text(_ label: String, _ value: String, _ commit: @escaping (String) -> Void) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.dim).frame(width: 110, alignment: .trailing)
+            TextValueField(value: value, action: commit)
+        }
+    }
+
+    private func add(_ title: String, _ action: @escaping () -> Void) -> some View {
+        HStack {
+            SegmentButton(title: title, active: false, action: action)
+            Spacer()
+        }
+    }
+
+    @ViewBuilder private var names: some View {
+        if let model = MtrlModel.parse(file.bytes) {
+            Panel(title: "Material") {
+                text("Shader", model.shader) { value in change { $0.shader = value } }
+                ForEach(Array(model.textures.enumerated()), id: \.offset) { index, item in
+                    HStack(spacing: 6) {
+                        text("Texture \(index)", item.path) { value in change { $0.textures[index].path = value } }
+                        NumberField(label: nil, value: Double(item.flags), isInteger: true, onLive: { _ in },
+                                    onCommit: { _, v in change { $0.textures[index].flags = UInt16(max(0, min(v, 65535))) } }).frame(width: 80)
+                        HeaderButton(symbol: "trash", help: "Remove this texture") { change { $0.textures.remove(at: index) } }
+                    }
+                }
+                ForEach(Array(model.uvSets.enumerated()), id: \.offset) { index, item in
+                    HStack(spacing: 6) {
+                        text("UV Set \(index)", item.name) { value in change { $0.uvSets[index].name = value } }
+                        HeaderButton(symbol: "trash", help: "Remove this UV set") { change { $0.uvSets.remove(at: index) } }
+                    }
+                }
+                ForEach(Array(model.colorSets.enumerated()), id: \.offset) { index, item in
+                    HStack(spacing: 6) {
+                        text("Colour Set \(index)", item.name) { value in change { $0.colorSets[index].name = value } }
+                        HeaderButton(symbol: "trash", help: "Remove this colour set") { change { $0.colorSets.remove(at: index) } }
+                    }
+                }
+                HStack(spacing: 6) {
+                    SegmentButton(title: "Add Texture", active: false) { change { $0.textures.append(("chara/replace_me_d.tex", 0)) } }
+                    SegmentButton(title: "Add UV Set", active: false) { change { $0.uvSets.append(("map\($0.uvSets.count + 1)", UInt16($0.uvSets.count))) } }
+                    SegmentButton(title: "Add Colour Set", active: false) { change { $0.colorSets.append(("colorSet\($0.colorSets.count + 1)", UInt16($0.colorSets.count))) } }
+                    SegmentButton(title: "Add Key", active: false) { change { $0.keys.append((0, 0)) } }
+                    SegmentButton(title: "Add Constant", active: false) { change { $0.constants.append((0, [0])) } }
+                    SegmentButton(title: "Add Sampler", active: false) { change { $0.samplers.append([UInt8](repeating: 0, count: 12)) } }
+                    Spacer()
+                    HelpBadge(text: "Paths and names may be any length: the file is rebuilt around them. The number next to a texture holds its flags. New keys, constants and samplers start at zero; set their ids in the panels below.")
+                }
+            }
+        }
+    }
+
     var body: some View {
+        names
         Panel(title: "Shader Values") {
             HStack(spacing: 8) {
                 label("Flags", 110)
@@ -753,10 +916,12 @@ private struct MtrlPanels: View {
             Panel(title: "Shader Keys", trailing: "\(layout.keys.count)") {
                 ForEach(layout.keys, id: \.self) { at in
                     HStack(spacing: 8) {
-                        label(hex(at), 110)
+                        integer(at, width: 110)
+                        label(hex(at), 70)
                         integer(at + 4)
                         label(hex(at + 4), 80)
                         Spacer(minLength: 0)
+                        HeaderButton(symbol: "trash", help: "Remove this key") { change { $0.keys.remove(at: layout.keys.firstIndex(of: at) ?? 0) } }
                     }
                 }
             }
@@ -765,13 +930,18 @@ private struct MtrlPanels: View {
             Panel(title: "Constants", trailing: "\(layout.constants.count)") {
                 ForEach(layout.constants, id: \.at) { constant in
                     HStack(spacing: 6) {
-                        label(hex(constant.at), 110)
+                        integer(constant.at, width: 110)
+                        label(hex(constant.at), 70)
                         ForEach(0..<min(constant.count, 4), id: \.self) { slot in
                             let at = constant.valuesAt + slot * 4
                             NumberField(label: nil, value: Double(GameFiles.f32(file.bytes, at)), step: 0.01, onLive: { _ in },
                                         onCommit: { _, v in GameFiles.put32(&file.bytes, at, Float(v).bitPattern) }).frame(width: 90)
                         }
                         Spacer(minLength: 0)
+                        let index = layout.constants.firstIndex { $0.at == constant.at } ?? 0
+                        HeaderButton(symbol: "plus", help: "Add a value") { change { if $0.constants[index].values.count < 4 { $0.constants[index].values.append(0) } } }
+                        HeaderButton(symbol: "minus", help: "Remove the last value") { change { if $0.constants[index].values.count > 1 { $0.constants[index].values.removeLast() } } }
+                        HeaderButton(symbol: "trash", help: "Remove this constant") { change { $0.constants.remove(at: index) } }
                     }
                 }
             }
@@ -780,13 +950,15 @@ private struct MtrlPanels: View {
             Panel(title: "Samplers", trailing: "\(layout.samplers.count)") {
                 ForEach(layout.samplers, id: \.self) { at in
                     HStack(spacing: 8) {
-                        label(hex(at), 110)
+                        integer(at, width: 110)
+                        label(hex(at), 70)
                         integer(at + 4)
                         label(hex(at + 4), 80)
                         Text("Texture").font(Theme.font).foregroundStyle(Theme.dim)
                         NumberField(label: nil, value: Double(file.bytes[at + 8]), isInteger: true, onLive: { _ in },
                                     onCommit: { _, v in file.bytes[at + 8] = UInt8(max(0, min(v, 255))) }).frame(width: 60)
                         Spacer(minLength: 0)
+                        HeaderButton(symbol: "trash", help: "Remove this sampler") { change { $0.samplers.remove(at: layout.samplers.firstIndex(of: at) ?? 0) } }
                     }
                 }
             }
@@ -840,20 +1012,6 @@ private struct WaveStrip: View {
 private struct RawFileView: View {
     @ObservedObject var file: GameFileDocument
 
-    private func edit(_ label: String, _ value: String, slot: Int) -> some View {
-        HStack(spacing: 8) {
-            Text(label).font(Theme.font).foregroundStyle(Theme.dim).frame(width: 130, alignment: .trailing)
-            TextValueField(value: value) { text in
-                guard let at = GameFiles.mtrlStringOffset(file.bytes, slot: slot) else { return }
-                if GameFiles.setString(&file.bytes, at: at, old: value, new: text) {
-                    file.note = nil
-                } else {
-                    file.note = "The text can be at most \(value.utf8.count) characters here"
-                }
-            }
-        }
-    }
-
     private func line(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(label).font(Theme.font).foregroundStyle(Theme.dim).frame(width: 130, alignment: .trailing)
@@ -867,18 +1025,6 @@ private struct RawFileView: View {
         let ext = file.url.pathExtension.lowercased()
         ScrollView {
             VStack(spacing: 6) {
-                if ext == "mtrl", let summary = GameFiles.mtrlSummary(file.bytes) {
-                    Panel(title: "Material") {
-                        edit("Shader", summary.shader, slot: -1)
-                        ForEach(Array(summary.textures.enumerated()), id: \.offset) { index, path in edit("Texture \(index)", path, slot: index) }
-                        HStack {
-                            Spacer()
-                            HelpBadge(text: "The shader and texture paths can be replaced by text of the same length or shorter; the file layout stays as it is.")
-                        }
-                        ForEach(Array(summary.uvSets.enumerated()), id: \.offset) { index, name in line("UV Set \(index)", name) }
-                        ForEach(Array(summary.colorSets.enumerated()), id: \.offset) { index, name in line("Colour Set \(index)", name) }
-                    }
-                }
                 if ext == "mtrl", let layout = MtrlLayout.parse(file.bytes) { MtrlPanels(file: file, layout: layout) }
                 if ext == "sklb", let skeleton = GameSkeleton.parse(file.bytes) {
                     Panel(title: "Bones", trailing: "\(skeleton.names.count)") {

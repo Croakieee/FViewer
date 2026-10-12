@@ -25,6 +25,8 @@ struct GameRecord: Identifiable {
     let section: String
     let title: String
     let fields: [RecordField]
+    var slot: RecordSlot? = nil
+    var skp: SkpSlot? = nil
 }
 
 struct RecordBuilder {
@@ -42,7 +44,8 @@ struct RecordBuilder {
         }
     }
 
-    @discardableResult mutating func add(_ section: String, _ title: String, at start: Int, _ layout: [(String, RecordKind)], nameField: Int? = nil) -> Int {
+    @discardableResult mutating func add(_ section: String, _ title: String, at start: Int, _ layout: [(String, RecordKind)], nameField: Int? = nil,
+                                         slot: RecordSlot? = nil, skp: SkpSlot? = nil) -> Int {
         var fields: [RecordField] = []
         var at = start
         for (index, item) in layout.enumerated() {
@@ -59,7 +62,7 @@ struct RecordBuilder {
             let text = GameFiles.string(bytes, fields[nameField].at, max: length)
             if !text.isEmpty { name = title + "  " + text }
         }
-        records.append(GameRecord(id: records.count, section: section, title: name, fields: fields))
+        records.append(GameRecord(id: records.count, section: section, title: name, fields: fields, slot: slot, skp: skp))
         return at
     }
 
@@ -93,7 +96,7 @@ enum GameRecords {
                 ("Sphere", [name("Name"), name("Bone"), ("Bone Offset", .floats(3)), ("Thickness", .float)]),
             ]
             for (index, shape) in shapes.enumerated() {
-                for _ in 0..<max(0, counts[index]) { at = builder.add("Collision", shape.0, at: at, shape.1, nameField: 0) }
+                for item in 0..<max(0, counts[index]) { at = builder.add("Collision", shape.0, at: at, shape.1, nameField: 0, slot: .shape(kind: index, index: item)) }
             }
             if at > simulation { return nil }
         }
@@ -108,32 +111,32 @@ enum GameRecords {
             builder.add(section, "Parameters", at: head + 8, [
                 ("Gravity", .floats(3)), ("Wind", .floats(3)), ("Constraint Loop", .short), ("Collision Loop", .short),
                 ("Flags", .flags(["Simulating", "Collisions Handled", "Continuous Collisions", "Using Ground Plane", "Fixed Length"])), ("Group", .byte),
-            ])
+            ], slot: .parameters(simulator: index))
             func place(_ slot: Int) -> Int {
                 let offset = builder.u32(head + 40 + slot * 4)
                 return offset == 0xCCCC_CCCC ? simulation + 4 : simulation + offset + 4
             }
             var at = place(0)
-            for _ in 0..<counts[0] { at = builder.add(section, "Collision Object", at: at, collisionData, nameField: 0) }
+            for item in 0..<counts[0] { at = builder.add(section, "Collision Object", at: at, collisionData, nameField: 0, slot: .item(simulator: index, list: 0, index: item)) }
             at = place(1)
-            for _ in 0..<counts[1] { at = builder.add(section, "Collision Connector", at: at, collisionData, nameField: 0) }
+            for item in 0..<counts[1] { at = builder.add(section, "Collision Connector", at: at, collisionData, nameField: 0, slot: .item(simulator: index, list: 1, index: item)) }
             at = place(2)
             for chain in 0..<counts[2] {
                 let collisions = builder.u16(at), nodes = builder.u16(at + 2)
                 let next = builder.add(section, "Chain \(chain)", at: at + 4, [
                     ("Dampening", .float), ("Max Speed", .float), ("Friction", .float), ("Collision Dampening", .float), ("Repulsion Strength", .float),
                     ("Last Bone Offset", .floats(3)), ("Type", .choice(["Sphere", "Capsule"])),
-                ])
+                ], slot: .chain(simulator: index, index: chain))
                 guard collisions >= 0, nodes >= 0, collisions < 256, nodes < 1024 else { return nil }
                 var inner = simulation + builder.u32(next) + 4
-                for _ in 0..<collisions { inner = builder.add(section, "Chain \(chain) Collision", at: inner, collisionData, nameField: 0) }
+                for item in 0..<collisions { inner = builder.add(section, "Chain \(chain) Collision", at: inner, collisionData, nameField: 0, slot: .chainCollision(simulator: index, chain: chain, index: item)) }
                 inner = simulation + builder.u32(next + 4) + 4
                 for node in 0..<nodes {
                     inner = builder.add(section, "Chain \(chain) Node \(node)", at: inner, [
                         name("Bone Name"), ("Collision Radius", .float), ("Attract by Animation", .float), ("Wind Scale", .float), ("Gravity Scale", .float),
                         ("Cone Max Angle", .angle), ("Cone Axis Offset", .floats(3)), ("Constraint Plane Normal", .floats(3)), ("Collision Flags", .int),
                         ("Continuous Collision Flags", .int),
-                    ], nameField: 0)
+                    ], nameField: 0, slot: .node(simulator: index, chain: chain, index: node))
                 }
                 at = next + 8
             }
@@ -142,25 +145,25 @@ enum GameRecords {
                 at = builder.add(section, "Connector \(item)", at: at, [
                     ("Chain Id 1", .short), ("Chain Id 2", .short), ("Node Id 1", .short), ("Node Id 2", .short), ("Collision Radius", .float), ("Friction", .float),
                     ("Dampening", .float), ("Repulsion", .float), ("Collision Flags", .int), ("Continuous Collision Flags", .int),
-                ])
+                ], slot: .item(simulator: index, list: 3, index: item))
             }
             at = place(4)
             for item in 0..<counts[4] {
                 at = builder.add(section, "Attract \(item)", at: at, [name("Bone Name"), ("Bone Offset", .floats(3)), ("Chain Id", .short), ("Node Id", .short),
-                                                                       ("Stiffness", .float)], nameField: 0)
+                                                                       ("Stiffness", .float)], nameField: 0, slot: .item(simulator: index, list: 4, index: item))
             }
             at = place(5)
             for item in 0..<counts[5] {
-                at = builder.add(section, "Pin \(item)", at: at, [name("Bone Name"), ("Bone Offset", .floats(3)), ("Chain Id", .short), ("Node Id", .short)], nameField: 0)
+                at = builder.add(section, "Pin \(item)", at: at, [name("Bone Name"), ("Bone Offset", .floats(3)), ("Chain Id", .short), ("Node Id", .short)], nameField: 0, slot: .item(simulator: index, list: 5, index: item))
             }
             at = place(6)
             for item in 0..<counts[6] {
                 at = builder.add(section, "Spring \(item)", at: at, [("Chain Id 1", .short), ("Chain Id 2", .short), ("Node Id 1", .short), ("Node Id 2", .short),
-                                                                      ("Stretch Stiffness", .float), ("Compress Stiffness", .float)])
+                                                                      ("Stretch Stiffness", .float), ("Compress Stiffness", .float)], slot: .item(simulator: index, list: 6, index: item))
             }
             at = place(7)
             for item in 0..<counts[7] {
-                at = builder.add(section, "Post Alignment \(item)", at: at, [name("Collision Name"), ("Chain Id", .short), ("Node Id", .short)], nameField: 0)
+                at = builder.add(section, "Post Alignment \(item)", at: at, [name("Collision Name"), ("Chain Id", .short), ("Node Id", .short)], nameField: 0, slot: .item(simulator: index, list: 7, index: item))
             }
         }
         return builder.valid ? builder.records : nil
@@ -178,7 +181,7 @@ enum GameRecords {
             for part in 0..<parts {
                 let effect = builder.u8(at + 4)
                 let title = (parts > 1 ? "Part \(part)" : "Entry") + (effect > 0 ? "  vfx \(effect)" : "")
-                at = builder.add(variant == 0 ? "Default" : "Variant \(variant)", title, at: at, layout)
+                at = builder.add(variant == 0 ? "Default" : "Variant \(variant)", title, at: at, layout, slot: .variant(variant))
             }
         }
         return builder.valid ? builder.records : nil
@@ -198,17 +201,17 @@ enum GameRecords {
                 at = builder.add("Look At", "Parameters \(index)", at: at, [
                     ("Limit Angles", .angles(4)), ("Forward Rotation", .floats(3)), ("Limit Angle", .angle), ("Eye Positions", .floats(3)), ("Flags", .int),
                     ("Gain", .float), ("Index", .byte),
-                ] + skip(3))
+                ] + skip(3), skp: .parameter(index))
             }
             for index in 0..<groups {
                 let start = at
-                at = builder.add("Look At", "Group \(index)", at: at, [("Id", .text(length: 32, fill: 0))] + skip(1), nameField: 0)
+                at = builder.add("Look At", "Group \(index)", at: at, [("Id", .text(length: 32, fill: 0))] + skip(1), nameField: 0, skp: .group(index))
                 let count = builder.u8(start + 32)
                 guard count >= 0, count == sizes[index] else { return nil }
                 for element in 0..<count {
                     at = builder.add("Look At", "Group \(index) Element \(element)", at: at, [
                         ("Priority", .byte), ("Setup Parameters Index", .byte), ("Bone Name", .text(length: 32, fill: 0)), ("Parent Bone Name", .text(length: 32, fill: 0)),
-                    ], nameField: 2)
+                    ], nameField: 2, skp: .element(group: index, index: element))
                 }
             }
         }
@@ -217,7 +220,7 @@ enum GameRecords {
             builder.add("Slope", "Settings", at: slope + 8, [("Unknown 1", .int), ("Unknown 2", .int), ("Center Offset", .floats(3))])
             let points = builder.u32(slope + 28)
             guard points >= 0, points < 4096 else { return nil }
-            for index in 0..<points { builder.add("Slope", "Point \(index)", at: slope + 32 + index * 12, [("Position", .floats(3))]) }
+            for index in 0..<points { builder.add("Slope", "Point \(index)", at: slope + 32 + index * 12, [("Position", .floats(3))], skp: .point(index)) }
         }
         return builder.valid ? builder.records : nil
     }

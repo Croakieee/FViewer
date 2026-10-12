@@ -25,6 +25,8 @@ final class AppModel: ObservableObject {
     @Published var showGizmo = true
     @Published var themeToken = 0
     @Published var referenceModelName: String?
+    @Published var physicsShown: URL?
+    var loadedSkeleton: GameSkeleton?
     var referenceTextured = 0
     @Published var showCatalog = false
     @Published var catalogNote: String?

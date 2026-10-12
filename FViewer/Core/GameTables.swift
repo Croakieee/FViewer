@@ -56,6 +56,19 @@ struct AtchTable {
         return AtchTable(stateCount: states, entries: entries, order: order)
     }
 
+    mutating func addEntry(after index: Int) {
+        let source = index < entries.count ? entries[index] : nil
+        let states = source?.states ?? (0..<stateCount).map { _ in AtchState(bone: "n_root", scale: 1, offset: .zero, rotation: .zero) }
+        entries.insert(AtchEntry(id: 0, name: "new", accessory: source?.accessory ?? false, states: states), at: min(index + 1, entries.count))
+        entries = entries.enumerated().map { AtchEntry(id: $0, name: $1.name, accessory: $1.accessory, states: $1.states) }
+    }
+
+    mutating func removeEntry(_ index: Int) {
+        guard entries.count > 1, index < entries.count else { return }
+        entries.remove(at: index)
+        entries = entries.enumerated().map { AtchEntry(id: $0, name: $1.name, accessory: $1.accessory, states: $1.states) }
+    }
+
     func serialized() -> [UInt8] {
         var out: [UInt8] = []
         out.appendU16(UInt16(entries.count))
