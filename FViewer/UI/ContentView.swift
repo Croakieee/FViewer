@@ -6,7 +6,7 @@ struct BottomEditors: View {
 
     private static let editors: [(title: String, symbol: String)] = [
         ("Timeline", "timeline.selection"), ("Graph Editor", "point.topleft.down.to.point.bottomright.curvepath"),
-        ("Node Editor", "point.3.connected.trianglepath.dotted"),
+        ("Node Editor", "point.3.connected.trianglepath.dotted"), ("Item Editor", "slider.horizontal.below.rectangle"),
     ]
 
     var body: some View {
@@ -25,7 +25,8 @@ struct BottomEditors: View {
             switch current {
             case 0: SequencerView(document: document, clock: document.clock)
             case 1: CurveEditorView(document: document, clock: document.clock)
-            default: NodeGraphView(document: document).coordinateSpace(name: "graph")
+            case 2: NodeGraphView(document: document).coordinateSpace(name: "graph")
+            default: DockedItemEditor(document: document)
             }
         }
     }

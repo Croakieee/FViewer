@@ -390,6 +390,23 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    func pick(at point: CGPoint, in size: CGSize) {
+        guard showEffect, size.width > 1, size.height > 1, let document, document.format == .avfx, let simulation = player?.simulation else { return }
+        let forward = simd_normalize(camera.eye - camera.target)
+        let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
+        let up = simd_cross(forward, right)
+        let half = tan(Float(0.75) / 2)
+        let x = (Float(point.x / size.width) * 2 - 1) * half * Float(size.width / size.height)
+        let y = (Float(point.y / size.height) * 2 - 1) * half
+        let direction = simd_normalize(right * x + up * y - forward)
+        let state = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: up, z: forward), fovY: 0.75,
+                                viewportHeight: Float(size.height))
+        if let particle = simulation.pick(origin: camera.eye, direction: direction, camera: state, filter: filter) {
+            let id = "avfx/Ptcl/\(particle)"
+            if document.node(id) != nil { document.selectionID = id }
+        }
+    }
+
     func draw(in view: MTKView) {
         guard let pipeline, let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let buffer = queue.makeCommandBuffer() else { return }
@@ -521,7 +538,19 @@ final class ViewportMTKView: MTKView {
 
     override var acceptsFirstResponder: Bool { true }
 
-    override func mouseDown(with event: NSEvent) { window?.makeFirstResponder(self) }
+    private var pressPoint: NSPoint?
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        pressPoint = event.locationInWindow
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressPoint = nil }
+        guard let pressPoint, hypot(event.locationInWindow.x - pressPoint.x, event.locationInWindow.y - pressPoint.y) < 3 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        (delegate as? ViewportRenderer)?.pick(at: point, in: bounds.size)
+    }
 
     override func mouseDragged(with event: NSEvent) {
         if event.modifierFlags.contains(.shift) {

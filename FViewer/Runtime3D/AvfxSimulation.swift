@@ -739,8 +739,38 @@ final class AvfxSimulation {
     func emitterMarkers() -> [(index: Int, world: Mat4, points: [Vec3])] {
         emitters.map { e in
             let radius = e.schema.type == 3 ? Eval.curve(e.schema.radius, CurveTime(e.age), 1) : 1
-            return (e.schema.index, e.world, e.points.map { $0.position * (e.schema.type == 3 ? radius : 1) })
+            var points = e.points.map { $0.position * (e.schema.type == 3 ? radius : 1) }
+            if e.schema.type == 1 || e.schema.type == 2 {
+                let t = CurveTime(e.age)
+                let angle = min(max(Eval.curve(e.schema.coneAngle, t, 0), 0), .pi)
+                let turn = Math3D.euler(Vec3(Eval.curve(e.schema.coneRotation[0], t, 0), Eval.curve(e.schema.coneRotation[1], t, 0),
+                                             Eval.curve(e.schema.coneRotation[2], t, 0)), order: e.schema.dataRotationOrder)
+                for ring in 1...4 {
+                    let reach = Float(ring) * 0.25
+                    for step in 0..<32 {
+                        let around = Float(step) / 32 * 2 * .pi
+                        points.append(turn.act(Vec3(sin(angle) * cos(around), sin(angle) * sin(around), cos(angle)) * reach))
+                    }
+                }
+            }
+            return (e.schema.index, e.world, points)
         }
+    }
+
+    func pick(origin: Vec3, direction: Vec3, camera: CameraState, filter: VisibilityFilter) -> Int? {
+        var best: (particle: Int, distance: Float)?
+        for draw in render(camera: camera, filter: filter) {
+            let centre = Math3D.position(draw.model)
+            let scale = Math3D.decompose(draw.model).scale
+            let radius = max(0.08, max(abs(scale.x), abs(scale.y), abs(scale.z)) * 0.5)
+            let along = simd_dot(centre - origin, direction)
+            guard along > 0 else { continue }
+            let miss = simd_length(centre - (origin + direction * along))
+            guard miss <= radius else { continue }
+            let score = miss / radius + along * 0.001
+            if best == nil || score < (best?.distance ?? .infinity) { best = (draw.particle, score) }
+        }
+        return best?.particle
     }
 
     var usedBindPoints: [Vec3] {

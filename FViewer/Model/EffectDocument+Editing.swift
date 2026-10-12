@@ -117,6 +117,36 @@ extension EffectDocument {
         return records.count - source.count
     }
 
+    func siblingNodes(of nodeID: String) -> [OutlineNode] {
+        let parts = nodeID.split(separator: "/").map(String.init)
+        guard parts.count >= 3, Int(parts[2]) != nil else { return [] }
+        var result: [OutlineNode] = []
+        var index = 0
+        while let node = node((parts.prefix(2) + ["\(index)"] + parts.dropFirst(3)).joined(separator: "/")) {
+            if node.id != nodeID { result.append(node) }
+            index += 1
+            if index > 4096 { break }
+        }
+        return result
+    }
+
+    @discardableResult func applyToSiblings(_ field: PropField, in nodeID: String) -> Int {
+        guard field.write != nil, field.id.hasPrefix(nodeID) else { return 0 }
+        let tail = String(field.id.dropFirst(nodeID.count))
+        let value = field.read()
+        let before = snapshot()
+        var count = 0
+        for sibling in siblingNodes(of: nodeID) {
+            guard let target = sections(for: sibling).flatMap(\.fields).first(where: { $0.id == sibling.id + tail }), let write = target.write,
+                  target.read() != value else { continue }
+            if case .choice(let choices) = target.kind, case .int(let raw) = value, !choices.contains(where: { $0.value == raw }) { continue }
+            write(value)
+            count += 1
+        }
+        if count > 0 { registerUndo("Apply " + field.label + " to All", since: before) }
+        return count
+    }
+
     func changeRecords(_ owner: AvfxBlock, list: String, title: String, _ change: (inout [[AvfxBlock]]) -> Void) {
         var records = owner.ownRecords(list)
         change(&records)

@@ -249,7 +249,9 @@ struct ColorField: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
                 }), supportsOpacity: alpha)
                 .labelsHidden()
+                .scaleEffect(0.62)
                 .frame(width: 28, height: 20)
+                .clipped()
         }
     }
 }

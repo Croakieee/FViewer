@@ -114,6 +114,13 @@ struct FieldRows: View {
         if changed(field), let before = document.originalValue(of: field, in: nodeID) {
             Button("Reset to Original (\(document.describe(before)))") { document.commit(field, from: field.read(), to: before) }
         }
+        if field.write != nil, !document.siblingNodes(of: nodeID).isEmpty {
+            Button("Apply to All \(EffectDocument.linkKind(nodeID))s") {
+                let count = document.applyToSiblings(field, in: nodeID)
+                AppDelegate.model?.notice = count == 0 ? "Every other \(EffectDocument.linkKind(nodeID).lowercased()) already has this value"
+                    : "\(field.label) set on \(count) more"
+            }
+        }
         if let unassign = field.unassign { Button("Remove from File", role: .destructive, action: unassign) }
     }
 
@@ -498,6 +505,9 @@ struct InspectorView: View {
             }
         }
         ClipLogPanel(clock: document.clock)
+        if let root = document.avfxRoot {
+            Panel(title: "Raw Blocks") { RawBlockRow(block: root, depth: 0) }
+        }
         Panel(title: "Textures") {
             ForEach(document.textureSlots) { slot in
                 HStack(spacing: 6) {
@@ -520,6 +530,45 @@ struct ClipLogPanel: View {
                 ForEach(Array(clock.clipLog.suffix(40).enumerated()), id: \.offset) { _, line in
                     Text(line).font(Theme.font).foregroundStyle(Theme.text).frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+        }
+    }
+}
+
+struct RawBlockRow: View {
+    let block: AvfxBlock
+    let depth: Int
+    @State private var open = false
+
+    private var summary: String {
+        if let children = block.children { return "\(children.count) blocks" }
+        let data = block.data
+        if data.count == 4 {
+            let raw = data.u32(0)
+            let float = Float(bitPattern: raw)
+            let number = abs(float) > 1e-4 && abs(float) < 1e7 ? String(format: "  %.4g", float) : ""
+            return "\(Int32(bitPattern: raw))" + number
+        }
+        if data.count == 1 { return "\(data[0])" }
+        return "\(data.count) bytes  " + data.prefix(8).map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+
+    var body: some View {
+        let children = block.children ?? []
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                Color.clear.frame(width: CGFloat(min(depth, 12)) * 10)
+                Image(systemName: children.isEmpty ? "circle.fill" : open ? "chevron.down" : "chevron.right")
+                    .font(.system(size: children.isEmpty ? 3 : 7, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 10)
+                Text(block.tag).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(summary).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.tail)
+            }
+            .frame(height: 18)
+            .contentShape(Rectangle())
+            .onTapGesture { if !children.isEmpty { open.toggle() } }
+            if open {
+                ForEach(Array(children.prefix(400).enumerated()), id: \.offset) { _, child in RawBlockRow(block: child, depth: depth + 1) }
             }
         }
     }
