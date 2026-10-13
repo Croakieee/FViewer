@@ -107,6 +107,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-[MIT](LICENSE). Field names, defaults and file layouts come from [Dalamud-VFXEditor](https://github.com/0ceal0t/Dalamud-VFXEditor); its notice is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). Field names, defaults and file layouts come from [Dalamud-VFXEditor](https://github.com/0ceal0t/Dalamud-VFXEditor); its notice is in [THIRD_PARTY_NOTICES.md](https://github.com/Croakieee/FViewer/blob/main/.github/THIRD_PARTY_NOTICES.md).
 
 FINAL FANTASY XIV is a registered trademark of SQUARE ENIX CO., LTD. This project is not affiliated with SQUARE ENIX and contains no game assets.
