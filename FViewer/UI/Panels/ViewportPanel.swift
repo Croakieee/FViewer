@@ -61,6 +61,22 @@ struct SoloButton: View {
     }
 }
 
+struct ViewportStats: View {
+    @ObservedObject var clock: PlaybackClock
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(clock.status.isEmpty ? "—" : clock.status)
+            Text("frame \(Int(clock.time.rounded()))")
+            Text(String(format: "%.2f s", clock.time / 30))
+            if clock.frameMilliseconds > 0 { Text(String(format: "%.1f ms", clock.frameMilliseconds)) }
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundStyle(Color.white.opacity(0.75))
+        .shadow(color: .black, radius: 1)
+    }
+}
+
 struct ViewportPanel: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
@@ -79,7 +95,7 @@ struct ViewportPanel: View {
         scene.filter = document.visibilityFilter
         scene.highlight = app.highlightSelection ? document.visibilityKey(forNodeID: document.selectionID) : nil
         let selected = document.selectionID ?? ""
-        var key = "\(document.id)|\(document.revision)|\(app.viewportMode)|"
+        var key = "\(document.id)|\(document.previewRevision)|\(app.viewportMode)|"
         let meshes = app.meshes(for: document)
         for entry in meshes.filter({ selected.hasPrefix($0.id) }) {
             scene.meshes.append((entry.mesh, true))
@@ -231,6 +247,10 @@ struct ViewportPanel: View {
                 .padding(10)
                 .allowsHitTesting(false)
                 AxisGizmo(camera: camera).frame(maxWidth: .infinity, alignment: .topTrailing).padding(8)
+                ViewportStats(clock: document.clock)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .padding(8)
+                    .allowsHitTesting(false)
             }
         }
         .onAppear { frameAll() }

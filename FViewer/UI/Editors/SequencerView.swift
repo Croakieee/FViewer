@@ -94,7 +94,7 @@ struct SequencerView: View {
                                 func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
                                 start.write?(value(start, (start.read().number ?? 0) + shift))
                                 if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, (finish.read().number ?? 0) + shift)) }
-                                document.liveChanged()
+                                document.liveDrag()
                             }
                             document.selectionID = fresh.nodeID
                         }
@@ -173,7 +173,7 @@ struct SequencerView: View {
                         if showDensity { document.scheduleDensity() }
                     }
                     .onAppear { if showDensity { document.scheduleDensity() } }
-                    .onChange(of: document.revision) { _, _ in if showDensity { document.scheduleDensity() } }
+                    .onChange(of: document.previewRevision) { _, _ in if showDensity { document.scheduleDensity() } }
                     .onChange(of: document.id) { _, _ in if showDensity { document.scheduleDensity() } }
                     HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
                         viewZoom = 1
@@ -390,7 +390,7 @@ struct SequencerView: View {
         } else if dragMode == 4, let start = row.startField {
             start.write?(value(start, min(max(0, dragStart + delta), dragEnd - 1)))
         }
-        document.liveChanged()
+        document.liveDrag()
     }
 
     private func endDrag() {

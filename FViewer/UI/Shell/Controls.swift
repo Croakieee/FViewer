@@ -285,6 +285,35 @@ struct ClickCatcher: NSViewRepresentable {
     }
 }
 
+struct ConstantCurveFields: View {
+    @ObservedObject var document: EffectDocument
+    let group: CurveGroup
+
+    static func applies(_ group: CurveGroup) -> Bool {
+        !group.channels.isEmpty && group.channels.allSatisfy { $0.colorComponent == nil && $0.read().count == 1 }
+    }
+
+    var body: some View {
+        FlowLayout(spacing: 4) {
+            ForEach(group.channels) { channel in
+                let key = channel.read().first
+                NumberField(label: group.channels.count == 1 ? "Value" : channel.name.replacingOccurrences(of: "Random ", with: "± "),
+                            value: key?.value ?? 0, suffix: group.isAngle ? "°" : "", step: group.isAngle ? 1 : 0.01, onLive: { _ in },
+                            onCommit: { _, next in
+                                guard var point = channel.read().first, point.value != next else { return }
+                                let before = document.snapshot()
+                                point.value = channel.clampUnit ? min(max(next, 0), 1) : next
+                                channel.write([point])
+                                document.registerUndo("Set " + group.title + (channel.name == group.title ? "" : " " + channel.name), since: before)
+                            })
+                    .frame(width: 104)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 24)
+    }
+}
+
 struct UnsetRows: View {
     let items: [MissingCurve]
 
@@ -305,6 +334,97 @@ struct UnsetRows: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct RecipeRows: View {
+    @ObservedObject var document: EffectDocument
+    let fields: [PropField]
+    let recipes: [(name: String, help: String, values: [(String, Int)])]
+
+    static let particle: [(name: String, help: String, values: [(String, Int)])] = [
+        ("Additive Glow", "Draw Mode Add, depth test on, depth write off, no culling", [("RMT", 2), ("DsDt", 1), ("DsDw", 0), ("CulT", 0)]),
+        ("Alpha Blend", "Draw Mode Blend, depth test on, depth write off", [("RMT", 0), ("DsDt", 1), ("DsDw", 0)]),
+        ("Screen", "Draw Mode Screen, depth test on, depth write off", [("RMT", 4), ("DsDt", 1), ("DsDw", 0)]),
+        ("Solid", "Draw Mode Opacity with depth test and depth write on", [("RMT", 8), ("DsDt", 1), ("DsDw", 1)]),
+        ("On Top", "Depth test and depth write off, so nothing hides the particle", [("DsDt", 0), ("DsDw", 0)]),
+        ("Soft Edges", "Soft Particle on with depth test on", [("DsSp", 1), ("DsDt", 1)]),
+        ("Two Sided", "Culling Type None", [("CulT", 0)]),
+        ("Cull Back", "Culling Type Back", [("CulT", 2)]),
+        ("Unlit", "Tone map and fog off", [("bATM", 0), ("bAFg", 0)]),
+        ("Scene Lit", "Tone map and fog on", [("bATM", 1), ("bAFg", 1)]),
+        ("No Loop", "Loop Start and Loop End 0", [("LpSt", 0), ("LpEd", 0)]),
+    ]
+
+    static let emitter: [(name: String, help: String, values: [(String, Int)])] = [
+        ("Point", "Type Point", [("EVT", 0)]),
+        ("Cone", "Type Cone", [("EVT", 1)]),
+        ("Any Direction", "Any Direction on", [("bAD", 1)]),
+        ("Fixed Direction", "Any Direction off", [("bAD", 0)]),
+        ("No Effector", "Effector Select None", [("EfNo", -1)]),
+        ("No Sound", "Sound Index -1", [("SdNo", -1)]),
+        ("No Loop", "Loop Start and Loop End 0", [("LpSt", 0), ("LpEd", 0)]),
+    ]
+
+    static func recipes(for tag: String) -> [(name: String, help: String, values: [(String, Int)])] {
+        tag == "Ptcl" ? particle : tag == "Emit" ? emitter : []
+    }
+
+    private func field(_ tag: String) -> PropField? { fields.first { $0.tag == tag && $0.write != nil } }
+
+    private func value(_ field: PropField) -> Int {
+        switch field.read() {
+        case .bool(let on): return on ? 1 : 0
+        default: return Int(field.read().number.rounded())
+        }
+    }
+
+    static func matches(_ values: [(String, Int)], _ fields: [PropField]) -> Bool {
+        values.allSatisfy { entry in
+            guard let field = fields.first(where: { $0.tag == entry.0 && $0.write != nil }) else { return false }
+            if case .bool(let on) = field.read() { return (on ? 1 : 0) == entry.1 }
+            return Int(field.read().number.rounded()) == entry.1
+        }
+    }
+
+    private func apply(_ recipe: (name: String, help: String, values: [(String, Int)])) {
+        let before = document.snapshot()
+        var changed = false
+        for entry in recipe.values {
+            guard let field = field(entry.0), value(field) != entry.1 else { continue }
+            if case .bool = field.read() { field.write?(.bool(entry.1 != 0)) } else { field.write?(.int(entry.1)) }
+            changed = true
+        }
+        if changed { document.registerUndo("Recipe " + recipe.name, since: before) }
+    }
+
+    var body: some View {
+        FlowLayout(spacing: 4) {
+            ForEach(Array(recipes.enumerated()), id: \.offset) { _, recipe in
+                let usable = recipe.values.contains { field($0.0) != nil }
+                let active = RecipeRows.matches(recipe.values, fields)
+                Text(recipe.name).font(Theme.small).foregroundStyle(usable ? Theme.text : Theme.dim).lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : Theme.gray(0.22)))
+                    .contentShape(Rectangle())
+                    .onTapGesture { apply(recipe) }
+                    .help(recipe.help)
+            }
+            HelpBadge(text: "A recipe sets several fields of this node at once. A highlighted recipe already matches the node. Fields that are not in the file are left alone.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct TransportButtons: View {
+    @ObservedObject var clock: PlaybackClock
+
+    var body: some View {
+        HStack(spacing: 2) {
+            HeaderButton(symbol: "backward.end.fill", help: "Jump to start") { clock.rewind() }
+            HeaderButton(symbol: clock.playing ? "pause.fill" : "play.fill", active: clock.playing, help: "Play / Pause") { clock.playing.toggle() }
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import simd
 
 final class AvfxPlayer {
@@ -12,16 +13,17 @@ final class AvfxPlayer {
     private var appliedRelease = false
     private var appliedTriggers = 0
     private var statusTick = 0
+    private var workTime: Double = 0
     private let stepFrames: Float = 0.5
 
     init(document: EffectDocument) {
         self.document = document
     }
 
-    var schemaChanged: Bool { loadedRevision != document.revision || loadedOriginal != document.showOriginal || loadedRules != PreviewRules.token }
+    var schemaChanged: Bool { loadedRevision != document.previewRevision || loadedOriginal != document.showOriginal || loadedRules != PreviewRules.token }
 
     private func rebuild() {
-        loadedRevision = document.revision
+        loadedRevision = document.previewRevision
         duration = document.duration
         loadedOriginal = document.showOriginal
         loadedRules = PreviewRules.token
@@ -42,6 +44,7 @@ final class AvfxPlayer {
     func frame(elapsed: Double, camera: CameraState, filter: VisibilityFilter) -> [ParticleDraw] {
         if schemaChanged { rebuild() }
         guard let simulation else { return [] }
+        let began = CACurrentMediaTime()
         let clock = document.clock
         let seed = UInt64(max(0, clock.seed))
         if simulation.seed != seed {
@@ -68,6 +71,11 @@ final class AvfxPlayer {
         }
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1
+        workTime = workTime * 0.9 + (CACurrentMediaTime() - began) * 100
+        if statusTick % 12 == 0 {
+            let shown = (workTime * 10).rounded() / 10
+            if clock.frameMilliseconds != shown { DispatchQueue.main.async { clock.frameMilliseconds = shown } }
+        }
         if simulation.clipLog.count != loggedClips {
             loggedClips = simulation.clipLog.count
             let names = ["KILL": "Kill", "REST": "Reset", "END ": "End", "FADI": "Fade In", "ULLP": "Unlock Loop Point", "TRG ": "Trigger", "RTRG": "Random Trigger"]

@@ -151,7 +151,7 @@ private struct ModelEditorContent: View {
         NumberField(label: title, value: value, step: step, digits: 3,
                     onLive: { next in
                         write(next)
-                        document.liveChanged()
+                        document.liveDrag()
                     },
                     onCommit: { old, next in
                         write(old)

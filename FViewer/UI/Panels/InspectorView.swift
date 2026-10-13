@@ -375,6 +375,11 @@ struct InspectorView: View {
             if case .avfx(let block, _, let record) = node.payload, record == nil, block.tag == "UvSt" {
                 Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
             }
+            if case .avfx(let block, _, let record) = node.payload, record == nil, !RecipeRows.recipes(for: block.tag).isEmpty {
+                Panel(title: "Recipes") {
+                    RecipeRows(document: document, fields: sections.flatMap(\.fields), recipes: RecipeRows.recipes(for: block.tag))
+                }
+            }
             ForEach(sections) { section in
                 Panel(title: section.title, trailing: "\(section.fields.count)") {
                     FieldRows(document: document, fields: section.fields, nodeID: node.id)
@@ -385,7 +390,10 @@ struct InspectorView: View {
             }
             if !curves.isEmpty || !missing.isEmpty {
                 Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missing.count)") {
-                    ForEach(curves) { group in curveRow(group) }
+                    ForEach(curves) { group in
+                        curveRow(group)
+                        if ConstantCurveFields.applies(group) { ConstantCurveFields(document: document, group: group) }
+                    }
                     if !missing.isEmpty { UnsetRows(items: missing) }
                 }
             }

@@ -72,9 +72,9 @@ extension EffectDocument {
     func scheduleDensity() {
         densityJob?.cancelled = true
         densityJob = nil
-        let wanted = revision
+        let wanted = previewRevision
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self, self.revision == wanted, self.densityRevision != wanted else { return }
+            guard let self, self.previewRevision == wanted, self.densityRevision != wanted else { return }
             let span = max(self.sequencerRows.map(\.end).max() ?? 60, self.clock.endFrame ?? 0)
             guard let job = DensityJob(document: self, frames: min(max(Int(span.rounded(.up)) + 1, 30), 900)) else { return }
             self.densityJob = job

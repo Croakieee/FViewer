@@ -544,6 +544,8 @@ struct CurveEditorView: View {
             switch press.characters {
             case "x", "\u{7f}", "\u{8}":
                 deleteSelected()
+            case " ":
+                clock.playing.toggle()
             case "t":
                 cycleInterpolation()
             case "a":
@@ -724,7 +726,7 @@ struct CurveEditorView: View {
             }
             selection = nextSelection
             if let active = activeKey, !nextSelection.contains(active) { activeKey = nextSelection.first { $0.channel == active.channel } }
-            document.liveChanged()
+            document.liveDrag()
         case .handle(let ref, let outgoing, _):
             guard let channel = channel(ref.channel) else { return }
             var keys = channel.read()
@@ -751,7 +753,7 @@ struct CurveEditorView: View {
             }
             channel.write(keys)
             ghostStamp += 1
-            document.liveChanged()
+            document.liveDrag()
         case .box:
             boxEnd = gesture.location
         case .none, .idle: break
@@ -901,6 +903,73 @@ struct CurveEditorView: View {
         }
     }
 
+    static let presets: [(name: String, points: [(Double, Double)], spline: Bool)] = [
+        ("Hold", [(0, 1), (1, 1)], false), ("Rise", [(0, 0), (1, 1)], false), ("Fade", [(0, 1), (1, 0)], false),
+        ("Soft Fade", [(0, 1), (0.6, 1), (1, 0)], true), ("Warm Up", [(0, 0), (0.3, 1), (1, 1)], true), ("Snap In", [(0, 0), (0.1, 1), (1, 1)], false),
+        ("Pulse", [(0, 0), (0.5, 1), (1, 0)], true), ("Late Pop", [(0, 0), (0.7, 0), (1, 1)], false), ("S-Curve", [(0, 0), (0.5, 0.5), (1, 1)], true),
+        ("Blink", [(0, 1), (0.45, 1), (0.5, 0), (0.55, 1), (1, 1)], false),
+    ]
+
+    private func applyPreset(_ index: Int) {
+        guard let channel = currentChannel(), index < CurveEditorView.presets.count else { return }
+        let preset = CurveEditorView.presets[index]
+        let keys = channel.read()
+        let first = keys.map(\.time).min() ?? 0
+        var last = keys.map(\.time).max() ?? 0
+        if last - first < 1 { last = first + max(1, (document.clock.endFrame ?? document.sequencerRows.map(\.end).max() ?? 30).rounded()) }
+        var low = keys.map(\.value).min() ?? 0, high = keys.map(\.value).max() ?? 1
+        if high - low < 1e-6 {
+            low = channel.clampUnit ? 0 : min(0, high)
+            high = high == 0 ? 1 : max(high, 0)
+        }
+        var made: [CurveKeyPoint] = []
+        for point in preset.points {
+            let time = (first + point.0 * (last - first)).rounded()
+            if made.last?.time == time { made.removeLast() }
+            made.append(CurveKeyPoint(time: time, value: low + point.1 * (high - low), interpolation: preset.spline ? CurveKeyPoint.spline : CurveKeyPoint.linear,
+                                      tangentOut: 1, tangentIn: 1))
+        }
+        let before = channel.snapshot()
+        channel.write(made)
+        let after = channel.snapshot()
+        document.registerUndo("Curve Preset " + preset.name, undo: before, redo: after)
+        selection = []
+        activeKey = nil
+        if let group { fit(group) }
+    }
+
+    private func optimizeKeys(_ tolerance: Double) {
+        guard let group else { return }
+        var before: [() -> Void] = []
+        var after: [() -> Void] = []
+        for channel in visibleChannels(group) where channel.colorComponent == nil {
+            var keys = channel.read()
+            guard keys.count > 2 else { continue }
+            let span = max((keys.map(\.value).max() ?? 0) - (keys.map(\.value).min() ?? 0), 1e-6)
+            var index = 1
+            var changed = false
+            while index < keys.count - 1 {
+                let a = keys[index - 1], b = keys[index], c = keys[index + 1]
+                let straight = a.interpolation == CurveKeyPoint.linear && b.interpolation == CurveKeyPoint.linear
+                let expected = a.value + (c.value - a.value) * (b.time - a.time) / max(c.time - a.time, 1e-9)
+                if straight, abs(expected - b.value) <= tolerance * span {
+                    keys.remove(at: index)
+                    changed = true
+                } else {
+                    index += 1
+                }
+            }
+            guard changed else { continue }
+            before.append(channel.snapshot())
+            channel.write(keys)
+            after.append(channel.snapshot())
+        }
+        guard !before.isEmpty else { return }
+        document.registerUndo("Optimize Curve", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        selection = []
+        activeKey = nil
+    }
+
     private func clearKeys() {
         guard let group, document.format == .avfx else { return }
         var before: [() -> Void] = []
@@ -1037,7 +1106,7 @@ struct CurveEditorView: View {
                             guard index < live.count else { return }
                             set(&live[index], next)
                             channel.write(live)
-                            document.liveChanged()
+                            document.liveDrag()
                         },
                         onCommit: { old, next in
                             var restored = channel.read()
@@ -1070,7 +1139,7 @@ struct CurveEditorView: View {
             ColorField(color: current, alpha: false,
                        onLive: { color in
                            apply(color)
-                           document.liveChanged()
+                           document.liveDrag()
                        },
                        onCommit: { old, new in
                            guard let first = channels.first else { return }
@@ -1086,6 +1155,159 @@ struct CurveEditorView: View {
             apply(color)
             document.registerUndo("Key Color", undo: before, redo: first.snapshot())
         } current: { current }
+        }
+    }
+
+    static let gradients: [(name: String, stops: [(Double, SIMD3<Double>)])] = [
+        ("White", [(0, SIMD3(1, 1, 1)), (1, SIMD3(1, 1, 1))]),
+        ("Fade Out", [(0, SIMD3(1, 1, 1)), (1, SIMD3(0, 0, 0))]),
+        ("Flash", [(0, SIMD3(0, 0, 0)), (0.15, SIMD3(1, 1, 1)), (1, SIMD3(0, 0, 0))]),
+        ("Fire", [(0, SIMD3(1, 0.95, 0.6)), (0.35, SIMD3(1, 0.55, 0.1)), (0.75, SIMD3(0.7, 0.1, 0.02)), (1, SIMD3(0, 0, 0))]),
+        ("Ice", [(0, SIMD3(1, 1, 1)), (0.4, SIMD3(0.5, 0.85, 1)), (1, SIMD3(0.05, 0.2, 0.6))]),
+        ("Gold", [(0, SIMD3(1, 1, 0.8)), (0.5, SIMD3(1, 0.75, 0.2)), (1, SIMD3(0.4, 0.2, 0))]),
+        ("Poison", [(0, SIMD3(0.8, 1, 0.5)), (0.5, SIMD3(0.3, 0.8, 0.2)), (1, SIMD3(0.2, 0.05, 0.3))]),
+        ("Rainbow", [(0, SIMD3(1, 0, 0)), (0.2, SIMD3(1, 1, 0)), (0.4, SIMD3(0, 1, 0)), (0.6, SIMD3(0, 1, 1)), (0.8, SIMD3(0, 0, 1)), (1, SIMD3(1, 0, 1))]),
+    ]
+
+    private func gradientChannels(_ group: CurveGroup) -> [CurveChannel] {
+        (0..<3).compactMap { c in group.channels.first { $0.colorComponent == c } }
+    }
+
+    private func gradientStops(_ group: CurveGroup) -> [(time: Double, color: SIMD3<Double>)] {
+        let channels = gradientChannels(group)
+        guard channels.count == 3 else { return [] }
+        let keys = channels.map { $0.read() }
+        return keys[0].indices.map { i in
+            (keys[0][i].time, SIMD3(keys[0][i].value, i < keys[1].count ? keys[1][i].value : 1, i < keys[2].count ? keys[2][i].value : 1))
+        }
+    }
+
+    private func writeStops(_ group: CurveGroup, _ stops: [(time: Double, color: SIMD3<Double>)]) {
+        let sorted = stops.sorted { $0.time < $1.time }
+        for (c, channel) in gradientChannels(group).enumerated() {
+            channel.write(sorted.map { CurveKeyPoint(time: $0.time, value: $0.color[c], interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0) })
+        }
+    }
+
+    private func setStops(_ group: CurveGroup, _ stops: [(time: Double, color: SIMD3<Double>)], title: String) {
+        guard let first = gradientChannels(group).first, !stops.isEmpty else { return }
+        let before = first.snapshot()
+        writeStops(group, stops)
+        document.registerUndo(title, undo: before, redo: first.snapshot())
+        selection = []
+        activeKey = nil
+    }
+
+    private func gradientSpan(_ stops: [(time: Double, color: SIMD3<Double>)]) -> (first: Double, last: Double) {
+        let first = stops.map(\.time).min() ?? 0
+        var last = stops.map(\.time).max() ?? 0
+        if last - first < 1 { last = first + max(1, (document.clock.endFrame ?? document.sequencerRows.map(\.end).max() ?? 30).rounded()) }
+        return (first, last)
+    }
+
+    private func applyGradient(_ group: CurveGroup, _ index: Int) {
+        guard index < CurveEditorView.gradients.count else { return }
+        let preset = CurveEditorView.gradients[index]
+        let span = gradientSpan(gradientStops(group))
+        var made: [(time: Double, color: SIMD3<Double>)] = []
+        for stop in preset.stops {
+            let time = (span.first + stop.0 * (span.last - span.first)).rounded()
+            if made.last?.time == time { made.removeLast() }
+            made.append((time, stop.1))
+        }
+        setStops(group, made, title: "Gradient " + preset.name)
+        fit(group)
+    }
+
+    private func addStop(_ group: CurveGroup) {
+        var stops = gradientStops(group)
+        let time = max(0, clock.time.rounded())
+        guard !stops.contains(where: { $0.time == time }) else { return }
+        let keys = gradientChannels(group).map { $0.read() }
+        guard keys.count == 3 else { return }
+        stops.append((time, SIMD3(CurveMath.sample(keys[0], at: time), CurveMath.sample(keys[1], at: time), CurveMath.sample(keys[2], at: time))))
+        setStops(group, stops, title: "Add Color Stop")
+    }
+
+    private func reverseStops(_ group: CurveGroup) {
+        let stops = gradientStops(group)
+        guard stops.count > 1 else { return }
+        let colors = stops.map(\.color).reversed()
+        setStops(group, zip(stops, colors).map { ($0.time, $1) }, title: "Reverse Gradient")
+    }
+
+    private func distributeStops(_ group: CurveGroup) {
+        let stops = gradientStops(group)
+        guard stops.count > 2 else { return }
+        let span = gradientSpan(stops)
+        let step = (span.last - span.first) / Double(stops.count - 1)
+        guard step >= 1 else { return }
+        setStops(group, stops.enumerated().map { ((span.first + Double($0) * step).rounded(), $1.color) }, title: "Distribute Color Stops")
+    }
+
+    private func gradientPanel(_ group: CurveGroup) -> some View {
+        let stops = gradientStops(group)
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(stops.enumerated()), id: \.offset) { index, stop in
+                HStack(spacing: 4) {
+                    NumberField(label: nil, value: stop.time, isInteger: true, step: 1,
+                                onLive: { _ in },
+                                onCommit: { _, next in
+                                    let time = max(0, next.rounded())
+                                    var moved = gradientStops(group)
+                                    guard index < moved.count, !moved.contains(where: { $0.time == time }) else { return }
+                                    moved[index].time = time
+                                    setStops(group, moved, title: "Move Color Stop")
+                                })
+                        .frame(width: 52)
+                    ColorField(color: SIMD4(stop.color.x, stop.color.y, stop.color.z, 1), alpha: false,
+                               onLive: { color in
+                                   var live = gradientStops(group)
+                                   guard index < live.count else { return }
+                                   live[index].color = SIMD3(color.x, color.y, color.z)
+                                   writeStops(group, live)
+                                   document.liveDrag()
+                               },
+                               onCommit: { old, new in
+                                   var edited = gradientStops(group)
+                                   guard index < edited.count else { return }
+                                   edited[index].color = SIMD3(old.x, old.y, old.z)
+                                   writeStops(group, edited)
+                                   edited[index].color = SIMD3(new.x, new.y, new.z)
+                                   setStops(group, edited, title: "Color Stop")
+                               })
+                    Image(systemName: "xmark").font(.system(size: 9)).foregroundStyle(Theme.dim).frame(width: 16, height: 18).contentShape(Rectangle())
+                        .opacity(stops.count > 1 ? 1 : 0.3)
+                        .onTapGesture {
+                            var left = gradientStops(group)
+                            guard left.count > 1, index < left.count else { return }
+                            left.remove(at: index)
+                            setStops(group, left, title: "Remove Color Stop")
+                        }
+                }
+            }
+            HStack(spacing: 2) {
+                SegmentButton(title: "Add", active: false) { addStop(group) }
+                SegmentButton(title: "Reverse", active: false) { reverseStops(group) }
+                SegmentButton(title: "Distribute", active: false) { distributeStops(group) }
+                Spacer(minLength: 0)
+            }
+            FlowLayout(spacing: 4) {
+                ForEach(Array(CurveEditorView.gradients.enumerated()), id: \.offset) { index, preset in
+                    HStack(spacing: 4) {
+                        LinearGradient(stops: preset.stops.map { Gradient.Stop(color: Color(.sRGB, red: $0.1.x, green: $0.1.y, blue: $0.1.z), location: $0.0) },
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: 22, height: 10).clipShape(RoundedRectangle(cornerRadius: 2))
+                        Text(preset.name).font(Theme.small).foregroundStyle(Theme.text)
+                    }
+                    .padding(.horizontal, 5).frame(height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
+                    .contentShape(Rectangle())
+                    .onTapGesture { applyGradient(group, index) }
+                }
+                HelpBadge(text: "Add puts a stop at the playhead with the colour the gradient has there. A preset replaces all stops and keeps the current time range.")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -1146,6 +1368,8 @@ struct CurveEditorView: View {
                     HeaderButton(symbol: "doc.on.clipboard", help: "Paste keyframes at the playhead (⌘V)") { pasteKeys() }
                     HeaderButton(symbol: "doc.on.clipboard.fill", help: "Replace: paste the copied keyframes over the whole curve") { pasteKeys(replace: true) }
                     HeaderButton(symbol: "eraser", help: "Clear: remove every keyframe of the visible channels") { clearKeys() }
+                    HeaderButton(symbol: "wand.and.stars", help: "Optimize: remove keys that lie on a straight line between their neighbours") { optimizeKeys(0.005) }
+
                     if group?.isAngle == true {
                         HeaderButton(symbol: "angle", active: radians, help: "Show angles in radians instead of degrees") { radians.toggle() }
                     }
@@ -1155,6 +1379,23 @@ struct CurveEditorView: View {
                 .padding(.horizontal, 6)
                 if let channel = currentChannel() {
                     Panel(title: "Keys", trailing: channel.name) { keyTable(channel) }
+                }
+                if currentChannel() != nil, document.format == .avfx {
+                    Panel(title: "Presets") {
+                        FlowLayout(spacing: 4) {
+                            ForEach(Array(CurveEditorView.presets.enumerated()), id: \.offset) { index, preset in
+                                Text(preset.name).font(Theme.small).foregroundStyle(Theme.text).padding(.horizontal, 6).frame(height: 18)
+                                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { applyPreset(index) }
+                            }
+                            HelpBadge(text: "A preset replaces the keys of the active channel with a ready shape, kept inside the channel's current time and value range.")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if let group, gradientChannels(group).count == 3, document.format == .avfx {
+                    Panel(title: "Gradient", trailing: "\(gradientStops(group).count) stops") { gradientPanel(group) }
                 }
                 if !selection.isEmpty {
                     Panel(title: "Selection", trailing: "\(selection.count) keys") {

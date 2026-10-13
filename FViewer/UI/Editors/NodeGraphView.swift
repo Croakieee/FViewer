@@ -244,6 +244,9 @@ struct NodeGraphView: View {
                 case "\u{F729}":
                     frameAll(graph, positions, geometry.size)
                     return .handled
+                case " ":
+                    document.clock.playing.toggle()
+                    return .handled
                 default: return .ignored
                 }
             }

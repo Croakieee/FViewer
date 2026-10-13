@@ -14,7 +14,9 @@ final class EffectDocument: ObservableObject, Identifiable {
     var jsonRoot: JSONNode?
     @Published var hidden: Set<VisibilityKey> = []
     @Published var isolateSelection = false
-    @Published private(set) var revision = 0
+    @Published private(set) var revision = 0 { didSet { if !dragging { previewRevision = revision } } }
+    @Published private(set) var previewRevision = 0
+    private var dragging = false
     @Published var density: [String: [Float]] = [:]
     var densityRevision = -1
     var densityJob: DensityJob?
@@ -278,9 +280,15 @@ final class EffectDocument: ObservableObject, Identifiable {
         revision += 1
     }
 
+    func liveDrag() {
+        dragging = true
+        revision += 1
+        dragging = false
+    }
+
     func setLive(_ field: PropField, _ value: FieldValue) {
         field.write?(value)
-        revision += 1
+        liveDrag()
     }
 
     func commit(_ field: PropField, from old: FieldValue, to new: FieldValue) {

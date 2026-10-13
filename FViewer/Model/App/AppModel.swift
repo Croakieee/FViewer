@@ -16,7 +16,7 @@ final class AppModel: ObservableObject {
     @Published var files: [LibraryFile] = []
     @Published var gameFiles: [LibraryFile] = []
     @Published var errorMessage: String?
-    @Published var bottomTab = 0
+    @Published var bottomTab = 0 { didSet { if oldValue != bottomTab { document?.clock.playing = false } } }
     @Published var viewportMode = 0
     @Published var bottomExpanded = false
     @Published var effectShading = 0
@@ -1147,9 +1147,9 @@ final class AppModel: ObservableObject {
 
     func meshes(for document: EffectDocument) -> [(id: String, mesh: MeshData)] {
         if let root = document.avfxRoot {
-            if let cached = avfxMeshes, cached.document == document.id, cached.revision == document.revision { return cached.meshes }
+            if let cached = avfxMeshes, cached.document == document.id, cached.revision == document.previewRevision { return cached.meshes }
             let meshes = root.childrenNamed("Modl").enumerated().map { (id: "avfx/Modl/\($0.offset)", mesh: MeshData.fromAvfx($0.element)) }
-            avfxMeshes = (document.id, document.revision, meshes)
+            avfxMeshes = (document.id, document.previewRevision, meshes)
             return meshes
         }
         return document.modelNames.compactMap { name in

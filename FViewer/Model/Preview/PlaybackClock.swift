@@ -12,6 +12,7 @@ final class PlaybackClock: ObservableObject {
     @Published var speed: Double = 1
     @Published var seed = 1
     @Published var clipLog: [String] = []
+    @Published var frameMilliseconds: Double = 0
     var releaseTime: Double?
     var triggers: [(time: Double, index: Int)] = []
     var restartToken = 0

@@ -81,7 +81,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
             loadedTextures = []
         }
         loadedDocument = document.id
-        loadedRevision = document.revision
+        loadedRevision = document.previewRevision
         loadedFilter = document.visibilityFilter
         duration = document.duration
         for slot in document.textureSlots where !loadedTextures.contains(slot.name) {
@@ -131,7 +131,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
         let elapsed = now - lastFrame
         lastFrame = now
         if let document, document.format == .pixi {
-            if loadedDocument != document.id || loadedRevision != document.revision || libraryToken != (app?.libraryToken ?? 0)
+            if loadedDocument != document.id || loadedRevision != document.previewRevision || libraryToken != (app?.libraryToken ?? 0)
                 || loadedFilter != document.visibilityFilter { reload(document) }
             if let core {
                 let clock = document.clock

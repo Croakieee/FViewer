@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct BottomEditors: View {
@@ -9,6 +10,8 @@ struct BottomEditors: View {
         ("Node Editor", "point.3.connected.trianglepath.dotted"), ("Item Editor", "slider.horizontal.below.rectangle"),
     ]
 
+    private static let ticker = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
+
     var body: some View {
         let current = min(max(app.bottomTab, 0), BottomEditors.editors.count - 1)
         VStack(spacing: 0) {
@@ -18,6 +21,7 @@ struct BottomEditors: View {
                         SegmentButton(title: editor.title, active: current == index) { app.bottomTab = index }
                     }
                 }
+                if current != 0 { TransportButtons(clock: document.clock) }
                 Spacer()
                 HeaderButton(symbol: app.bottomExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
                              active: app.bottomExpanded, help: "Maximize this editor over the viewport") { app.bottomExpanded.toggle() }
@@ -27,6 +31,11 @@ struct BottomEditors: View {
             case 1: CurveEditorView(document: document, clock: document.clock)
             case 2: NodeGraphView(document: document).coordinateSpace(name: "graph")
             default: DockedItemEditor(document: document)
+            }
+        }
+        .onReceive(BottomEditors.ticker) { _ in
+            if app.bottomExpanded, document.clock.playing {
+                document.clock.advance(1.0 / 30, duration: document.duration, finished: false, held: false)
             }
         }
     }

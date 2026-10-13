@@ -409,7 +409,10 @@ private struct ItemPage: View {
                         }
                         if !curves.isEmpty || !missingCurves.isEmpty {
                             Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missingCurves.count)") {
-                                ForEach(curves) { group in curveRow(group) }
+                                ForEach(curves) { group in
+                        curveRow(group)
+                        if ConstantCurveFields.applies(group) { ConstantCurveFields(document: document, group: group) }
+                    }
                                 if !missingCurves.isEmpty { UnsetRows(items: missingCurves) }
                             }
                         }
