@@ -1,4 +1,4 @@
-let particleShaderSource = """
+let particleShaderHeader = """
 #include <metal_stdlib>
 using namespace metal;
 
@@ -25,6 +25,7 @@ struct FragmentUniforms {
     float4 layerDistort;
     float4 misc0;
     float4 misc1;
+    float4 material;
 };
 
 struct VOut {
@@ -97,7 +98,22 @@ static float4 applyLayer(float4 c, texture2d<float> tex, sampler smp, float3x3 m
     return c;
 }
 
-fragment float4 particleFragment(VOut i [[stage_in]],
+static float materialHash(float2 p) {
+    return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+}
+
+static float materialNoise(float2 p) {
+    float2 cell = floor(p), f = fract(p);
+    float2 w = f * f * (3.0 - 2.0 * f);
+    float a = materialHash(cell), b = materialHash(cell + float2(1.0, 0.0));
+    float c = materialHash(cell + float2(0.0, 1.0)), d = materialHash(cell + float2(1.0, 1.0));
+    return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
+"""
+
+let particleFragmentTemplate = """
+
+fragment float4 FRAGMENT_NAME(VOut i [[stage_in]],
                                  constant FragmentUniforms &u [[buffer(0)]],
                                  texture2d<float> base [[texture(0)]],
                                  texture2d<float> layer0 [[texture(1)]],
@@ -108,7 +124,13 @@ fragment float4 particleFragment(VOut i [[stage_in]],
                                  sampler layer0Smp [[sampler(1)]],
                                  sampler layer1Smp [[sampler(2)]],
                                  sampler layer2Smp [[sampler(3)]],
-                                 sampler distortSmp [[sampler(4)]]) {
+                                 texture2d<float> mat0 [[texture(5)]],
+                                 texture2d<float> mat1 [[texture(6)]],
+                                 texture2d<float> mat2 [[texture(7)]],
+                                 sampler distortSmp [[sampler(4)]],
+                                 sampler matSmp0 [[sampler(5)]],
+                                 sampler matSmp1 [[sampler(6)]],
+                                 sampler matSmp2 [[sampler(7)]]) {
     float2 offset = float2(0.0);
     if (u.misc0.y != 0.0) {
         offset = (distortTex.sample(distortSmp, uvOf(u.uvDistort, i, u.misc0.x)).rg * 2.0 - 1.0) * u.misc0.y;
@@ -124,6 +146,7 @@ fragment float4 particleFragment(VOut i [[stage_in]],
     c = applyLayer(c, layer0, layer0Smp, u.uv1, i, u.uvChannel.y, u.layerMode.x, u.layerAlphaMode.x, u.layerColorToAlpha.x, u.layerDistort.x, offset);
     c = applyLayer(c, layer1, layer1Smp, u.uv2, i, u.uvChannel.z, u.layerMode.y, u.layerAlphaMode.y, u.layerColorToAlpha.y, u.layerDistort.y, offset);
     c = applyLayer(c, layer2, layer2Smp, u.uv3, i, u.uvChannel.w, u.layerMode.z, u.layerAlphaMode.z, u.layerColorToAlpha.z, u.layerDistort.z, offset);
+MATERIAL_BODY
     c *= u.particleColor * mix(u.edgeInner, u.edgeOuter, i.band) * i.color;
     if (u.misc1.y > 0.0) c.a *= smoothstep(0.0, u.misc1.y, i.band);
     if (u.misc1.z > 0.0) c.a *= smoothstep(0.0, u.misc1.z, 1.0 - i.band);
@@ -131,3 +154,9 @@ fragment float4 particleFragment(VOut i [[stage_in]],
     return float4(c.rgb * c.a, c.a);
 }
 """
+
+func particleFragmentSource(name: String, body: String) -> String {
+    particleFragmentTemplate.replacingOccurrences(of: "FRAGMENT_NAME", with: name).replacingOccurrences(of: "MATERIAL_BODY", with: body)
+}
+
+let particleShaderSource = particleShaderHeader + particleFragmentSource(name: "particleFragment", body: "")

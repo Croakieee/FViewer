@@ -134,7 +134,8 @@ final class ParticleInstance {
             drawPriority: def.drawPriority ?? 0,
             edgeSoftness: softness,
             edgeColor: (try rgba(edges?.inner), try rgba(edges?.outer)),
-            cull: def.cull))
+            cull: def.cull,
+            material: def.material))
     }
 
     private func loopedAgeAt(_ time: Double) -> Double {
@@ -173,6 +174,10 @@ final class ParticleInstance {
             alpha *= c.a
         }
         view.setColor(rgb, brightness: evalParam(d.brightness, t, 1, total), alpha: alpha)
+        if d.material != nil {
+            let scrambled = sin(born * 12.9898 + 78.233) * 43758.5453
+            view.setMaterial(age: age, life: life > 0 ? min(max(loopedAgeAt(time) / life, 0), 1) : 0, seed: scrambled - scrambled.rounded(.down))
+        }
 
         switch d.shape {
         case .roundRect(let width, let height, let thickness, let radius, let uLength, _, _, _, _):

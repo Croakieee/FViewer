@@ -51,6 +51,7 @@ struct FragmentUniforms {
     var layerDistort = SIMD4<Float>(0, 0, 0, 0)
     var misc0 = SIMD4<Float>(1, 0, 0, 0)
     var misc1 = SIMD4<Float>(0, 0, 0, 0)
+    var material = SIMD4<Float>(0, 0, 0, 0)
 }
 
 final class GeometryBuffers {
@@ -110,6 +111,11 @@ final class GeometryBuffers {
 public final class MetalRenderer: ViewFactory {
     public let device: MTLDevice
     private var pipelines: [BlendMode: MTLRenderPipelineState] = [:]
+    private var materialPipelines: [String: [BlendMode: MTLRenderPipelineState]] = [:]
+    private var failedMaterials: Set<String> = []
+    private let pixelFormat: MTLPixelFormat
+    private let vertexFunction: MTLFunction?
+    public static var lastMaterialError: String?
     private var textures: [String: VfxTexture] = [:]
     private let white: VfxTexture
     private var shared: [ObjectIdentifier: GeometryBuffers] = [:]
@@ -119,16 +125,24 @@ public final class MetalRenderer: ViewFactory {
 
     public init(device: MTLDevice, pixelFormat: MTLPixelFormat) throws {
         self.device = device
+        self.pixelFormat = pixelFormat
         let library: MTLLibrary
         do {
             library = try device.makeLibrary(source: particleShaderSource, options: nil)
         } catch {
             throw RendererError.shader(String(describing: error))
         }
+        vertexFunction = library.makeFunction(name: "particleVertex")
+        white = MetalRenderer.solid(device)
+        pipelines = try makePipelines(vertex: vertexFunction, fragment: library.makeFunction(name: "particleFragment"))
+    }
+
+    private func makePipelines(vertex: MTLFunction?, fragment: MTLFunction?) throws -> [BlendMode: MTLRenderPipelineState] {
+        var result: [BlendMode: MTLRenderPipelineState] = [:]
         for blend in [BlendMode.normal, .add, .screen] {
             let d = MTLRenderPipelineDescriptor()
-            d.vertexFunction = library.makeFunction(name: "particleVertex")
-            d.fragmentFunction = library.makeFunction(name: "particleFragment")
+            d.vertexFunction = vertex
+            d.fragmentFunction = fragment
             let a = d.colorAttachments[0]!
             a.pixelFormat = pixelFormat
             a.isBlendingEnabled = true
@@ -151,9 +165,32 @@ public final class MetalRenderer: ViewFactory {
                 a.sourceAlphaBlendFactor = .one
                 a.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             }
-            pipelines[blend] = try device.makeRenderPipelineState(descriptor: d)
+            result[blend] = try device.makeRenderPipelineState(descriptor: d)
         }
-        white = MetalRenderer.solid(device)
+        return result
+    }
+
+    func materialKey(_ compiled: MaterialGraph.Compiled) -> String? {
+        let body = compiled.code
+        guard !body.isEmpty else { return nil }
+        if materialPipelines[body] != nil { return body }
+        if failedMaterials.contains(body) { return nil }
+        do {
+            let library = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
+            materialPipelines[body] = try makePipelines(vertex: library.makeFunction(name: "particleVertex"),
+                                                        fragment: library.makeFunction(name: "materialFragment"))
+            MetalRenderer.lastMaterialError = nil
+            return body
+        } catch {
+            failedMaterials.insert(body)
+            MetalRenderer.lastMaterialError = String(describing: error)
+            return nil
+        }
+    }
+
+    func pipeline(_ blend: BlendMode, material: String?) -> MTLRenderPipelineState {
+        if let material, let set = materialPipelines[material], let pipeline = set[blend] { return pipeline }
+        return pipelines[blend]!
     }
 
     @discardableResult
@@ -242,7 +279,7 @@ public final class MetalRenderer: ViewFactory {
         encoder.setFrontFacing(.counterClockwise)
         let ordered = views.sorted { $0.priority != $1.priority ? $0.priority < $1.priority : $0.order < $1.order }
         for v in ordered {
-            v.encode(encoder, pipeline: pipelines[v.blend]!, half: half, zoom: zoom, pan: pan)
+            v.encode(encoder, pipeline: pipeline(v.blend, material: v.materialKey), half: half, zoom: zoom, pan: pan)
         }
     }
 }
@@ -259,6 +296,7 @@ final class MetalParticleView: ParticleView {
     private var perspective: Float = 0
     private var fragment = FragmentUniforms()
     private let textures: [VfxTexture]
+    let materialKey: String?
 
     init(_ spec: ParticleViewSpec, _ buffers: GeometryBuffers, renderer: MetalRenderer, order: Int) {
         blend = spec.blend
@@ -284,13 +322,26 @@ final class MetalParticleView: ParticleView {
         fragment.misc1 = SIMD4(t.baseLuminance ? 1 : 0, Float(spec.edgeSoftness.inner), Float(spec.edgeSoftness.outer), 0)
         fragment.edgeInner = SIMD4(spec.edgeColor.inner)
         fragment.edgeOuter = SIMD4(spec.edgeColor.outer)
-        textures = [
+        var bound = [
             renderer.texture(t.base),
             renderer.texture(layers.count > 0 ? layers[0].texture : nil),
             renderer.texture(layers.count > 1 ? layers[1].texture : nil),
             renderer.texture(layers.count > 2 ? layers[2].texture : nil),
             renderer.texture(t.distortion?.texture),
         ]
+        if let graph = spec.material {
+            let compiled = graph.compile()
+            materialKey = renderer.materialKey(compiled)
+            for slot in 0..<MaterialGraph.maxTextures { bound.append(renderer.texture(slot < compiled.textures.count ? compiled.textures[slot] : nil)) }
+        } else {
+            materialKey = nil
+            for _ in 0..<MaterialGraph.maxTextures { bound.append(renderer.texture(nil)) }
+        }
+        textures = bound
+    }
+
+    func setMaterial(age: Double, life: Double, seed: Double) {
+        fragment.material = SIMD4(Float(age), Float(life), Float(seed), 0)
     }
 
     func setPlacement(_ m: Affine3, perspective: Double) {

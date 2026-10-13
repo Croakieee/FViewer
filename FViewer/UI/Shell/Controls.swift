@@ -670,23 +670,6 @@ struct TransportButtons: View {
     }
 }
 
-struct StatusPill: View {
-    @ObservedObject var document: EffectDocument
-
-    var body: some View {
-        let state = document.isDirty ? "edited" : document.savedOnce ? "saved" : "ready"
-        let tint = document.isDirty ? Color.orange : document.savedOnce ? Color.green : Theme.dim
-        HStack(spacing: 4) {
-            Circle().fill(tint).frame(width: 5, height: 5)
-            Text(state).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.text)
-        }
-        .padding(.horizontal, 7)
-        .frame(height: 16)
-        .background(Capsule().stroke(Theme.dim.opacity(0.5), lineWidth: 1))
-        .help(document.isDirty ? "There are changes that are not saved yet" : document.savedOnce ? "Saved to a copy; the original file is untouched" : "Nothing changed since the file was opened")
-    }
-}
-
 struct HelpBadge: View {
     let text: String
     var symbol = "questionmark.circle"

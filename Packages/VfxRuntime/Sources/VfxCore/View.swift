@@ -33,6 +33,7 @@ public struct ParticleViewSpec {
     public var edgeSoftness: (inner: Double, outer: Double)
     public var edgeColor: (inner: [Float], outer: [Float])
     public var cull: Cull?
+    public var material: MaterialGraph?
 }
 
 public protocol ParticleView: AnyObject {
@@ -43,6 +44,11 @@ public protocol ParticleView: AnyObject {
     func setDistortPower(_ power: Double)
     func geometryChanged()
     func destroy()
+    func setMaterial(age: Double, life: Double, seed: Double)
+}
+
+public extension ParticleView {
+    func setMaterial(age: Double, life: Double, seed: Double) {}
 }
 
 public protocol ViewFactory: AnyObject {

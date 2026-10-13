@@ -8,6 +8,7 @@ struct BottomEditors: View {
     private static let editors: [(title: String, symbol: String)] = [
         ("Timeline", "timeline.selection"), ("Graph Editor", "point.topleft.down.to.point.bottomright.curvepath"),
         ("Node Editor", "point.3.connected.trianglepath.dotted"), ("Item Editor", "slider.horizontal.below.rectangle"),
+        ("Material Editor", "circle.hexagongrid"),
     ]
 
     private static let ticker = Timer.publish(every: 1.0 / 30, on: .main, in: .common).autoconnect()
@@ -30,6 +31,7 @@ struct BottomEditors: View {
             case 0: SequencerView(document: document, clock: document.clock)
             case 1: CurveEditorView(document: document, clock: document.clock)
             case 2: NodeGraphView(document: document).coordinateSpace(name: "graph")
+            case 4: MaterialEditorView(document: document)
             default: DockedItemEditor(document: document)
             }
         }
@@ -122,7 +124,6 @@ struct TopBar: View {
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(RoundedRectangle(cornerRadius: 3).fill(document.format == .avfx ? NodeTint.particle.color : NodeTint.emitter.color))
                 EffectLibraryButton(title: document.title + (document.isDirty ? " •" : ""))
-                StatusPill(document: document)
                 if document.roundTripExact == false {
                     HStack(spacing: 3) {
                         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))

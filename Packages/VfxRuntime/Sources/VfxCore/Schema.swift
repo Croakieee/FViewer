@@ -514,6 +514,7 @@ public struct ParticleDef: Decodable {
     public var color: ColorParam?
     public var brightness: Param?
     public var alpha: Param?
+    public var material: MaterialGraph?
 
     var forever: Bool {
         if case .constant(let v) = life { return v == -1 }
