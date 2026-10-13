@@ -52,6 +52,9 @@ struct FragmentUniforms {
     var misc0 = SIMD4<Float>(1, 0, 0, 0)
     var misc1 = SIMD4<Float>(0, 0, 0, 0)
     var material = SIMD4<Float>(0, 0, 0, 0)
+    var lightDir = SIMD4<Float>(0, 0, 1, 0)
+    var lightColor = SIMD4<Float>(1, 1, 1, 1)
+    var ambient = SIMD4<Float>(0.25, 0.25, 0.25, 1)
 }
 
 final class GeometryBuffers {
@@ -350,6 +353,11 @@ final class MetalParticleView: ParticleView {
             renderer.texture(t.distortion?.texture),
         ]
         if let graph = spec.material {
+            let scene = graph.light ?? MaterialLight()
+            let direction = scene.directionVector, tint = scene.colorVector, fill = scene.ambientVector
+            fragment.lightDir = SIMD4(direction.x, direction.y, direction.z, 0)
+            fragment.lightColor = SIMD4(tint.x, tint.y, tint.z, 1)
+            fragment.ambient = SIMD4(fill.x, fill.y, fill.z, 1)
             let compiled = graph.compile()
             materialKey = renderer.materialKey(compiled)
             for slot in 0..<MaterialGraph.maxTextures { bound.append(renderer.texture(slot < compiled.textures.count ? compiled.textures[slot] : nil)) }

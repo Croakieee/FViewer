@@ -200,12 +200,13 @@ struct ModelUvEditor: View {
     }
 
     private func key(_ press: KeyPress) -> KeyPress.Result {
-        switch press.characters {
+        let typed = AppShortcuts.canonical(press.characters)
+        switch typed {
         case "g", "s", "r":
-            begin(Character(press.characters))
+            begin(Character(typed))
         case "x", "y":
             guard var active = modal else { return .ignored }
-            let axis = press.characters == "x" ? 0 : 1
+            let axis = typed == "x" ? 0 : 1
             active.axis = active.axis == axis ? nil : axis
             modal = active
             session.status = hint(active.kind, active.axis)

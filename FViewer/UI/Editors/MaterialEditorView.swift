@@ -15,6 +15,7 @@ enum MaterialLook {
         case "Coordinates": return Color(red: 0.70, green: 0.36, blue: 0.36)
         case "Texture": return Color(red: 0.30, green: 0.50, blue: 0.80)
         case "Math": return Color(red: 0.36, green: 0.58, blue: 0.62)
+        case "Lighting": return Color(red: 0.80, green: 0.70, blue: 0.30)
         case "Utility": return Color(red: 0.55, green: 0.42, blue: 0.75)
         default: return Color(red: 0.85, green: 0.52, blue: 0.25)
         }
@@ -24,6 +25,7 @@ enum MaterialLook {
         switch name {
         case "uv": return Color(red: 0.45, green: 0.75, blue: 0.95)
         case "rgb", "color", "emissive": return Color(red: 0.95, green: 0.55, blue: 0.75)
+        case "normal": return Color(red: 0.55, green: 0.62, blue: 0.98)
         default: return Color(white: 0.74)
         }
     }
@@ -408,7 +410,7 @@ struct MaterialEditorView: View {
 
     private func key(_ press: KeyPress, _ graph: MaterialGraph, _ particle: String) -> KeyPress.Result {
         let command = press.modifiers.contains(.command)
-        switch press.characters {
+        switch AppShortcuts.canonical(press.characters) {
         case "\u{7f}", "\u{8}", "x":
             guard !selection.isEmpty else { return .ignored }
             document.removeMaterialNodes(selection, in: particle)

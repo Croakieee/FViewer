@@ -63,13 +63,13 @@ final class MaterialPixels {
     }
 
     func render(_ graph: MaterialGraph, node: String, pin: String?, side: Int, time: Float, base: String?,
-                layers stack: [(texture: String, combine: String, keepAlpha: Bool)] = [], app: AppModel) -> CGImage? {
+                layers stack: [(texture: String, combine: String, keepAlpha: Bool)] = [], light: MaterialLight? = nil, app: AppModel) -> CGImage? {
         var names = graph.textures
         if let base, !names.contains(base) { names.append(base) }
         for layer in stack where !names.contains(layer.texture) { names.append(layer.texture) }
         let sample = sampler(app, names: names)
-        let evaluate = graph.evaluator(node: node, output: pin, texture: sample)
-        let scalar = pin.map { !["rgb", "uv"].contains($0) } ?? false
+        let evaluate = graph.evaluator(node: node, output: pin, light: light, texture: sample)
+        let scalar = pin.map { !["rgb", "uv", "normal"].contains($0) } ?? false
         let showsAlpha = pin == nil || pin == "rgb"
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
         let life = min(max(time.truncatingRemainder(dividingBy: 2) / 2, 0), 1)
@@ -91,6 +91,7 @@ final class MaterialPixels {
                 var value = evaluate(MaterialGraph.Sample(uv: uv, age: time, life: life, random: 0.37, layers: layers, particle: SIMD4(1, 1, 1, 1)))
                 if scalar { value = SIMD4(value.x, value.x, value.x, 1) }
                 if pin == "uv" { value = SIMD4(value.x - value.x.rounded(.down), value.y - value.y.rounded(.down), 0, 1) }
+                if pin == "normal" { value = SIMD4(value.x * 0.5 + 0.5, value.y * 0.5 + 0.5, value.z * 0.5 + 0.5, 1) }
                 let alpha = showsAlpha ? min(max(value.w, 0), 1) : 1
                 let o = (y * side + x) * 4
                 pixels[o] = UInt8(min(max(value.x, 0), 1) * alpha * 255)
@@ -110,6 +111,7 @@ struct MaterialPreviewImage: View {
     let pin: String?
     let base: String?
     var layers: [(texture: String, combine: String, keepAlpha: Bool)] = []
+    var light: MaterialLight?
     var side = 72
     var animated = true
 
@@ -118,7 +120,7 @@ struct MaterialPreviewImage: View {
             let time = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 600))
             ZStack {
                 CheckerBackground()
-                if let image = MaterialPixels.shared.render(graph, node: node, pin: pin, side: side, time: time, base: base, layers: layers, app: app) {
+                if let image = MaterialPixels.shared.render(graph, node: node, pin: pin, side: side, time: time, base: base, layers: layers, light: light, app: app) {
                     Image(decorative: image, scale: 1).resizable().interpolation(.medium)
                 }
             }

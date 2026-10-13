@@ -454,6 +454,8 @@ struct SettingsView: View {
                 general
                 colours
                 shortcuts
+                editorKeys
+                appearance
                 rules
             }
             .padding(.vertical, 8)
@@ -532,6 +534,101 @@ struct SettingsView: View {
             HStack {
                 Spacer()
                 HelpBadge(text: "One letter or digit per command. A changed shortcut works after the app is started again.")
+            }
+        }
+    }
+
+    private var editorKeys: some View {
+        Panel(title: "Editor Keys", memory: "prefs.editorKeys") {
+            ForEach(AppShortcuts.editorKeys, id: \.key) { command in
+                row(command.title) {
+                    TextValueField(value: AppShortcuts.editorKey(command.key).uppercased()) { text in
+                        let letter = text.trimmingCharacters(in: .whitespaces).lowercased().prefix(1)
+                        if letter.isEmpty || String(letter) == command.fallback {
+                            UserDefaults.standard.removeObject(forKey: "editkey." + command.key)
+                        } else {
+                            UserDefaults.standard.set(String(letter), forKey: "editkey." + command.key)
+                        }
+                        refresh += 1
+                    }
+                    .frame(width: 40)
+                    if AppShortcuts.editorKey(command.key) != command.fallback {
+                        Text("default \(command.fallback.uppercased())").font(Theme.small).foregroundStyle(Theme.dim)
+                    }
+                }
+            }
+            HStack {
+                SegmentButton(title: "Reset Keys", active: false) {
+                    for command in AppShortcuts.editorKeys { UserDefaults.standard.removeObject(forKey: "editkey." + command.key) }
+                    refresh += 1
+                }
+                Spacer()
+                HelpBadge(text: "Single keys used in the Graph Editor, Node Editor, Model Editor and Material Editor. They work without ⌘ and apply at once. A key given to one command no longer triggers the command that had it by default.")
+            }
+        }
+    }
+
+    private func lookNumber(_ label: String, _ key: String, _ fallback: Double, _ range: ClosedRange<Double>, step: Double) -> some View {
+        row(label) {
+            NumberField(label: nil, value: Appearance.number(key, fallback), step: step, digits: 1,
+                        onLive: { next in
+                            Appearance.setNumber(key, min(max(next, range.lowerBound), range.upperBound))
+                            app.document?.liveChanged()
+                        },
+                        onCommit: { _, next in
+                            Appearance.setNumber(key, min(max(next, range.lowerBound), range.upperBound))
+                            refresh += 1
+                            app.document?.liveChanged()
+                        })
+                .frame(width: 80)
+        }
+    }
+
+    private func lookColor(_ label: String, _ key: String, _ fallback: SIMD3<Double>) -> some View {
+        let current = Appearance.rgb(key, fallback)
+        return row(label) {
+            ColorField(color: SIMD4(current.x, current.y, current.z, 1), alpha: false,
+                       onLive: { next in
+                           Appearance.setRGB(key, SIMD3(next.x, next.y, next.z))
+                           app.document?.liveChanged()
+                       },
+                       onCommit: { _, next in
+                           Appearance.setRGB(key, SIMD3(next.x, next.y, next.z))
+                           refresh += 1
+                           app.document?.liveChanged()
+                       })
+            if Appearance.isSet(key) {
+                Image(systemName: "arrow.uturn.backward").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 16, height: 18)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        Appearance.setRGB(key, nil)
+                        refresh += 1
+                        app.document?.liveChanged()
+                    }
+                    .help("Back to the default")
+            }
+        }
+    }
+
+    private var appearance: some View {
+        Panel(title: "Appearance", memory: "prefs.appearance") {
+            Text("GRAPH EDITOR").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
+            lookNumber("Line Width", "curve.width", 1.6, 0.5...6, step: 0.1)
+            lookNumber("Point Size", "curve.point", 3.5, 1.5...10, step: 0.1)
+            lookNumber("Selected Size", "curve.selected", 4.5, 2...12, step: 0.1)
+            lookNumber("Grab Distance", "curve.grab", 9, 4...30, step: 0.5)
+            lookColor("Selected Color", "curve.selectedColor", Appearance.selectedDefault)
+            Text("TIMELINE").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+            lookColor("Bar Color", "timeline.bar", SIMD3(0.44, 0.457, 0.492))
+            lookColor("Selected Color", "timeline.selected", Appearance.barSelectedDefault)
+            HStack {
+                SegmentButton(title: "Reset Appearance", active: false) {
+                    Appearance.reset()
+                    refresh += 1
+                    app.document?.liveChanged()
+                }
+                Spacer()
+                HelpBadge(text: "Bar Color replaces the colour of item strips in the timeline; without it each strip takes the colour of what it plays.")
             }
         }
     }

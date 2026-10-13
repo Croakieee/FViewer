@@ -234,7 +234,7 @@ struct NodeGraphView: View {
             .focusEffectDisabled()
             .focused($focused)
             .onKeyPress { press in
-                switch press.characters {
+                switch AppShortcuts.canonical(press.characters) {
                 case "x", "\u{7f}", "\u{8}":
                     if let selectedEdge, let edge = graph.edges.first(where: { $0.id == selectedEdge }), let remove = edge.remove {
                         remove()

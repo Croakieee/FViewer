@@ -77,7 +77,74 @@ struct ModelViewport3D: View {
         return (best.vertex, best.emit)
     }
 
+    private func faceAt(_ point: CGPoint) -> [Int]? {
+        let cam = camera
+        let positions = session.positions
+        let screen = positions.map { cam.project($0) }
+        let list = session.indices
+        var best: (corners: [Int], depth: Float)?
+        for t in stride(from: 0, to: list.count - 2, by: 3) {
+            let ids = [list[t], list[t + 1], list[t + 2]]
+            guard ids.allSatisfy({ $0 < screen.count }), let a = screen[ids[0]], let b = screen[ids[1]], let c = screen[ids[2]] else { continue }
+            func side(_ p: CGPoint, _ q: CGPoint) -> CGFloat { (q.x - p.x) * (point.y - p.y) - (q.y - p.y) * (point.x - p.x) }
+            let s0 = side(a, b), s1 = side(b, c), s2 = side(c, a)
+            guard (s0 >= 0 && s1 >= 0 && s2 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0) else { continue }
+            let depth = (cam.depth(positions[ids[0]]) + cam.depth(positions[ids[1]]) + cam.depth(positions[ids[2]])) / 3
+            if depth < (best?.depth ?? .infinity) { best = (ids, depth) }
+        }
+        return best?.corners
+    }
+
+    private func edgeAt(_ point: CGPoint) -> (a: Int, b: Int)? {
+        let cam = camera
+        let screen = session.positions.map { cam.project($0) }
+        var best: (edge: (a: Int, b: Int), distance: CGFloat)?
+        for edge in session.meshEdges() {
+            guard edge.a < screen.count, edge.b < screen.count, let a = screen[edge.a], let b = screen[edge.b] else { continue }
+            let dx = b.x - a.x, dy = b.y - a.y
+            let length = dx * dx + dy * dy
+            let t = length > 0 ? min(max(((point.x - a.x) * dx + (point.y - a.y) * dy) / length, 0), 1) : 0
+            let d = hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t))
+            if d < 8, d < (best?.distance ?? .infinity) { best = (edge, d) }
+        }
+        return best?.edge
+    }
+
     private func click(_ point: CGPoint, extend: Bool) {
+        if session.selectMode == 1 {
+            if let edge = edgeAt(point) {
+                let both = session.selection.contains(edge.a) && session.selection.contains(edge.b)
+                if extend {
+                    if both {
+                        session.selection.remove(edge.a)
+                        session.selection.remove(edge.b)
+                    } else {
+                        session.selection.insert(edge.a)
+                        session.selection.insert(edge.b)
+                    }
+                } else {
+                    session.selection = [edge.a, edge.b]
+                    session.emitSelection = []
+                }
+            } else if !extend {
+                session.selectNone()
+            }
+            return
+        }
+        if session.faceMode {
+            if let corners = faceAt(point) {
+                let all = corners.allSatisfy { session.selection.contains($0) }
+                if extend {
+                    if all { corners.forEach { session.selection.remove($0) } } else { corners.forEach { session.selection.insert($0) } }
+                } else {
+                    session.selection = Set(corners)
+                    session.emitSelection = []
+                }
+            } else if !extend {
+                session.selectNone()
+            }
+            return
+        }
         let hit = nearest(point)
         if let vertex = hit.vertex {
             if extend {
@@ -234,6 +301,24 @@ struct ModelViewport3D: View {
             }
         }
         if session.showFaces, !session.showColors { context.fill(fills, with: .color(Color.white.opacity(0.07))) }
+        var chosen = Path()
+        for t in session.selectedFaces() {
+            guard let a = screen[list[t]], let b = screen[list[t + 1]], let c = screen[list[t + 2]] else { continue }
+            chosen.move(to: a)
+            chosen.addLine(to: b)
+            chosen.addLine(to: c)
+            chosen.closeSubpath()
+        }
+        context.fill(chosen, with: .color(ModelViewport3D.selected.opacity(0.28)))
+        if !session.selection.isEmpty {
+            var lit = Path()
+            for edge in session.meshEdges() where session.selection.contains(edge.a) && session.selection.contains(edge.b) {
+                guard edge.a < screen.count, edge.b < screen.count, let a = screen[edge.a], let b = screen[edge.b] else { continue }
+                lit.move(to: a)
+                lit.addLine(to: b)
+            }
+            context.stroke(lit, with: .color(ModelViewport3D.selected), lineWidth: 1.6)
+        }
         context.stroke(wires, with: .color(Color(white: 0.62).opacity(0.85)), lineWidth: 0.8)
         if session.showNormals, let bounds = session.bounds(selectedOnly: false) {
             let length = max(simd_length(bounds.high - bounds.low) * 0.04, 0.005)
@@ -316,12 +401,28 @@ struct ModelViewport3D: View {
     }
 
     private func key(_ press: KeyPress) -> KeyPress.Result {
-        switch press.characters {
+        let typed = AppShortcuts.canonical(press.characters)
+        switch typed {
         case "g", "s", "r":
-            begin(Character(press.characters))
+            begin(Character(typed))
+        case "\u{7f}", "\u{8}":
+            if session.faceMode { session.deleteSelectedFaces() } else { session.deleteSelectedVertices() }
+        case "e":
+            if session.extrudeSelection() { begin("g") }
+        case "f":
+            session.fillFace()
+        case "m":
+            session.mergeSelection()
+        case "D":
+            session.duplicateSelection()
+            begin("g")
         case "x", "y", "z":
+            if modal == nil, typed == "x" {
+                if session.faceMode { session.deleteSelectedFaces() } else { session.deleteSelectedVertices() }
+                return .handled
+            }
             guard var active = modal else { return .ignored }
-            let axis = ["x", "y", "z"].firstIndex(of: press.characters) ?? 0
+            let axis = ["x", "y", "z"].firstIndex(of: typed) ?? 0
             active.axis = active.axis == axis ? nil : axis
             modal = active
             session.status = hint(active.kind, active.axis)
@@ -409,15 +510,19 @@ struct ModelViewport3D: View {
         let revision = document.revision
         VStack(spacing: 0) {
             HStack(spacing: 6) {
-                Text("3D Viewport").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
-                Text("Edit Mode").font(Theme.small).foregroundStyle(Theme.dim)
+                Text("3D Viewport").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text).fixedSize()
+                HStack(spacing: 1) {
+                    HeaderButton(symbol: "smallcircle.filled.circle.fill", active: session.selectMode == 0, help: "Vertex select: click picks a vertex") { session.selectMode = 0 }
+                    HeaderButton(symbol: "line.diagonal", active: session.selectMode == 1, help: "Edge select: click picks an edge") { session.selectMode = 1 }
+                    HeaderButton(symbol: "triangle.fill", active: session.selectMode == 2, help: "Face select: click picks a triangle") { session.selectMode = 2 }
+                }
                 Spacer()
                 HeaderButton(symbol: "square.on.square.dashed", active: session.showFaces, help: "Faces") { session.showFaces.toggle() }
                 HeaderButton(symbol: "paintpalette", active: session.showColors, help: "Vertex colours on faces") { session.showColors.toggle() }
                 HeaderButton(symbol: "arrow.up.right", active: session.showNormals, help: "Vertex normals") { session.showNormals.toggle() }
                 HeaderButton(symbol: "smallcircle.filled.circle", active: session.showEmit, help: "Emit points") { session.showEmit.toggle() }
                 HeaderButton(symbol: "scope", help: "Frame Selected (.)") { frame(selectedOnly: true) }
-                HelpBadge(text: "Click: select · Shift-click: add · Drag: box select\nG move · S scale · R rotate, then X / Y / Z to constrain\nA all · ⌥A none · L linked · . frame selected\nScroll or ⌥-drag: orbit · Shift-scroll: pan · Pinch or ⌘-scroll: zoom · 1 3 7 views")
+                HelpBadge(text: "Click: select · Shift-click: add · Drag: box select\nG move · S scale · R rotate, then X / Y / Z to constrain\nX or Delete: delete · E extrude · F fill a face from 3 or 4 vertices · M merge · Shift-D duplicate\nA all · ⌥A none · L linked · . frame selected\nScroll or ⌥-drag: orbit · Shift-scroll: pan · Pinch or ⌘-scroll: zoom · 1 3 7 views")
             }
             .padding(.horizontal, 8)
             .frame(height: 28)

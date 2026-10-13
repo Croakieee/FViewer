@@ -76,7 +76,7 @@ struct MaterialInspector: View {
             Panel(title: "Preview", trailing: target.type == "output" ? "final" : kind.title, memory: "material.preview") {
                 let resolved = document.resolvedMaterial(particle)
                 MaterialPreviewImage(graph: resolved?.nodes.contains(where: { $0.id == target.id }) == true ? resolved ?? graph : graph, node: target.id, pin: pin,
-                                     base: document.materialBaseTexture(particle), layers: document.materialLayers(particle), side: 88)
+                                     base: document.materialBaseTexture(particle), layers: document.materialLayers(particle), light: document.materialLight, side: 88)
                     .aspectRatio(1, contentMode: .fit)
                     .frame(maxWidth: 190)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -142,6 +142,40 @@ struct MaterialInspector: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    @ViewBuilder private func sceneLight(_ graph: MaterialGraph) -> some View {
+        if document.resolvedMaterial(particle)?.usesLighting == true {
+            let light = document.materialLight
+            let direction = light.directionVector, tint = light.colorVector, fill = light.ambientVector
+            let azimuth = Double(atan2(direction.x, direction.z)) * 180 / .pi
+            let elevation = Double(asin(min(max(-direction.y, -1), 1))) * 180 / .pi
+            Panel(title: "Scene Light", trailing: "effect", memory: "material.light") {
+                row("Azimuth") {
+                    NumberField(label: nil, value: azimuth, suffix: "°", step: 1, digits: 0, onLive: { _ in },
+                                onCommit: { _, next in setDirection(azimuth: next, elevation: elevation) })
+                }
+                row("Elevation") {
+                    NumberField(label: nil, value: elevation, suffix: "°", step: 1, digits: 0, onLive: { _ in },
+                                onCommit: { _, next in setDirection(azimuth: azimuth, elevation: min(max(next, -89), 89)) })
+                }
+                row("Color") {
+                    ColorField(color: SIMD4(Double(tint.x), Double(tint.y), Double(tint.z), 1), alpha: false, onLive: { _ in },
+                               onCommit: { _, next in document.setMaterialLight("color", [next.x, next.y, next.z], title: "Set Light Color") })
+                }
+                row("Ambient") {
+                    ColorField(color: SIMD4(Double(fill.x), Double(fill.y), Double(fill.z), 1), alpha: false, onLive: { _ in },
+                               onCommit: { _, next in document.setMaterialLight("ambient", [next.x, next.y, next.z], title: "Set Ambient Color") })
+                }
+                Text("One light for the whole effect, read by the Lighting nodes. Azimuth turns it around the screen, elevation lifts it above.")
+                    .font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func setDirection(azimuth: Double, elevation: Double) {
+        let a = azimuth * .pi / 180, e = elevation * .pi / 180
+        document.setMaterialLight("direction", [sin(a) * cos(e), -sin(e), cos(a) * cos(e)], title: "Set Light Direction")
     }
 
     @ViewBuilder private func node(_ graph: MaterialGraph) -> some View {
@@ -290,6 +324,7 @@ struct MaterialInspector: View {
                 if let graph {
                     preview(graph)
                     settings(graph)
+                    sceneLight(graph)
                     node(graph)
                     parameters(graph)
                 }

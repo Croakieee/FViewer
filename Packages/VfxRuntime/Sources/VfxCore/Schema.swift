@@ -211,6 +211,7 @@ public struct EffectDef: Decodable {
     public var emitters: [EmitterDef]
     public var particles: [ParticleDef]
     public var materials: [String: MaterialGraph]?
+    public var light: MaterialLight?
 
     public static func decode(_ data: Data, table: ParamTable) throws -> EffectDef {
         let decoder = JSONDecoder()

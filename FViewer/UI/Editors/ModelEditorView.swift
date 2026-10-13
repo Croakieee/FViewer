@@ -244,9 +244,17 @@ private struct ModelEditorContent: View {
                 FlowLayout(spacing: 4) {
                     SegmentButton(title: "Import glTF…", active: false) { app.importModel(session.model, emitPoints: false) }
                     SegmentButton(title: "Export glTF…", active: false) { app.exportModel(session.model, name: name) }
+                    SegmentButton(title: "Add Quad", active: false) { session.addQuad() }
+                    SegmentButton(title: "Duplicate", active: false) { session.duplicateSelection() }
+                    SegmentButton(title: "Extrude", active: false) { session.extrudeSelection() }
+                    SegmentButton(title: "Subdivide", active: false) { session.subdivideSelection() }
+                    SegmentButton(title: "Fill Face", active: false) { session.fillFace() }
+                    SegmentButton(title: "Merge", active: false) { session.mergeSelection() }
+                    SegmentButton(title: "Delete Vertices", active: false) { session.deleteSelectedVertices() }
+                    SegmentButton(title: "Delete Faces", active: false) { session.deleteSelectedFaces() }
                     SegmentButton(title: "Flip Winding", active: false) { session.flipWinding() }
                     SegmentButton(title: "Recompute Normals", active: false) { session.recomputeNormals() }
-                    HelpBadge(text: "Flip Winding reverses the facing of every triangle. Recompute Normals rebuilds vertex normals from the triangles around each vertex.")
+                    HelpBadge(text: "Add Quad puts a unit square at the origin. Duplicate copies the selected vertices with the faces between them. Extrude copies the selection and joins the copy to the original with side faces; move it afterwards with G. Subdivide splits every selected face in four. Fill Face builds a triangle from 3 selected vertices, or two from 4. Merge joins the selected vertices at their centre. Delete Faces keeps the vertices. Flip Winding reverses the facing of every triangle. Recompute Normals rebuilds vertex normals from the triangles around each vertex.")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

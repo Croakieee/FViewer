@@ -608,8 +608,36 @@ struct RecipeRows: View {
         ("No Loop", "Loop Start and Loop End 0", [("LpSt", 0), ("LpEd", 0)]),
     ]
 
+    static let effector: [(name: String, help: String, values: [(String, Int)])] = [
+        ("This Effect Only", "Affect Other VFX and Affect Game off", [("bAOV", 0), ("bAGm", 0)]),
+        ("Affect Other VFX", "Affect Other VFX on", [("bAOV", 1)]),
+        ("Affect Game", "Affect Game on", [("bAGm", 1)]),
+        ("No Loop", "Loop Start and Loop End 0", [("LpSt", 0), ("LpEd", 0)]),
+    ]
+
+    static let binder: [(name: String, help: String, values: [(String, Int)])] = [
+        ("Follow Target", "Following Target Orientation on", [("bFTO", 1)]),
+        ("Keep Orientation", "Following Target Orientation off", [("bFTO", 0)]),
+        ("Scale with VFX", "VFX Scale on", [("bVSc", 1)]),
+        ("Scale with Target", "Transform Scale on", [("bTSc", 1)]),
+        ("No Scaling", "VFX Scale and Transform Scale off", [("bVSc", 0), ("bTSc", 0)]),
+        ("Adjust to Screen", "Adjust to Screen on", [("bATS", 1)]),
+    ]
+
+    static let timeline: [(name: String, help: String, values: [(String, Int)])] = [
+        ("No Loop", "Loop Start and Loop End 0", [("LpSt", 0), ("LpEd", 0)]),
+        ("No Binder", "Binder Index -1", [("BnNo", -1)]),
+    ]
+
     static func recipes(for tag: String) -> [(name: String, help: String, values: [(String, Int)])] {
-        tag == "Ptcl" ? particle : tag == "Emit" ? emitter : []
+        switch tag {
+        case "Ptcl": return particle
+        case "Emit": return emitter
+        case "Efct": return effector
+        case "Bind": return binder
+        case "TmLn": return timeline
+        default: return []
+        }
     }
 
     private func field(_ tag: String) -> PropField? { fields.first { $0.tag == tag && $0.write != nil } }

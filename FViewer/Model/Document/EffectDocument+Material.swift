@@ -66,7 +66,9 @@ extension EffectDocument {
 
     func resolvedMaterial(_ particleID: String) -> MaterialGraph? {
         guard let graph = materialGraph(particleID) else { return nil }
-        return graph.applying(materialUse(particleID) == nil ? [:] : materialOverrides(particleID)).expanded(sharedMaterials)
+        var resolved = graph.applying(materialUse(particleID) == nil ? [:] : materialOverrides(particleID)).expanded(sharedMaterials)
+        resolved.light = materialLight
+        return resolved
     }
 
     private func nodeJSON(_ node: MaterialNode) -> JSONNode {
@@ -267,6 +269,24 @@ extension EffectDocument {
         let before = snapshot()
         particle.set("blend", JSONNode(.string(blend)))
         registerUndo("Set Blend", since: before)
+    }
+
+    var materialLight: MaterialLight {
+        func triple(_ key: String) -> [Double]? {
+            guard let parts = jsonRoot?["light"]?[key]?.elements?.compactMap(\.number), parts.count == 3 else { return nil }
+            return parts
+        }
+        return MaterialLight(direction: triple("direction"), color: triple("color"), ambient: triple("ambient"))
+    }
+
+    func setMaterialLight(_ key: String, _ value: [Double], title: String) {
+        guard let root = jsonRoot else { return }
+        let before = snapshot()
+        var members = root["light"]?.members ?? []
+        members.removeAll { $0.key == key }
+        members.append(JSONMember(key: key, node: JSONNode(.array(value.map { JSONNode(.number(($0 * 1000).rounded() / 1000)) }))))
+        root.set("light", JSONNode(.object(members)))
+        registerUndo(title, since: before)
     }
 
     func materialBaseTexture(_ particleID: String) -> String? { materialParticle(particleID)?["texture"]?.string }

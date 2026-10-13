@@ -666,7 +666,16 @@ extension EffectDocument {
                 }
                 let open = Double(endTime) + base <= start
                 let end = open ? start + (life > 0 ? life : (clip >= 0 && emitter < 0 ? 1 : 30)) : base + Double(endTime)
-                let label = emitter >= 0 ? "Emitter \(emitter)" : clip >= 0 ? "Clip \(clip)" : "—"
+                let effector = recordInt(record, "EfNo")
+                let effectorCount = root.childrenNamed("Efct").count
+                var label = "[NONE]"
+                if emitter >= 0 {
+                    label = names["avfx/Emit/\(emitter)"] ?? "Emitter \(emitter)"
+                } else if clip >= 0 {
+                    label = names["\(id)/Clip/\(clip)"] ?? "Clip \(clip)"
+                } else if effector >= 0, effector < effectorCount {
+                    label = names["avfx/Efct/\(effector)"] ?? "Effector \(effector)"
+                }
                 var row = SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end, openEnded: open && life <= 0 && emitter >= 0,
                                        tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
                 row.base = base

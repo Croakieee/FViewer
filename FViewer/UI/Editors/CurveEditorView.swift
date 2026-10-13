@@ -51,6 +51,7 @@ struct CurveEditorView: View {
 
     @State private var cache = GroupCache()
     @State private var dragActive = false
+    @State private var bodyGrab = false
     @AppStorage("curves.radians") private var radians = false
     @AppStorage("curves.palette") private var paletteText = ""
     @AppStorage("curves.saved") private var savedText = ""
@@ -443,7 +444,7 @@ struct CurveEditorView: View {
                 }
                 context.stroke(before, with: .color(channel.color.opacity(0.4)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
                 context.stroke(after, with: .color(channel.color.opacity(0.4)), style: StrokeStyle(lineWidth: 1.2, dash: [4, 3]))
-                context.stroke(inside, with: .color(channel.color), lineWidth: 1.6)
+                context.stroke(inside, with: .color(channel.color), lineWidth: Appearance.curveWidth)
                 for (i, key) in keys.enumerated() where channel.colorComponent == nil {
                     let handles = handlePoints(keys, i, channel: channel.id)
                     let chosen = selection.contains(KeyRef(channel: channel.id, index: i))
@@ -467,7 +468,7 @@ struct CurveEditorView: View {
                 for (i, key) in keys.enumerated() {
                     let isSelected = selection.contains(KeyRef(channel: channel.id, index: i))
                     let center = CGPoint(x: x(key.time), y: y(key.value))
-                    let r: CGFloat = isSelected ? 4.5 : 3.5
+                    let r: CGFloat = isSelected ? Appearance.selectedSize : Appearance.pointSize
                     let rect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
                     var shape = Path(ellipseIn: rect)
                     if key.interpolation == CurveKeyPoint.step { shape = Path(rect) }
@@ -480,7 +481,7 @@ struct CurveEditorView: View {
                         shape.closeSubpath()
                     }
                     context.fill(shape, with: .color(isSelected ? Color.white : Color.black))
-                    context.stroke(shape, with: .color(isSelected ? Color(red: 1, green: 0.63, blue: 0.16) : channel.color), lineWidth: 1.5)
+                    context.stroke(shape, with: .color(isSelected ? Appearance.selectedColor : channel.color), lineWidth: 1.5)
                 }
             }
             if let bounds = selectionBounds() {
@@ -555,7 +556,7 @@ struct CurveEditorView: View {
         .focusEffectDisabled()
         .focused($focused)
         .onKeyPress { press in
-            switch press.characters {
+            switch AppShortcuts.canonical(press.characters) {
             case "x", "\u{7f}", "\u{8}":
                 deleteSelected()
             case " ":
@@ -614,7 +615,7 @@ struct CurveEditorView: View {
         for channel in visibleChannels(group) {
             for (i, key) in channel.read().enumerated() {
                 let d = hypot(x(key.time) - point.x, y(key.value) - point.y)
-                if d < 9, d < (best?.1 ?? .infinity) { best = (KeyRef(channel: channel.id, index: i), d) }
+                if d < Appearance.grabDistance, d < (best?.1 ?? .infinity) { best = (KeyRef(channel: channel.id, index: i), d) }
             }
         }
         return best?.0
@@ -765,6 +766,7 @@ struct CurveEditorView: View {
                 }
             } else if !command, !shift, let bounds = selectionBounds(), transformRect(bounds).contains(gesture.startLocation) {
                 beginKeyDrag()
+                bodyGrab = true
             } else {
                 boxStart = gesture.startLocation
                 boxEnd = gesture.startLocation
@@ -869,6 +871,9 @@ struct CurveEditorView: View {
                 let after = restore.keys.compactMap { id in channel(id).map { $0.snapshot() } }
                 let before = Array(restore.values)
                 document.registerUndo("Move Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+            } else if bodyGrab {
+                selection = []
+                activeKey = nil
             }
         case .scale(_, _, let restore, _, _):
             if dragActive {
@@ -906,6 +911,7 @@ struct CurveEditorView: View {
         }
         drag = .none
         dragActive = false
+        bodyGrab = false
         aim = nil
     }
 

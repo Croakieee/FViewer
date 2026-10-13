@@ -26,6 +26,9 @@ struct FragmentUniforms {
     float4 misc0;
     float4 misc1;
     float4 material;
+    float4 lightDir;
+    float4 lightColor;
+    float4 ambient;
 };
 
 struct VOut {

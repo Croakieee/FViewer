@@ -74,15 +74,50 @@ public enum MaterialOverride: Decodable {
     }
 }
 
+public struct MaterialLight: Decodable {
+    public var direction: [Double]?
+    public var color: [Double]?
+    public var ambient: [Double]?
+
+    public init(direction: [Double]? = nil, color: [Double]? = nil, ambient: [Double]? = nil) {
+        self.direction = direction
+        self.color = color
+        self.ambient = ambient
+    }
+
+    public static let defaultDirection: [Double] = [-0.45, -0.55, 0.7]
+    public static let defaultColor: [Double] = [1, 1, 1]
+    public static let defaultAmbient: [Double] = [0.25, 0.25, 0.25]
+
+    public var directionVector: SIMD3<Float> {
+        let d = direction?.count == 3 ? direction ?? MaterialLight.defaultDirection : MaterialLight.defaultDirection
+        let v = SIMD3(Float(d[0]), Float(d[1]), Float(d[2]))
+        let length = (v.x * v.x + v.y * v.y + v.z * v.z).squareRoot()
+        return length > 1e-6 ? v / length : SIMD3(0, 0, 1)
+    }
+
+    public var colorVector: SIMD3<Float> {
+        let c = color?.count == 3 ? color ?? MaterialLight.defaultColor : MaterialLight.defaultColor
+        return SIMD3(Float(c[0]), Float(c[1]), Float(c[2]))
+    }
+
+    public var ambientVector: SIMD3<Float> {
+        let c = ambient?.count == 3 ? ambient ?? MaterialLight.defaultAmbient : MaterialLight.defaultAmbient
+        return SIMD3(Float(c[0]), Float(c[1]), Float(c[2]))
+    }
+}
+
 public struct MaterialGraph: Decodable {
     public var nodes: [MaterialNode]
     public var links: [MaterialLink]
     public var use: String?
     public var overrides: [String: MaterialOverride]?
+    public var light: MaterialLight?
 
     private enum Keys: String, CodingKey { case nodes, links, use, overrides }
 
     public init(nodes: [MaterialNode], links: [MaterialLink], use: String? = nil, overrides: [String: MaterialOverride]? = nil) {
+        light = nil
         self.nodes = nodes
         self.links = links
         self.use = use
@@ -149,12 +184,18 @@ public struct MaterialGraph: Decodable {
     public func resolved(shared: [String: MaterialGraph]) -> MaterialGraph {
         var base = self
         if let use, let source = shared[use] { base = source }
-        return base.applying(overrides ?? [:]).expanded(shared)
+        var result = base.applying(overrides ?? [:]).expanded(shared)
+        result.light = light
+        return result
     }
 
     public static let maxTextures = 3
 
-    public static let categories = ["Particle", "Constants", "Coordinates", "Texture", "Math", "Utility", "Output"]
+    public static let categories = ["Particle", "Constants", "Coordinates", "Texture", "Math", "Lighting", "Utility", "Output"]
+
+    public static let lightingTypes: Set<String> = ["normalMap", "surfaceNormal", "lightDirection", "lightColor", "ambient", "diffuse", "fresnel", "viewDirection"]
+
+    public var usesLighting: Bool { nodes.contains { MaterialGraph.lightingTypes.contains($0.type) } }
 
     private static func kind(_ type: String, _ title: String, _ category: String, _ inputs: [String], _ outputs: [String],
                              _ params: [(String, Double)], _ help: String) -> MaterialNodeKind {
@@ -206,6 +247,14 @@ public struct MaterialGraph: Decodable {
         kind("clamp", "Clamp", "Math", ["x"], ["out"], [("x", 0), ("min", 0), ("max", 1)], "Clamps to a range"),
         kind("step", "Step", "Math", ["x"], ["out"], [("x", 0), ("edge", 0.5)], "0 below the edge, 1 above"),
         kind("smoothstep", "Smoothstep", "Math", ["x"], ["out"], [("x", 0), ("from", 0), ("to", 1)], "A soft step between two edges"),
+        kind("surfaceNormal", "Surface Normal", "Lighting", [], ["normal"], "The flat normal of the particle, facing the viewer"),
+        kind("normalMap", "Unpack Normal", "Lighting", ["rgb"], ["normal"], [("strength", 1)], "Turns a normal map colour into a normal"),
+        kind("viewDirection", "View Direction", "Lighting", [], ["out"], "The direction toward the viewer"),
+        kind("lightDirection", "Main Light Direction", "Lighting", [], ["out"], "The direction toward the scene light of this effect"),
+        kind("lightColor", "Main Light Color", "Lighting", [], ["rgb"], "The colour of the scene light"),
+        kind("ambient", "Ambient Color", "Lighting", [], ["rgb"], "The ambient colour of the scene"),
+        kind("diffuse", "Scene Diffuse Lighting", "Lighting", ["normal"], ["rgb"], "Ambient plus the light falling on a surface with this normal"),
+        kind("fresnel", "Fresnel Effect", "Lighting", ["normal"], ["out"], [("power", 3)], "Bright where the surface turns away from the viewer"),
         kind("desaturate", "Desaturate", "Utility", ["rgb"], ["out"], [("amount", 1)], "Moves a colour toward grey"),
         kind("radial", "Radial Falloff", "Utility", ["uv"], ["out"], [("radius", 0.5), ("softness", 0.5)], "1 in the centre of the UVs, fading to 0 at the radius"),
         kind("noise", "Noise", "Utility", ["uv", "time"], ["out"], [("scale", 6), ("speed", 0.5)], "Smooth animated noise from 0 to 1"),
@@ -269,6 +318,7 @@ public struct MaterialGraph: Decodable {
                 if name == "uv" { return "float4(channelUv(i, u.uvChannel.x) + 0.5, 0.0, 0.0)" }
                 if name == "time" { return "float4(u.material.x)" }
                 if name == "rgb" { return "float4(c.rgb, c.a)" }
+                if name == "normal" { return "float4(0.0, 0.0, 1.0, 0.0)" }
                 return "float4(\(literal(param(node, name))))"
             }
 
@@ -336,6 +386,18 @@ public struct MaterialGraph: Decodable {
             case "clamp": set("out", "clamp(\(input("x")), float4(\(p("min"))), float4(\(p("max"))))")
             case "step": set("out", "step(float4(\(p("edge"))), \(input("x")))")
             case "smoothstep": set("out", "smoothstep(float4(\(p("from"))), float4(\(p("to")) + 1e-5), \(input("x")))")
+            case "surfaceNormal": set("normal", "float4(0.0, 0.0, 1.0, 0.0)")
+            case "normalMap":
+                lines.append("    float3 \(n)_kn = \(input("rgb")).xyz * 2.0 - 1.0;")
+                set("normal", "float4(normalize(float3(\(n)_kn.xy * \(p("strength")), max(\(n)_kn.z, 1e-3))), 0.0)")
+            case "viewDirection": set("out", "float4(0.0, 0.0, 1.0, 0.0)")
+            case "lightDirection": set("out", "float4(u.lightDir.xyz, 0.0)")
+            case "lightColor": set("rgb", "float4(u.lightColor.rgb, 1.0)")
+            case "ambient": set("rgb", "float4(u.ambient.rgb, 1.0)")
+            case "diffuse":
+                set("rgb", "float4(u.ambient.rgb + u.lightColor.rgb * max(dot(normalize(\(input("normal")).xyz), u.lightDir.xyz), 0.0), 1.0)")
+            case "fresnel":
+                set("out", "float4(pow(1.0 - clamp(normalize(\(input("normal")).xyz).z, 0.0, 1.0), \(p("power"))))")
             case "desaturate":
                 lines.append("    float4 \(n)_kin = \(input("rgb"));")
                 set("out", "float4(mix(\(n)_kin.rgb, float3(dot(\(n)_kin.rgb, float3(0.299, 0.587, 0.114))), \(p("amount"))), \(n)_kin.a)")
@@ -406,7 +468,15 @@ public struct MaterialGraph: Decodable {
         return (a + (b - a) * w.x) + ((c + (d - c) * w.x) - (a + (b - a) * w.x)) * w.y
     }
 
-    public func evaluator(node target: String, output pin: String?, texture: @escaping (String, SIMD2<Float>) -> SIMD4<Float>) -> Evaluator {
+    public func evaluator(node target: String, output pin: String?, light: MaterialLight? = nil,
+                          texture: @escaping (String, SIMD2<Float>) -> SIMD4<Float>) -> Evaluator {
+        let scene = light ?? self.light ?? MaterialLight()
+        let lightDir = scene.directionVector, lightColor = scene.colorVector, ambient = scene.ambientVector
+        func unit(_ v: SIMD4<Float>) -> SIMD3<Float> {
+            let n = SIMD3(v.x, v.y, v.z)
+            let length = (n.x * n.x + n.y * n.y + n.z * n.z).squareRoot()
+            return length > 1e-6 ? n / length : SIMD3(0, 0, 1)
+        }
         let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var building: Set<String> = []
         func constant(_ value: Float) -> Evaluator { { _ in SIMD4(repeating: value) } }
@@ -421,6 +491,7 @@ public struct MaterialGraph: Decodable {
                 if name == "uv" { return { SIMD4($0.uv.x, $0.uv.y, 0, 0) } }
                 if name == "time" { return { SIMD4(repeating: $0.age) } }
                 if name == "rgb" { return { $0.layers } }
+                if name == "normal" { return { _ in SIMD4(0, 0, 1, 0) } }
                 return constant(p(name))
             }
             func channel(_ source: @escaping Evaluator) -> Evaluator {
@@ -527,6 +598,29 @@ public struct MaterialGraph: Decodable {
                     let k = Swift.min(Swift.max(($0 - from) / (to - from), 0), 1)
                     return k * k * (3 - 2 * k)
                 }
+            case "surfaceNormal", "viewDirection": return { _ in SIMD4(0, 0, 1, 0) }
+            case "normalMap":
+                let rgb = input("rgb")
+                let strength = p("strength")
+                return { s in
+                    let v = rgb(s)
+                    let n = unit(SIMD4((v.x * 2 - 1) * strength, (v.y * 2 - 1) * strength, Swift.max(v.z * 2 - 1, 1e-3), 0))
+                    return SIMD4(n.x, n.y, n.z, 0)
+                }
+            case "lightDirection": return { _ in SIMD4(lightDir.x, lightDir.y, lightDir.z, 0) }
+            case "lightColor": return { _ in SIMD4(lightColor.x, lightColor.y, lightColor.z, 1) }
+            case "ambient": return { _ in SIMD4(ambient.x, ambient.y, ambient.z, 1) }
+            case "diffuse":
+                let normal = input("normal")
+                return { s in
+                    let n = unit(normal(s))
+                    let lit = Swift.max(n.x * lightDir.x + n.y * lightDir.y + n.z * lightDir.z, 0)
+                    return SIMD4(ambient.x + lightColor.x * lit, ambient.y + lightColor.y * lit, ambient.z + lightColor.z * lit, 1)
+                }
+            case "fresnel":
+                let normal = input("normal")
+                let power = p("power")
+                return { s in SIMD4(repeating: pow(1 - Swift.min(Swift.max(unit(normal(s)).z, 0), 1), power)) }
             case "desaturate":
                 let rgb = input("rgb")
                 let amount = p("amount")

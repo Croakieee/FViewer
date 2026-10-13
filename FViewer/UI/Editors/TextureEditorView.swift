@@ -248,6 +248,10 @@ struct TextureEditorView: View {
     @State private var dragStart: CGPoint?
     @State private var panStart: CGSize?
     @GestureState private var pressing = false
+    @State private var hover: CGPoint?
+    @State private var repeatImage = false
+    @State private var uvModel: Int?
+    @State private var canvasSize = CGSize(width: 600, height: 400)
 
     private var block: AvfxBlock? {
         guard let document = app.document, let id = app.textureEditorTarget, case .avfx(let block, _, _)? = document.node(id)?.payload,
@@ -395,6 +399,15 @@ struct TextureEditorView: View {
                 model.zoom = 1
                 model.offset = .zero
             }
+            Button("Zoom to Fit") { fitView() }
+            Divider()
+            Button((repeatImage ? "✓ " : "") + "Repeat Image") { repeatImage.toggle() }
+            Menu("UV Overlay") {
+                Button((uvModel == nil ? "✓ " : "") + "None") { uvModel = nil }
+                ForEach(0..<modelCount, id: \.self) { index in
+                    Button((uvModel == index ? "✓ " : "") + "Model \(index)") { uvModel = index }
+                }
+            }
         }
     }
 
@@ -408,6 +421,53 @@ struct TextureEditorView: View {
         .padding(.vertical, 6)
         .frame(width: 34)
         .background(Theme.panel)
+    }
+
+    private var modelCount: Int { app.document?.avfxRoot?.childrenNamed("Modl").count ?? 0 }
+
+    private func fitView() {
+        let room = CGSize(width: max(canvasSize.width - 40, 20), height: max(canvasSize.height - 40, 20))
+        model.zoom = min(max(Double(min(room.width / CGFloat(max(model.image.width, 1)), room.height / CGFloat(max(model.image.height, 1)))), 0.0625), 64)
+        model.offset = .zero
+    }
+
+    private func pixel(at point: CGPoint) -> (x: Int, y: Int, rgba: [UInt8])? {
+        let x = Int(point.x.rounded(.down)), y = Int(point.y.rounded(.down))
+        guard x >= 0, y >= 0, x < model.image.width, y < model.image.height else { return nil }
+        let at = (y * model.image.width + x) * 4
+        guard at + 3 < model.image.rgba.count else { return nil }
+        return (x, y, Array(model.image.rgba[at..<at + 4]))
+    }
+
+    private func drawOverlays(_ context: inout GraphicsContext, _ frame: CGRect, _ shown: CGImage?) {
+        if repeatImage, let shown {
+            let image = context.resolve(Image(decorative: shown, scale: 1).interpolation(model.zoom >= 2 ? .none : .medium))
+            var faded = context
+            faded.opacity = 0.55
+            for row in -1...1 {
+                for column in -1...1 where row != 0 || column != 0 {
+                    faded.draw(image, in: frame.offsetBy(dx: CGFloat(column) * frame.width, dy: CGFloat(row) * frame.height))
+                }
+            }
+        }
+        if let uvModel, let root = app.document?.avfxRoot {
+            let models = root.childrenNamed("Modl")
+            guard uvModel < models.count else { return }
+            let mesh = Gltf.mesh(from: models[uvModel])
+            let uvs = mesh.uvs[0]
+            var wires = Path()
+            for t in stride(from: 0, to: mesh.indices.count - 2, by: 3) {
+                let ids = [Int(mesh.indices[t]), Int(mesh.indices[t + 1]), Int(mesh.indices[t + 2])]
+                guard ids.allSatisfy({ $0 < uvs.count }) else { continue }
+                let points = ids.map { CGPoint(x: frame.minX + CGFloat(uvs[$0].x) * frame.width, y: frame.minY + CGFloat(uvs[$0].y) * frame.height) }
+                wires.move(to: points[0])
+                wires.addLine(to: points[1])
+                wires.addLine(to: points[2])
+                wires.closeSubpath()
+            }
+            context.stroke(wires, with: .color(Color.black.opacity(0.6)), lineWidth: 2)
+            context.stroke(wires, with: .color(Color(red: 1, green: 0.63, blue: 0.16)), lineWidth: 1)
+        }
     }
 
     private func imagePoint(_ location: CGPoint, in size: CGSize) -> CGPoint {
@@ -434,9 +494,17 @@ struct TextureEditorView: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .updating($pressing) { _, state, _ in state = true }
-                .onChanged { drag in handle(drag, size) }
+                .onChanged { drag in
+                    hover = imagePoint(drag.location, in: size)
+                    handle(drag, size)
+                }
                 .onEnded { _ in finish() })
             .onChange(of: pressing) { _, now in if !now { finish() } }
+            .onContinuousHover { phase in
+                if case .active(let point) = phase { hover = imagePoint(point, in: size) } else { hover = nil }
+            }
+            .onAppear { canvasSize = size }
+            .onChange(of: size) { _, next in canvasSize = next }
         }
     }
 
@@ -446,8 +514,9 @@ struct TextureEditorView: View {
         let zoom = model.zoom
         let offset = model.offset
         let selection = model.selection
+        let extras = (repeatImage, uvModel)
         return Canvas { context, _ in
-            _ = (stamp, zoom, offset, selection)
+            _ = (stamp, zoom, offset, selection, extras.0, extras.1)
             draw(&context, size, shown)
         }
     }
@@ -474,6 +543,7 @@ struct TextureEditorView: View {
         if let shown {
             context.draw(context.resolve(Image(decorative: shown, scale: 1).interpolation(model.zoom >= 2 ? .none : .medium)), in: frame)
         }
+        drawOverlays(&context, frame, shown)
         context.stroke(Path(frame), with: .color(Color.black.opacity(0.8)), lineWidth: 1)
         if model.zoom >= 12 {
             var grid = Path()
@@ -545,6 +615,28 @@ struct TextureEditorView: View {
     private var dock: some View {
         ScrollView {
             VStack(spacing: 6) {
+                Panel(title: "View", memory: "texture.view") {
+                    FlowLayout(spacing: 4) {
+                        SegmentButton(title: "Fit", active: false) { fitView() }
+                        SegmentButton(title: "1:1", active: false) {
+                            model.zoom = 1
+                            model.offset = .zero
+                        }
+                        SegmentButton(title: "Repeat", active: repeatImage) { repeatImage.toggle() }
+                        HelpBadge(text: "Repeat draws the image tiled around itself, to check how its edges meet. UV shows where a model of the effect reads this texture.")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if modelCount > 0 {
+                        FlowLayout(spacing: 4) {
+                            Text("UV").font(Theme.small).foregroundStyle(Theme.dim).frame(height: 20)
+                            SegmentButton(title: "None", active: uvModel == nil) { uvModel = nil }
+                            ForEach(0..<modelCount, id: \.self) { index in
+                                SegmentButton(title: "Model \(index)", active: uvModel == index) { uvModel = index }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 Panel(title: "Tool Options", trailing: model.tool.rawValue) {
                     HStack(spacing: 8) {
                         Text("Colour").font(Theme.font).foregroundStyle(Theme.text).frame(width: 70, alignment: .trailing)
@@ -588,6 +680,20 @@ struct TextureEditorView: View {
             if let rect = model.selection {
                 Text("Selection \(Int(rect.minX)), \(Int(rect.minY))  \(Int(rect.width)) × \(Int(rect.height))").font(Theme.small).foregroundStyle(Theme.dim)
             }
+            if let hover, let sample = pixel(at: hover) {
+                HStack(spacing: 6) {
+                    Text("X \(sample.x)  Y \(sample.y)").foregroundStyle(Theme.dim)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color(.sRGB, red: Double(sample.rgba[0]) / 255, green: Double(sample.rgba[1]) / 255, blue: Double(sample.rgba[2]) / 255, opacity: 1))
+                        .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.black.opacity(0.6), lineWidth: 1))
+                        .frame(width: 12, height: 12)
+                    Text("R \(sample.rgba[0])  G \(sample.rgba[1])  B \(sample.rgba[2])  A \(sample.rgba[3])").foregroundStyle(Theme.text)
+                    Text(String(format: "#%02X%02X%02X%02X", sample.rgba[0], sample.rgba[1], sample.rgba[2], sample.rgba[3])).foregroundStyle(Theme.dim)
+                }
+                .font(.system(size: 10, design: .monospaced))
+            }
+            if repeatImage { Text("Repeat").font(Theme.small).foregroundStyle(Theme.changed) }
+            if let uvModel { Text("UV of Model \(uvModel)").font(Theme.small).foregroundStyle(Theme.changed) }
             Spacer()
             if model.canUndo { ChangeDot() }
         }

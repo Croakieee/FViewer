@@ -276,11 +276,12 @@ struct SequencerView: View {
                                                  height: row.depth == 0 ? 6 : rowHeight - 6)
                                 let selected = document.selectionID == row.nodeID
                                 let shape = Path(roundedRect: bar, cornerRadius: 3)
+                                let barTint = row.depth > 0 ? (Appearance.barColor ?? row.tint.color) : row.tint.color
                                 if row.openEnded {
-                                    context.fill(shape, with: .linearGradient(Gradient(colors: [row.tint.color.opacity(0.85), row.tint.color.opacity(0.1)]),
+                                    context.fill(shape, with: .linearGradient(Gradient(colors: [barTint.opacity(0.85), barTint.opacity(0.1)]),
                                                                               startPoint: CGPoint(x: bar.minX, y: 0), endPoint: CGPoint(x: bar.maxX, y: 0)))
                                 } else {
-                                    context.fill(shape, with: .color(row.tint.color.opacity(row.depth == 0 ? 0.55 : 0.8)))
+                                    context.fill(shape, with: .color(barTint.opacity(row.depth == 0 ? 0.55 : 0.8)))
                                 }
                                 if showDensity, let values = document.density[row.densityKey], let peak = densityPeak[row.densityKey], peak > 0 {
                                     let area = row.depth == 0 ? CGRect(x: bar.minX, y: top + 2, width: bar.width, height: rowHeight - 4) : bar.insetBy(dx: 0, dy: 1)
@@ -322,7 +323,7 @@ struct SequencerView: View {
                                 if row.startField != nil && bar.width > 14 {
                                     context.fill(Path(CGRect(x: bar.minX + 2, y: bar.minY + 2, width: 2, height: bar.height - 4)), with: .color(Color.black.opacity(0.35)))
                                 }
-                                if selected { context.stroke(shape, with: .color(.white), lineWidth: 1.5) }
+                                if selected { context.stroke(shape, with: .color(Appearance.barSelectedColor), lineWidth: 1.5) }
                             }
                             let endX = x(end, width, span)
                             context.fill(Path(CGRect(x: endX, y: rulerHeight, width: max(width - endX, 0), height: canvasSize.height - rulerHeight)),
