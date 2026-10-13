@@ -426,9 +426,15 @@ extension AppModel {
         return thumbnailFolder?.appendingPathComponent(key + ".png")
     }
 
+    private static var thumbnailCache: [URL: NSImage?] = [:]
+
     func thumbnail(for file: URL) -> NSImage? {
-        guard let url = thumbnailURL(for: file), FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return NSImage(contentsOf: url)
+        if let known = AppModel.thumbnailCache[file] { return known }
+        var image: NSImage?
+        if let url = thumbnailURL(for: file), FileManager.default.fileExists(atPath: url.path) { image = NSImage(contentsOf: url) }
+        if AppModel.thumbnailCache.count >= 800 { AppModel.thumbnailCache.removeAll() }
+        AppModel.thumbnailCache[file] = .some(image)
+        return image
     }
 
     func saveThumbnail(_ image: CGImage, for file: URL) {
@@ -440,6 +446,7 @@ extension AppModel {
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         guard let scaled = context.makeImage(), let data = NSBitmapImageRep(cgImage: scaled).representation(using: .png, properties: [:]) else { return }
         try? data.write(to: url, options: .atomic)
+        AppModel.thumbnailCache[file] = nil
         objectWillChange.send()
     }
 

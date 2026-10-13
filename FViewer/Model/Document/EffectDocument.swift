@@ -94,6 +94,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         } else {
             undoTitles.append("Rename")
             redoTitles = []
+            trimUndoTitles()
         }
         if grouped { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { document in
@@ -120,6 +121,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     let undoManager: UndoManager = {
         let manager = UndoManager()
         manager.groupsByEvent = false
+        manager.levelsOfUndo = EffectDocument.undoLimit
         return manager
     }()
     let catalog = AvfxCatalog.shared
@@ -332,6 +334,15 @@ final class EffectDocument: ObservableObject, Identifiable {
         if serializedData() != data { registerUndo(title, since: before) }
     }
 
+    static let undoLimit = 200
+
+    private func trimUndoTitles() {
+        while undoTitles.count > EffectDocument.undoLimit {
+            undoTitles.removeFirst()
+            cleanDepth = cleanDepth.flatMap { $0 > 0 ? $0 - 1 : nil }
+        }
+    }
+
     private func pushUndo(_ title: String, from: Snapshot, to: Snapshot) {
         if undoSuspended {
             rebuildOutline()
@@ -349,6 +360,7 @@ final class EffectDocument: ObservableObject, Identifiable {
             if let clean = cleanDepth, undoTitles.count < clean { cleanDepth = nil }
             undoTitles.append(title)
             redoTitles = []
+            trimUndoTitles()
         }
         let box = SnapshotBox(to)
         lastRedo = grouped ? box : nil

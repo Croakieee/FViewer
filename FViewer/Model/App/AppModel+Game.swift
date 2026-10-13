@@ -3,6 +3,8 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension AppModel {
+    static var searchToken = 0
+
     static let gameBookmarkKey = "gameBookmark"
 
     func chooseGameFolder() {
@@ -684,10 +686,12 @@ extension AppModel {
             return
         }
         notice = "Searching \(urls.count) files for \(text)…"
+        AppModel.searchToken += 1
+        let token = AppModel.searchToken
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let hits = AppModel.files(containing: needle, among: urls)
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, token == AppModel.searchToken else { return }
                 self.notice = "\(hits.count) file\(hits.count == 1 ? "" : "s") mention \(text) (\(urls.count) searched)"
                 self.timelineHitsTitle = (effects ? "Effects" : "Files") + " Using " + text
                 if !hits.isEmpty { self.timelineHits = hits }

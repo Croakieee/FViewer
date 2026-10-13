@@ -29,6 +29,7 @@ struct FragmentUniforms {
     float4 lightDir;
     float4 lightColor;
     float4 ambient;
+    float4 params[16];
 };
 
 struct VOut {

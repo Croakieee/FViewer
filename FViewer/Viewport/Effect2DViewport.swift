@@ -19,6 +19,8 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     private var appliedRelease = false
     private var appliedTriggers = 0
     private var lastFrame = CACurrentMediaTime()
+    private var lastActivity = CACurrentMediaTime()
+    private var idleSignature: [Double] = []
     private var statusTick = 0
     private var loadedFilter = VisibilityFilter()
     private var linePipeline: MTLRenderPipelineState?
@@ -127,6 +129,18 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
+        let mouse = NSEvent.mouseLocation
+        var signature: [Double] = [Double(document?.previewRevision ?? 0), Double(document?.revision ?? 0), Double(document?.selectionID?.hashValue ?? 0)]
+        signature.append(contentsOf: [Double(mouse.x), Double(mouse.y), Double(NSEvent.pressedMouseButtons), document?.clock.time ?? 0, Double(document?.clock.seed ?? 0)])
+        signature.append(contentsOf: [Double(view.drawableSize.width), Double(view.drawableSize.height)])
+        if signature != idleSignature {
+            idleSignature = signature
+            lastActivity = CACurrentMediaTime()
+        }
+        let playing = document?.clock.playing ?? true
+        let busy = playing || CACurrentMediaTime() - lastActivity < 1.5
+        let rate = busy ? 60 : 10
+        if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
         let now = CACurrentMediaTime()
         let elapsed = now - lastFrame
         lastFrame = now

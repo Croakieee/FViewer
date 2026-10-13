@@ -99,6 +99,21 @@ final class AppModel: ObservableObject {
         setLibrary(url)
     }
 
+    private var jsonKinds: [String: (size: Int, date: Date, effect: Bool)] = [:]
+
+    private func isEffectJSON(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let size = values?.fileSize ?? 0, date = values?.contentModificationDate ?? .distantPast
+        guard size > 0, size < 2_000_000 else { return false }
+        if let known = jsonKinds[url.path], known.size == size, known.date == date { return known.effect }
+        var effect = false
+        if let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
+            effect = text.contains("\"emitters\"") && text.contains("\"particles\"")
+        }
+        jsonKinds[url.path] = (size, date, effect)
+        return effect
+    }
+
     func setLibrary(_ root: URL) {
         libraryRoot = root
         textureFiles = [:]
@@ -132,8 +147,7 @@ final class AppModel: ObservableObject {
                     readTextureManifest(url)
                 } else if url.deletingLastPathComponent().lastPathComponent == "models" {
                     modelFiles[base] = url
-                } else if let data = try? Data(contentsOf: url), data.count < 2_000_000,
-                          let text = String(data: data, encoding: .utf8), text.contains("\"emitters\""), text.contains("\"particles\"") {
+                } else if isEffectJSON(url) {
                     found.append(LibraryFile(url: url, folder: folder))
                 }
             case "tmb", "pap", "eid", "scd", "mdl", "mtrl", "sklb", "skp", "phyb", "kdb", "pbd", "atch", "shpk", "shcd", "uld", "imc":
@@ -145,6 +159,7 @@ final class AppModel: ObservableObject {
         }
         files = found.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
         gameFiles = others.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
+        MaterialPixels.shared.reset()
         imageCache = [:]
         meshCache = [:]
         decodedCache = [:]
@@ -816,7 +831,17 @@ final class AppModel: ObservableObject {
         return folder
     }
 
+    private static var nodeItemsCache: (at: Double, value: [(name: String, url: URL)])?
+    private static var workspaceCache: (at: Double, root: URL?, value: [URL])?
+
     var nodeLibraryItems: [(name: String, url: URL)] {
+        if let cached = AppModel.nodeItemsCache, CACurrentMediaTime() - cached.at < 1.5 { return cached.value }
+        let fresh = scanNodeLibraryItems()
+        AppModel.nodeItemsCache = (CACurrentMediaTime(), fresh)
+        return fresh
+    }
+
+    private func scanNodeLibraryItems() -> [(name: String, url: URL)] {
         guard let folder = nodeLibraryFolder, let walker = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil) else { return [] }
         var items: [(String, URL)] = []
         let base = folder.standardizedFileURL.path
@@ -914,8 +939,11 @@ final class AppModel: ObservableObject {
 
     var workspaceFiles: [URL] {
         guard let root = libraryRoot else { return [] }
-        return ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [])
+        if let cached = AppModel.workspaceCache, cached.root == root, CACurrentMediaTime() - cached.at < 1.5 { return cached.value }
+        let fresh = ((try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "fvworkspace" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        AppModel.workspaceCache = (CACurrentMediaTime(), root, fresh)
+        return fresh
     }
 
     func workspaceData() -> Workspace? {
@@ -1067,7 +1095,10 @@ final class AppModel: ObservableObject {
         } else if let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data), mip: 1) {
             image = decoded.makeImage()
         }
-        if let image { imageCache[url] = image }
+        if let image {
+            if imageCache.count >= 600 { imageCache.removeAll() }
+            imageCache[url] = image
+        }
         return image
     }
 
@@ -1129,7 +1160,10 @@ final class AppModel: ObservableObject {
                 textureInfo[url] = error.localizedDescription
             }
         }
-        if let image { imageCache[url] = image }
+        if let image {
+            if imageCache.count >= 600 { imageCache.removeAll() }
+            imageCache[url] = image
+        }
         return image
     }
 
@@ -1139,6 +1173,7 @@ final class AppModel: ObservableObject {
         guard url.pathExtension.lowercased() != "png", let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data)) else {
             return nil
         }
+        if decodedCache.count >= 48 { decodedCache.removeAll() }
         decodedCache[url] = decoded
         return decoded
     }

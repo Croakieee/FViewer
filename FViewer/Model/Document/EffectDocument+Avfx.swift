@@ -227,7 +227,8 @@ extension EffectDocument {
             } else {
                 title = "—"
             }
-            detail = "\(recordInt(record, "StTm", 0))–\(recordInt(record, "EdTm", 0))"
+            let last = recordInt(record, "EdTm", 0)
+            detail = last < 0 ? "\(recordInt(record, "StTm", 0))–∞" : "\(recordInt(record, "StTm", 0))–\(last)"
         case ("Emit", "ItPr"):
             let target = recordInt(record, "TgtB")
             title = "Particle \(target)"
@@ -360,6 +361,7 @@ extension EffectDocument {
                 let label = field.label
                 field.unassign = { [weak self] in self?.removeChild(block, from: parent, title: "Remove " + label) }
             }
+            field.unseen = PreviewCoverage.ignores(cls, block.tag)
             return [field]
         }
     }

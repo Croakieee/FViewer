@@ -76,7 +76,7 @@ struct FieldControl: View {
                         })
         case .bool:
             let unset: Bool = { if case .int = value { return true }; return false }()
-            CheckBox(isOn: value == .bool(true), label: label ?? "", mixed: unset) { _ in
+            CheckBox(isOn: value == .bool(true), label: label ?? "", mixed: unset, dimmed: field.unseen) { _ in
                 let next: FieldValue = unset ? .bool(true) : value == .bool(true) ? .bool(false) : field.triState ? .int(255) : .bool(true)
                 document.commit(field, from: value, to: next)
             }
@@ -124,16 +124,18 @@ struct FieldRows: View {
         if let unassign = field.unassign { Button("Remove from File", role: .destructive, action: unassign) }
     }
 
-    private func label(_ text: String, _ field: PropField?) -> some View {
+    private func label(_ text: String, _ field: PropField?, unseen: Bool = false) -> some View {
         let isChanged = field.map(changed) ?? false
+        let muted = unseen || field?.unseen == true
         let before = isChanged ? field.flatMap { document.originalValue(of: $0, in: nodeID) } : nil
         var help = field.map { "\($0.label) [\($0.tag)]" } ?? text
         if field?.tag == "SdNo" { help += " · -1 if no sound" }
         if isChanged { help += " · was " + (before.map(document.describe) ?? "not in the file") }
+        if muted { help += "\n" + PreviewCoverage.note }
         return HStack(spacing: 4) {
             Spacer(minLength: 0)
             if isChanged { ChangeDot(added: before == nil) }
-            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
+            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : muted ? Theme.dim : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
         }
         .frame(width: labelWidth, height: 20)
         .help(help)
@@ -161,7 +163,7 @@ struct FieldRows: View {
                 }
             case .vector(let prefix, let parts):
                 HStack(alignment: .top, spacing: 8) {
-                    label(prefix, nil)
+                    label(prefix, nil, unseen: parts.allSatisfy(\.unseen))
                     VStack(spacing: 1) {
                         ForEach(Array(parts.enumerated()), id: \.element.id) { index, field in
                             HStack(spacing: 4) {
@@ -200,10 +202,18 @@ struct TexturePreview: View {
     var height: CGFloat = 150
     @State private var mip = 0
 
+    private static var mipCache: (key: String, token: Int, value: (image: CGImage, levels: Int, size: String)?)?
+
     private var mipImage: (image: CGImage, levels: Int, size: String)? {
-        guard let url = app.textureURL(path), url.pathExtension.lowercased() != "png", let data = try? Data(contentsOf: url),
-              let decoded = try? Atex.decode([UInt8](data), mip: mip), let image = decoded.makeImage() else { return nil }
-        return (image, decoded.mipLevels, "\(decoded.width)×\(decoded.height)")
+        guard let url = app.textureURL(path), url.pathExtension.lowercased() != "png" else { return nil }
+        let key = url.path + "#\(mip)"
+        if let cached = TexturePreview.mipCache, cached.key == key, cached.token == app.libraryToken { return cached.value }
+        var value: (image: CGImage, levels: Int, size: String)?
+        if let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data), mip: mip), let image = decoded.makeImage() {
+            value = (image, decoded.mipLevels, "\(decoded.width)×\(decoded.height)")
+        }
+        TexturePreview.mipCache = (key, app.libraryToken, value)
+        return value
     }
 
     var body: some View {
@@ -410,7 +420,7 @@ struct InspectorView: View {
                 }
             }
             if let text = document.jsonText(of: node) {
-                JSONTextPanel(document: document, node: node, original: text).id(node.id + "#\(document.revision)")
+                JSONTextPanel(document: document, node: node, original: text).id(node.id + "#\(text.hashValue)")
             }
         }
     }

@@ -300,6 +300,10 @@ struct ViewportPanel: View {
             lo = SIMD3(-1, 0.2, 0)
             hi = SIMD3(1, 2.2, 0)
         }
+        if let bounds = ViewportRenderer.main?.effectBounds() {
+            lo = lo.map { simd_min($0, bounds.min) } ?? bounds.min
+            hi = hi.map { simd_max($0, bounds.max) } ?? bounds.max
+        }
         if let lo, let hi { camera.frame((lo, hi)) } else { camera.frame(nil) }
     }
 

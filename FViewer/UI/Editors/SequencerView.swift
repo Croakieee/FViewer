@@ -261,7 +261,7 @@ struct SequencerView: View {
                         Canvas { context, canvasSize in
                             let width = canvasSize.width
                             let base: Double = span > 400 ? 50 : span > 160 ? 20 : span > 60 ? 10 : 5
-                            let step = max(base, (span / 200 / 50).rounded(.up) * 50)
+                            let step = span / base > 200 ? (span / 200 / 50).rounded(.up) * 50 : base
                             var t = 0.0
                             while t <= span {
                                 var line = Path()

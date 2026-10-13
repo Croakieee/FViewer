@@ -111,6 +111,32 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     var captureRequest: ((CGImage) -> Void)?
     private var rulesToken = -1
     var lastDraws: [ParticleDraw] = []
+
+    func effectBounds() -> (min: SIMD3<Float>, max: SIMD3<Float>)? {
+        var xs: [Float] = [], ys: [Float] = [], zs: [Float] = []
+        for draw in lastDraws {
+            let count = draw.geometry.vertexCount
+            guard count > 0 else { continue }
+            let step = max(1, count / 96)
+            for index in stride(from: 0, to: count, by: step) {
+                let o = index * RenderGeometry.stride
+                let local = SIMD4<Float>(draw.geometry.vertices[o], draw.geometry.vertices[o + 1], draw.geometry.vertices[o + 2], 1)
+                let world = draw.model * local
+                guard world.x.isFinite, world.y.isFinite, world.z.isFinite else { continue }
+                xs.append(world.x)
+                ys.append(world.y)
+                zs.append(world.z)
+            }
+        }
+        guard xs.count > 0 else { return nil }
+        func span(_ values: [Float]) -> (Float, Float) {
+            let sorted = values.sorted()
+            let trim = sorted.count >= 40 ? sorted.count / 25 : 0
+            return (sorted[trim], sorted[sorted.count - 1 - trim])
+        }
+        let x = span(xs), y = span(ys), z = span(zs)
+        return (SIMD3(x.0, y.0, z.0), SIMD3(x.1, y.1, z.1))
+    }
     var lastViewProjection = matrix_identity_float4x4
     var lastViewSize = CGSize(width: 1, height: 1)
     var showGizmo = true
@@ -119,6 +145,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var texturePaths: [String] = []
     private var libraryToken = -1
     private var lastFrame = CACurrentMediaTime()
+    private var lastActivity = CACurrentMediaTime()
+    private var idleSignature: [Double] = []
     private var showFloor = false
     private var floor: DrawItem?
     private var sceneColor: MTLTexture?
@@ -639,6 +667,20 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        let mouse = NSEvent.mouseLocation
+        var signature: [Double] = [Double(camera.yaw), Double(camera.pitch), Double(camera.distance), Double(camera.fov)]
+        signature.append(contentsOf: [Double(camera.target.x), Double(camera.target.y), Double(camera.target.z), camera.ortho ? 1 : 0])
+        signature.append(contentsOf: [Double(document?.previewRevision ?? 0), Double(document?.revision ?? 0), Double(document?.selectionID?.hashValue ?? 0)])
+        signature.append(contentsOf: [Double(mouse.x), Double(mouse.y), Double(NSEvent.pressedMouseButtons), document?.clock.time ?? 0, Double(document?.clock.seed ?? 0)])
+        signature.append(contentsOf: [Double(view.drawableSize.width), Double(view.drawableSize.height)])
+        if signature != idleSignature {
+            idleSignature = signature
+            lastActivity = CACurrentMediaTime()
+        }
+        let playing = document?.clock.playing ?? true
+        let busy = playing || CACurrentMediaTime() - lastActivity < 1.5
+        let rate = busy ? 60 : 10
+        if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
         guard let pipeline, let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
               let buffer = queue.makeCommandBuffer() else { return }
         let aspect = Float(view.drawableSize.width / max(view.drawableSize.height, 1))

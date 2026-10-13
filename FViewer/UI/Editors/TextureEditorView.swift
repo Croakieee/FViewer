@@ -35,6 +35,9 @@ final class TextureEditorModel: ObservableObject {
     private(set) var redoStack: [TextureImage] = []
     var sourcePath = ""
     var loadedKey = ""
+    var loadedTarget: String?
+    var appliedRevision = 0
+    var unsaved: Bool { !loadedKey.isEmpty && revision != appliedRevision }
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -47,11 +50,13 @@ final class TextureEditorModel: ObservableObject {
         redoStack = []
         selection = nil
         revision += 1
+        appliedRevision = revision
     }
 
     func checkpoint() {
         undoStack.append(image)
-        if undoStack.count > 40 { undoStack.removeFirst() }
+        let room = max(4, min(40, 268_435_456 / max(image.rgba.count, 1)))
+        while undoStack.count > room { undoStack.removeFirst() }
         redoStack = []
     }
 
@@ -280,6 +285,17 @@ struct TextureEditorView: View {
         let path = block.stringValue
         let key = "\(document.id)|\(app.textureEditorTarget ?? "")|\(path)"
         guard key != model.loadedKey else { return }
+        if model.unsaved, let previous = model.loadedTarget, previous != app.textureEditorTarget {
+            let alert = NSAlert()
+            alert.messageText = "Discard the changes to this texture?"
+            alert.informativeText = "The edits were not applied to the effect."
+            alert.addButton(withTitle: "Keep Editing")
+            alert.addButton(withTitle: "Discard")
+            if alert.runModal() == .alertFirstButtonReturn {
+                app.textureEditorTarget = previous
+                return
+            }
+        }
         if let decoded = app.decodedTexture(for: path) {
             model.load(TextureImage(width: decoded.width, height: decoded.height, rgba: decoded.rgba), path: path, key: key)
         } else if let image = app.image(for: path), let pixels = AtexWriter.rgba(from: image) {
@@ -287,6 +303,7 @@ struct TextureEditorView: View {
         } else {
             model.load(TextureImage(width: 256, height: 256, rgba: [UInt8](repeating: 0, count: 256 * 256 * 4)), path: path, key: key)
         }
+        model.loadedTarget = app.textureEditorTarget
         model.zoom = max(1, (480 / Double(max(model.image.width, model.image.height, 1))).rounded(.down))
         model.offset = .zero
     }
@@ -726,6 +743,7 @@ struct TextureEditorView: View {
             app.notice = "Texture written to \(written.lastPathComponent)"
             model.loadedKey = "\(document.id)|\(app.textureEditorTarget ?? "")|\(block.stringValue)"
             model.sourcePath = block.stringValue
+            model.appliedRevision = model.revision
         } catch {
             app.errorMessage = error.localizedDescription
         }

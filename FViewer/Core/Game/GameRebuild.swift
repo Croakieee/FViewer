@@ -109,7 +109,7 @@ struct PhybModel {
         if shapes.contains(where: { !$0.isEmpty }) || hasCollision {
             for kind in 0..<5 { out.append(UInt8(min(shapes[kind].count, 255))) }
             out.append(contentsOf: [0xCC, 0xCC, 0xCC])
-            for kind in 0..<5 { for blob in shapes[kind] { out.append(contentsOf: blob) } }
+            for kind in 0..<5 { for blob in shapes[kind].prefix(255) { out.append(contentsOf: blob) } }
         }
         let simulation = out.count
         GameFiles.put32(&out, 8, UInt32(collision))
@@ -456,12 +456,12 @@ struct SkpModel {
             lookAt = out.count
             out.append(UInt8(min(parameters.count, 255)))
             out.append(UInt8(min(groups.count, 255)))
-            for group in groups { out.append(UInt8(min(group.elements.count, 255))) }
-            for item in parameters { out.append(contentsOf: item) }
-            for group in groups {
+            for group in groups.prefix(255) { out.append(UInt8(min(group.elements.count, 255))) }
+            for item in parameters.prefix(255) { out.append(contentsOf: item) }
+            for group in groups.prefix(255) {
                 out.append(contentsOf: group.id)
                 out.append(UInt8(min(group.elements.count, 255)))
-                for element in group.elements { out.append(contentsOf: element) }
+                for element in group.elements.prefix(255) { out.append(contentsOf: element) }
             }
         }
         if hasSlope {

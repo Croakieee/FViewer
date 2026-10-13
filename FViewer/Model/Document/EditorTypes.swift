@@ -44,6 +44,7 @@ struct PropField: Identifiable {
     var animate: (() -> Void)?
     var unassign: (() -> Void)? = nil
     var triState = false
+    var unseen = false
 }
 
 struct PropSection: Identifiable {

@@ -55,6 +55,7 @@ struct FragmentUniforms {
     var lightDir = SIMD4<Float>(0, 0, 1, 0)
     var lightColor = SIMD4<Float>(1, 1, 1, 1)
     var ambient = SIMD4<Float>(0.25, 0.25, 0.25, 1)
+    var params: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0), SIMD4<Float>(0, 0, 0, 0))
 }
 
 final class GeometryBuffers {
@@ -198,6 +199,8 @@ public final class MetalRenderer: ViewFactory {
         guard !body.isEmpty else { return nil }
         if materialPipelines[body] != nil { return body }
         if failedMaterials.contains(body) { return nil }
+        if materialPipelines.count >= 48 { materialPipelines.removeAll() }
+        if failedMaterials.count >= 256 { failedMaterials.removeAll() }
         do {
             let library = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
             materialPipelines[body] = try makePipelines(vertex: library.makeFunction(name: "particleVertex"),
@@ -359,6 +362,10 @@ final class MetalParticleView: ParticleView {
             fragment.lightColor = SIMD4(tint.x, tint.y, tint.z, 1)
             fragment.ambient = SIMD4(fill.x, fill.y, fill.z, 1)
             let compiled = graph.compile()
+            withUnsafeMutableBytes(of: &fragment.params) { raw in
+                let slots = raw.bindMemory(to: Float.self)
+                for (index, value) in compiled.values.prefix(slots.count).enumerated() { slots[index] = value }
+            }
             materialKey = renderer.materialKey(compiled)
             for slot in 0..<MaterialGraph.maxTextures { bound.append(renderer.texture(slot < compiled.textures.count ? compiled.textures[slot] : nil)) }
         } else {

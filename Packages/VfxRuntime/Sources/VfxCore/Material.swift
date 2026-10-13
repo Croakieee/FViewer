@@ -279,7 +279,10 @@ public struct MaterialGraph: Decodable {
         public var code: String
         public var textures: [String]
         public var problems: [String]
+        public var values: [Float] = []
     }
+
+    public static let maxValues = 64
 
     public func compile() -> Compiled {
         var lines: [String] = []
@@ -291,7 +294,14 @@ public struct MaterialGraph: Decodable {
         if textures.count > MaterialGraph.maxTextures { problems.append("Only \(MaterialGraph.maxTextures) different textures can be sampled") }
         let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        func literal(_ value: Double) -> String { String(format: "%.6f", value.isFinite ? value : 0) }
+        var values: [Float] = []
+        func literal(_ value: Double) -> String {
+            let clean = value.isFinite ? value : 0
+            guard values.count < MaterialGraph.maxValues else { return String(format: "%.6f", clean) }
+            values.append(Float(clean))
+            let slot = values.count - 1
+            return "u.params[\(slot / 4)][\(slot % 4)]"
+        }
 
         func param(_ node: MaterialNode, _ name: String) -> Double {
             node.params?[name] ?? MaterialGraph.kind(of: node.type)?.params.first { $0.name == name }?.value ?? 0
@@ -433,7 +443,7 @@ public struct MaterialGraph: Decodable {
         if let color { lines.append("    c.rgb = \(color).rgb;") }
         if let alpha { lines.append("    c.a = \(alpha).x;") }
         if let emissive { lines.append("    c.rgb += \(emissive).rgb;") }
-        return Compiled(code: lines.joined(separator: "\n"), textures: slots, problems: problems)
+        return Compiled(code: lines.joined(separator: "\n"), textures: slots, problems: problems, values: values)
     }
 
     public struct Sample {

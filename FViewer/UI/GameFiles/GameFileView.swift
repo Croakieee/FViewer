@@ -8,6 +8,7 @@ final class GameFileDocument: ObservableObject {
     let original: [UInt8]
     @Published var bytes: [UInt8] {
         didSet {
+            texturePreview = nil
             guard !travelling, oldValue != bytes else { return }
             undoStack.append(oldValue)
             if undoStack.count > 40 { undoStack.removeFirst() }
@@ -56,6 +57,16 @@ final class GameFileDocument: ObservableObject {
         self.kind = kind
         original = bytes
         self.bytes = bytes
+    }
+
+    private var texturePreview: (decoded: DecodedTexture, image: CGImage)??
+
+    var decodedPreview: (decoded: DecodedTexture, image: CGImage)? {
+        if let known = texturePreview { return known }
+        var value: (decoded: DecodedTexture, image: CGImage)?
+        if let decoded = try? Atex.decode(bytes), let image = decoded.makeImage() { value = (decoded, image) }
+        texturePreview = .some(value)
+        return value
     }
 
     var dirty: Bool { bytes != original }
@@ -1164,7 +1175,8 @@ private struct RawFileView: View {
         let ext = file.url.pathExtension.lowercased()
         ScrollView {
             VStack(spacing: 6) {
-                if ext == "tex" || ext == "atex", let decoded = try? Atex.decode(file.bytes), let image = decoded.makeImage() {
+                if ext == "tex" || ext == "atex", let preview = file.decodedPreview {
+                    let decoded = preview.decoded, image = preview.image
                     Panel(title: "Texture", trailing: "\(decoded.width) × \(decoded.height) · \(decoded.formatName) · \(decoded.mipLevels) mips") {
                         ZStack {
                             CheckerBackground()
