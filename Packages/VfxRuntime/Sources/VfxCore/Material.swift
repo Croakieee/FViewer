@@ -6,14 +6,16 @@ public struct MaterialNode: Decodable {
     public var x: Double?
     public var y: Double?
     public var texture: String?
+    public var name: String?
     public var params: [String: Double]?
 
-    public init(id: String, type: String, x: Double? = nil, y: Double? = nil, texture: String? = nil, params: [String: Double]? = nil) {
+    public init(id: String, type: String, x: Double? = nil, y: Double? = nil, texture: String? = nil, name: String? = nil, params: [String: Double]? = nil) {
         self.id = id
         self.type = type
         self.x = x
         self.y = y
         self.texture = texture
+        self.name = name
         self.params = params
     }
 }
@@ -86,6 +88,9 @@ public struct MaterialGraph: Decodable {
         kind("band", "Edge Coordinate", "Particle", [], ["out"], "0 on the inner edge of the shape, 1 on the outer"),
         kind("float", "Constant", "Constants", [], ["out"], [("value", 1)], "One number"),
         kind("color", "Color", "Constants", [], ["rgb", "a"], [("r", 1), ("g", 1), ("b", 1), ("a", 1)], "A fixed colour"),
+        kind("gradient", "Gradient Ramp", "Constants", ["t"], ["rgb", "a"],
+             [("t", 0), ("ar", 0), ("ag", 0), ("ab", 0), ("br", 1), ("bg", 0.55), ("bb", 0.1), ("cr", 1), ("cg", 1), ("cb", 1), ("mid", 0.5)],
+             "Three colours blended along t: first at 0, second at the middle position, third at 1"),
         kind("uv", "Texture Coordinate", "Coordinates", [], ["uv"], [("channel", 1)], "UV set 1 to 4 of the shape"),
         kind("tiling", "Tiling & Offset", "Coordinates", ["uv"], ["uv"], [("tileX", 1), ("tileY", 1), ("offsetX", 0), ("offsetY", 0)], "Repeats and shifts the UVs"),
         kind("panner", "Panner", "Coordinates", ["uv", "time"], ["uv"], [("speedX", 0.2), ("speedY", 0)], "Scrolls the UVs over time"),
@@ -113,7 +118,8 @@ public struct MaterialGraph: Decodable {
         kind("noise", "Noise", "Utility", ["uv", "time"], ["out"], [("scale", 6), ("speed", 0.5)], "Smooth animated noise from 0 to 1"),
         kind("split", "Split", "Utility", ["rgb"], ["r", "g", "b", "a"], "Takes a colour apart"),
         kind("combine", "Combine", "Utility", ["r", "g", "b", "a"], ["rgb"], [("r", 0), ("g", 0), ("b", 0), ("a", 1)], "Builds a colour from numbers"),
-        kind("output", "Output", "Output", ["color", "alpha", "emissive"], [], "What the particle shows. Unwired inputs keep the layer stack's value"),
+        kind("output", "Output", "Output", ["color", "alpha", "emissive", "opacityMask"], [], [("clip", 0.333)],
+             "What the particle shows. Unwired inputs keep the layer stack's value. With an opacity mask wired, pixels whose mask is below clip are cut out"),
     ]
 
     public static func kind(of type: String) -> MaterialNodeKind? { kinds.first { $0.type == type } }
@@ -196,6 +202,12 @@ public struct MaterialGraph: Decodable {
             case "color":
                 set("rgb", "float4(\(p("r")), \(p("g")), \(p("b")), \(p("a")))")
                 set("a", "float4(\(p("a")))")
+            case "gradient":
+                lines.append("    float \(n)_kt = clamp(\(input("t")).x, 0.0, 1.0);")
+                lines.append("    float \(n)_km = clamp(\(p("mid")), 0.001, 0.999);")
+                lines.append("    float3 \(n)_ca = float3(\(p("ar")), \(p("ag")), \(p("ab"))), \(n)_cb = float3(\(p("br")), \(p("bg")), \(p("bb"))), \(n)_cc = float3(\(p("cr")), \(p("cg")), \(p("cb")));")
+                set("rgb", "float4(\(n)_kt < \(n)_km ? mix(\(n)_ca, \(n)_cb, \(n)_kt / \(n)_km) : mix(\(n)_cb, \(n)_cc, (\(n)_kt - \(n)_km) / (1.0 - \(n)_km)), 1.0)")
+                set("a", "float4(1.0)")
             case "uv": set("uv", "float4(channelUv(i, \(p("channel"))) + 0.5, 0.0, 0.0)")
             case "tiling":
                 set("uv", "float4(\(input("uv")).xy * float2(\(p("tileX")), \(p("tileY"))) + float2(\(p("offsetX")), \(p("offsetY"))), 0.0, 0.0)")
@@ -203,17 +215,17 @@ public struct MaterialGraph: Decodable {
                 set("uv", "float4(\(input("uv")).xy + float2(\(p("speedX")), \(p("speedY"))) * \(input("time")).x, 0.0, 0.0)")
             case "rotator":
                 let centre = "float2(\(p("centerX")), \(p("centerY")))"
-                lines.append("    float \(n)_turn = \(input("time")).x * \(p("speed")) * 6.2831853;")
-                lines.append("    float2 \(n)_d = \(input("uv")).xy - \(centre);")
-                set("uv", "float4(float2(\(n)_d.x * cos(\(n)_turn) - \(n)_d.y * sin(\(n)_turn), \(n)_d.x * sin(\(n)_turn) + \(n)_d.y * cos(\(n)_turn)) + \(centre), 0.0, 0.0)")
+                lines.append("    float \(n)_kturn = \(input("time")).x * \(p("speed")) * 6.2831853;")
+                lines.append("    float2 \(n)_kd = \(input("uv")).xy - \(centre);")
+                set("uv", "float4(float2(\(n)_kd.x * cos(\(n)_kturn) - \(n)_kd.y * sin(\(n)_kturn), \(n)_kd.x * sin(\(n)_kturn) + \(n)_kd.y * cos(\(n)_kturn)) + \(centre), 0.0, 0.0)")
             case "texture":
                 if let name = node.texture, let slot = slots.firstIndex(of: name) {
-                    lines.append("    float4 \(n)_s = straight(mat\(slot).sample(matSmp\(slot), \(input("uv")).xy));")
+                    lines.append("    float4 \(n)_ks = straight(mat\(slot).sample(matSmp\(slot), \(input("uv")).xy));")
                 } else {
-                    lines.append("    float4 \(n)_s = float4(1.0);")
+                    lines.append("    float4 \(n)_ks = float4(1.0);")
                 }
-                set("rgb", "\(n)_s")
-                for channel in ["r", "g", "b", "a"] { set(channel, "float4(\(n)_s.\(channel))") }
+                set("rgb", "\(n)_ks")
+                for channel in ["r", "g", "b", "a"] { set(channel, "float4(\(n)_ks.\(channel))") }
             case "add": set("out", "\(input("a")) + \(input("b"))")
             case "subtract": set("out", "\(input("a")) - \(input("b"))")
             case "multiply": set("out", "\(input("a")) * \(input("b"))")
@@ -231,15 +243,15 @@ public struct MaterialGraph: Decodable {
             case "step": set("out", "step(float4(\(p("edge"))), \(input("x")))")
             case "smoothstep": set("out", "smoothstep(float4(\(p("from"))), float4(\(p("to")) + 1e-5), \(input("x")))")
             case "desaturate":
-                lines.append("    float4 \(n)_in = \(input("rgb"));")
-                set("out", "float4(mix(\(n)_in.rgb, float3(dot(\(n)_in.rgb, float3(0.299, 0.587, 0.114))), \(p("amount"))), \(n)_in.a)")
+                lines.append("    float4 \(n)_kin = \(input("rgb"));")
+                set("out", "float4(mix(\(n)_kin.rgb, float3(dot(\(n)_kin.rgb, float3(0.299, 0.587, 0.114))), \(p("amount"))), \(n)_kin.a)")
             case "radial":
                 set("out", "float4(1.0 - smoothstep(\(p("radius")) * (1.0 - \(p("softness"))), \(p("radius")) + 1e-5, length(\(input("uv")).xy - 0.5)))")
             case "noise":
                 set("out", "float4(materialNoise(\(input("uv")).xy * \(p("scale")) + \(input("time")).x * \(p("speed"))))")
             case "split":
-                lines.append("    float4 \(n)_in = \(input("rgb"));")
-                for channel in ["r", "g", "b", "a"] { set(channel, "float4(\(n)_in.\(channel))") }
+                lines.append("    float4 \(n)_kin = \(input("rgb"));")
+                for channel in ["r", "g", "b", "a"] { set(channel, "float4(\(n)_kin.\(channel))") }
             case "combine":
                 set("rgb", "float4(\(input("r")).x, \(input("g")).x, \(input("b")).x, \(input("a")).x)")
             case "output":
@@ -260,10 +272,214 @@ public struct MaterialGraph: Decodable {
                   let kind = byID[link.from].flatMap({ MaterialGraph.kind(of: $0.type) }), kind.outputs.contains(link.out) else { return nil }
             return "n\(source)_\(link.out)"
         }
-        let color = wired("color"), alpha = wired("alpha"), emissive = wired("emissive")
+        let color = wired("color"), alpha = wired("alpha"), emissive = wired("emissive"), mask = wired("opacityMask")
+        if let mask { lines.append("    if (\(mask).x < \(literal(param(output, "clip")))) discard_fragment();") }
         if let color { lines.append("    c.rgb = \(color).rgb;") }
         if let alpha { lines.append("    c.a = \(alpha).x;") }
         if let emissive { lines.append("    c.rgb += \(emissive).rgb;") }
         return Compiled(code: lines.joined(separator: "\n"), textures: slots, problems: problems)
+    }
+
+    public struct Sample {
+        public var uv: SIMD2<Float>
+        public var age: Float
+        public var life: Float
+        public var random: Float
+        public var layers: SIMD4<Float>
+        public var particle: SIMD4<Float>
+
+        public init(uv: SIMD2<Float>, age: Float, life: Float, random: Float, layers: SIMD4<Float>, particle: SIMD4<Float>) {
+            self.uv = uv
+            self.age = age
+            self.life = life
+            self.random = random
+            self.layers = layers
+            self.particle = particle
+        }
+    }
+
+    public typealias Evaluator = (Sample) -> SIMD4<Float>
+
+    private static func hash(_ p: SIMD2<Float>) -> Float {
+        let v = sin(p.x * 127.1 + p.y * 311.7) * 43758.5453
+        return v - v.rounded(.down)
+    }
+
+    private static func noise(_ p: SIMD2<Float>) -> Float {
+        let cell = SIMD2(p.x.rounded(.down), p.y.rounded(.down)), f = p - cell
+        let w = f * f * (SIMD2<Float>(3, 3) - 2 * f)
+        let a = hash(cell), b = hash(cell + SIMD2(1, 0)), c = hash(cell + SIMD2(0, 1)), d = hash(cell + SIMD2(1, 1))
+        return (a + (b - a) * w.x) + ((c + (d - c) * w.x) - (a + (b - a) * w.x)) * w.y
+    }
+
+    public func evaluator(node target: String, output pin: String?, texture: @escaping (String, SIMD2<Float>) -> SIMD4<Float>) -> Evaluator {
+        let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var building: Set<String> = []
+        func constant(_ value: Float) -> Evaluator { { _ in SIMD4(repeating: value) } }
+
+        func build(_ id: String, _ pin: String) -> Evaluator {
+            guard let node = byID[id], let kind = MaterialGraph.kind(of: node.type), !building.contains(id) else { return constant(0) }
+            building.insert(id)
+            defer { building.remove(id) }
+            func p(_ name: String) -> Float { Float(node.params?[name] ?? kind.params.first { $0.name == name }?.value ?? 0) }
+            func input(_ name: String) -> Evaluator {
+                if let link = links.first(where: { $0.to == id && $0.input == name }) { return build(link.from, link.out) }
+                if name == "uv" { return { SIMD4($0.uv.x, $0.uv.y, 0, 0) } }
+                if name == "time" { return { SIMD4(repeating: $0.age) } }
+                if name == "rgb" { return { $0.layers } }
+                return constant(p(name))
+            }
+            func channel(_ source: @escaping Evaluator) -> Evaluator {
+                switch pin {
+                case "r": return { SIMD4(repeating: source($0).x) }
+                case "g": return { SIMD4(repeating: source($0).y) }
+                case "b": return { SIMD4(repeating: source($0).z) }
+                case "a": return { SIMD4(repeating: source($0).w) }
+                default: return source
+                }
+            }
+            func unary(_ operation: @escaping (Float) -> Float) -> Evaluator {
+                let x = input("x")
+                return { s in
+                    let v = x(s)
+                    return SIMD4(operation(v.x), operation(v.y), operation(v.z), operation(v.w))
+                }
+            }
+            func binary(_ operation: @escaping (Float, Float) -> Float) -> Evaluator {
+                let a = input("a"), b = input("b")
+                return { s in
+                    let l = a(s), r = b(s)
+                    return SIMD4(operation(l.x, r.x), operation(l.y, r.y), operation(l.z, r.z), operation(l.w, r.w))
+                }
+            }
+            switch node.type {
+            case "layers": return channel { $0.layers }
+            case "particleColor": return channel { $0.particle }
+            case "vertexColor": return constant(1)
+            case "age": return { SIMD4(repeating: $0.age) }
+            case "life": return { SIMD4(repeating: $0.life) }
+            case "random": return { SIMD4(repeating: $0.random) }
+            case "band": return { SIMD4(repeating: $0.uv.y) }
+            case "float": return constant(p("value"))
+            case "color":
+                let color = SIMD4(p("r"), p("g"), p("b"), p("a"))
+                return channel { _ in color }
+            case "gradient":
+                let t = input("t")
+                let a = SIMD3(p("ar"), p("ag"), p("ab")), b = SIMD3(p("br"), p("bg"), p("bb")), c = SIMD3(p("cr"), p("cg"), p("cb"))
+                let mid = min(max(p("mid"), 0.001), 0.999)
+                return channel { s in
+                    let k = min(max(t(s).x, 0), 1)
+                    let rgb = k < mid ? a + (b - a) * (k / mid) : b + (c - b) * ((k - mid) / (1 - mid))
+                    return SIMD4(rgb.x, rgb.y, rgb.z, 1)
+                }
+            case "uv": return { SIMD4($0.uv.x, $0.uv.y, 0, 0) }
+            case "tiling":
+                let uv = input("uv")
+                let tile = SIMD2(p("tileX"), p("tileY")), offset = SIMD2(p("offsetX"), p("offsetY"))
+                return { s in
+                    let v = uv(s)
+                    return SIMD4(v.x * tile.x + offset.x, v.y * tile.y + offset.y, 0, 0)
+                }
+            case "panner":
+                let uv = input("uv"), time = input("time")
+                let speed = SIMD2(p("speedX"), p("speedY"))
+                return { s in
+                    let v = uv(s), t = time(s).x
+                    return SIMD4(v.x + speed.x * t, v.y + speed.y * t, 0, 0)
+                }
+            case "rotator":
+                let uv = input("uv"), time = input("time")
+                let speed = p("speed"), centre = SIMD2(p("centerX"), p("centerY"))
+                return { s in
+                    let v = uv(s), turn = time(s).x * speed * 6.2831853
+                    let d = SIMD2(v.x, v.y) - centre
+                    return SIMD4(d.x * cos(turn) - d.y * sin(turn) + centre.x, d.x * sin(turn) + d.y * cos(turn) + centre.y, 0, 0)
+                }
+            case "texture":
+                let uv = input("uv")
+                let name = node.texture ?? ""
+                return channel { s in
+                    let v = uv(s)
+                    return name.isEmpty ? SIMD4(repeating: 1) : texture(name, SIMD2(v.x, v.y))
+                }
+            case "add": return binary(+)
+            case "subtract": return binary(-)
+            case "multiply": return binary(*)
+            case "divide": return binary { abs($1) < 1e-5 ? 0 : $0 / $1 }
+            case "min": return binary { Swift.min($0, $1) }
+            case "max": return binary { Swift.max($0, $1) }
+            case "power": return binary { pow(Swift.max($0, 0), $1) }
+            case "lerp":
+                let a = input("a"), b = input("b"), t = input("t")
+                return { s in
+                    let l = a(s), r = b(s), k = Swift.min(Swift.max(t(s).x, 0), 1)
+                    return l + (r - l) * k
+                }
+            case "oneMinus": return unary { 1 - $0 }
+            case "abs": return unary { abs($0) }
+            case "frac": return unary { $0 - $0.rounded(.down) }
+            case "sine": return unary { sin($0 * 6.2831853) * 0.5 + 0.5 }
+            case "saturate": return unary { Swift.min(Swift.max($0, 0), 1) }
+            case "clamp":
+                let low = p("min"), high = p("max")
+                return unary { Swift.min(Swift.max($0, low), high) }
+            case "step":
+                let edge = p("edge")
+                return unary { $0 >= edge ? 1 : 0 }
+            case "smoothstep":
+                let from = p("from"), to = p("to") + 1e-5
+                return unary {
+                    let k = Swift.min(Swift.max(($0 - from) / (to - from), 0), 1)
+                    return k * k * (3 - 2 * k)
+                }
+            case "desaturate":
+                let rgb = input("rgb")
+                let amount = p("amount")
+                return { s in
+                    let v = rgb(s)
+                    let grey = v.x * 0.299 + v.y * 0.587 + v.z * 0.114
+                    return SIMD4(v.x + (grey - v.x) * amount, v.y + (grey - v.y) * amount, v.z + (grey - v.z) * amount, v.w)
+                }
+            case "radial":
+                let uv = input("uv")
+                let radius = p("radius"), inner = p("radius") * (1 - p("softness"))
+                return { s in
+                    let v = uv(s)
+                    let d = ((v.x - 0.5) * (v.x - 0.5) + (v.y - 0.5) * (v.y - 0.5)).squareRoot()
+                    let k = Swift.min(Swift.max((d - inner) / Swift.max(radius + 1e-5 - inner, 1e-6), 0), 1)
+                    return SIMD4(repeating: 1 - k * k * (3 - 2 * k))
+                }
+            case "noise":
+                let uv = input("uv"), time = input("time")
+                let scale = p("scale"), speed = p("speed")
+                return { s in
+                    let v = uv(s)
+                    return SIMD4(repeating: MaterialGraph.noise(SIMD2(v.x, v.y) * scale + SIMD2(repeating: time(s).x * speed)))
+                }
+            case "split": return channel(input("rgb"))
+            case "combine":
+                let r = input("r"), g = input("g"), b = input("b"), a = input("a")
+                return { s in SIMD4(r(s).x, g(s).x, b(s).x, a(s).x) }
+            case "output":
+                let color: Evaluator = links.contains { $0.to == id && $0.input == "color" } ? input("color") : { $0.layers }
+                let alpha: Evaluator? = links.contains { $0.to == id && $0.input == "alpha" } ? input("alpha") : nil
+                let emissive: Evaluator? = links.contains { $0.to == id && $0.input == "emissive" } ? input("emissive") : nil
+                return { s in
+                    var c = color(s)
+                    c.w = alpha.map { $0(s).x } ?? s.layers.w
+                    if let emissive {
+                        let e = emissive(s)
+                        c.x += e.x
+                        c.y += e.y
+                        c.z += e.z
+                    }
+                    return c
+                }
+            default: return constant(0)
+            }
+        }
+        let pin = pin ?? byID[target].flatMap { MaterialGraph.kind(of: $0.type)?.outputs.first } ?? "out"
+        return build(target, pin)
     }
 }

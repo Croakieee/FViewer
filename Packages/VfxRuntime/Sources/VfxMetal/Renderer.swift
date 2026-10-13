@@ -170,6 +170,24 @@ public final class MetalRenderer: ViewFactory {
         return result
     }
 
+    private static var checked: [String: String] = [:]
+
+    public static func shaderProblem(_ graph: MaterialGraph, device: MTLDevice) -> String? {
+        let body = graph.compile().code
+        guard !body.isEmpty else { return nil }
+        if let known = checked[body] { return known.isEmpty ? nil : known }
+        var problem = ""
+        do {
+            _ = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
+        } catch {
+            let text = String(describing: error)
+            problem = text.components(separatedBy: "error: ").dropFirst().first?.components(separatedBy: "\n").first ?? text
+        }
+        if checked.count > 200 { checked = [:] }
+        checked[body] = problem
+        return problem.isEmpty ? nil : problem
+    }
+
     func materialKey(_ compiled: MaterialGraph.Compiled) -> String? {
         let body = compiled.code
         guard !body.isEmpty else { return nil }
