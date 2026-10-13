@@ -567,7 +567,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if let particle = simulation.pick(origin: camera.eye, direction: direction, camera: state, filter: filter) {
             let id = "avfx/Ptcl/\(particle)"
             if document.node(id) != nil { document.selectionID = id }
+        } else {
+            clearTarget()
         }
+    }
+
+    func clearTarget() {
+        guard let document, let root = document.outline.first?.id, document.selectionID != root else { return }
+        document.selectionID = root
     }
 
     func draw(in view: MTKView) {
@@ -683,7 +690,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                   shading: effectShading)
             if !highlightDraws.isEmpty {
                 particleRenderer.drawHighlight(encoder, draws: highlightDraws, particles: effect.particles, view: viewMatrix, projection: projection,
-                                               camera: camera.eye, color: SIMD4(1.0, 0.72, 0.28, 0.5))
+                                               camera: camera.eye, color: SIMD4(1.0, 0.5, 0.05, 1))
             }
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentSamplerState(sampler, index: 0)
@@ -817,6 +824,7 @@ final class ViewportMTKView: MTKView {
         case "3": camera.setView(yaw: .pi / 2, pitch: 0)
         case "7": camera.setView(yaw: 0, pitch: 1.55)
         case ".": NotificationCenter.default.post(name: .viewportFrameAll, object: nil)
+        case "\u{1b}": (delegate as? ViewportRenderer)?.clearTarget()
         default: super.keyDown(with: event)
         }
     }
