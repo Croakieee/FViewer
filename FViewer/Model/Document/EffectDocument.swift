@@ -166,6 +166,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
         try serializedData().write(to: destination, options: .atomic)
         url = destination
+        cleanDepth = undoTitles.count
         isDirty = false
     }
 
@@ -211,9 +212,20 @@ final class EffectDocument: ObservableObject, Identifiable {
         outline.forEach(visit)
     }
 
+    private var cleanDepth: Int? = 0
+    private var lastRedo: SnapshotBox?
+
     func touch() {
         revision += 1
+        cleanDepth = nil
         isDirty = true
+    }
+
+    func amendLastUndo() {
+        guard let lastRedo else { return }
+        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID)
+        rebuildOutline()
+        revision += 1
     }
 
     func perform(_ title: String, _ action: () -> Void, revert: () -> Void) {
@@ -226,6 +238,11 @@ final class EffectDocument: ObservableObject, Identifiable {
         let avfx: AvfxBlock?
         let json: JSONNode?
         let selection: String?
+    }
+
+    private final class SnapshotBox {
+        var state: Snapshot
+        init(_ state: Snapshot) { self.state = state }
     }
 
     func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID) }
@@ -247,7 +264,23 @@ final class EffectDocument: ObservableObject, Identifiable {
         pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID))
     }
 
+    private var undoSuspended = false
+
+    func batch(_ title: String, _ body: () -> Void) {
+        let before = snapshot()
+        let data = serializedData()
+        undoSuspended = true
+        body()
+        undoSuspended = false
+        if serializedData() != data { registerUndo(title, since: before) }
+    }
+
     private func pushUndo(_ title: String, from: Snapshot, to: Snapshot) {
+        if undoSuspended {
+            rebuildOutline()
+            liveDrag()
+            return
+        }
         let grouped = !undoManager.isUndoing && !undoManager.isRedoing
         if undoManager.isUndoing {
             if !undoTitles.isEmpty { undoTitles.removeLast() }
@@ -256,13 +289,16 @@ final class EffectDocument: ObservableObject, Identifiable {
             if !redoTitles.isEmpty { redoTitles.removeLast() }
             undoTitles.append(title)
         } else {
+            if let clean = cleanDepth, undoTitles.count < clean { cleanDepth = nil }
             undoTitles.append(title)
             redoTitles = []
         }
+        let box = SnapshotBox(to)
+        lastRedo = grouped ? box : nil
         if grouped { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { document in
             document.restore(from)
-            document.pushUndo(title, from: to, to: from)
+            document.pushUndo(title, from: box.state, to: from)
             if let selection = from.selection, document.node(selection) != nil { document.selectionID = selection }
         }
         undoManager.setActionName(title)
@@ -273,7 +309,8 @@ final class EffectDocument: ObservableObject, Identifiable {
             path = current.lastIndex(of: "/").map { String(current[..<$0]) }
         }
         if path != selectionID { selectionID = path ?? outline.first?.id }
-        touch()
+        revision += 1
+        isDirty = cleanDepth != undoTitles.count
     }
 
     func liveChanged() {

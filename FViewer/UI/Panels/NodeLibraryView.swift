@@ -436,6 +436,7 @@ struct HistoryView: View {
 struct SettingsView: View {
     @EnvironmentObject var app: AppModel
     @AppStorage("autosave.minutes") private var autosave = 5
+    @AppStorage("autosave.copies") private var copies = 5
     @AppStorage("itemEditor.skipQuestion") private var skipQuestion = false
     @State private var refresh = 0
 
@@ -472,6 +473,11 @@ struct SettingsView: View {
                 })
                 .frame(width: 80)
                 Text("minutes").font(Theme.font).foregroundStyle(Theme.dim)
+            }
+            row("Keep") {
+                NumberField(label: nil, value: Double(copies), isInteger: true, onLive: { _ in }, onCommit: { _, next in copies = Int(min(max(next, 1), 100)) })
+                    .frame(width: 80)
+                Text("autosaved copies per file").font(Theme.font).foregroundStyle(Theme.dim)
             }
             row("") { CheckBox(isOn: !skipQuestion, label: "Ask before opening an editor window") { skipQuestion = !$0 } }
             row("") {

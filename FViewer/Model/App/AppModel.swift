@@ -732,6 +732,11 @@ final class AppModel: ObservableObject {
         return stored == 0 ? 5 : stored
     }
 
+    var autosaveCopies: Int {
+        let stored = UserDefaults.standard.integer(forKey: "autosave.copies")
+        return stored == 0 ? 5 : min(max(stored, 1), 100)
+    }
+
     var autosaveFolder: URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let folder = base.appendingPathComponent("FViewer/Autosave", isDirectory: true)
@@ -758,7 +763,7 @@ final class AppModel: ObservableObject {
             if (try? document.serializedData().write(to: folder.appendingPathComponent(name), options: .atomic)) != nil { written += 1 }
             let older = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
                 .filter { $0.lastPathComponent.hasPrefix(base + "-") }.sorted { $0.lastPathComponent > $1.lastPathComponent }
-            for url in older.dropFirst(5) { try? FileManager.default.removeItem(at: url) }
+            for url in older.dropFirst(autosaveCopies) { try? FileManager.default.removeItem(at: url) }
         }
         return written
     }

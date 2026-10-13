@@ -252,7 +252,7 @@ extension ViewportRenderer {
                 }
                 channel.write(keys)
             }
-            document.touch()
+            document.liveChanged()
         }
     }
 

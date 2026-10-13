@@ -94,7 +94,7 @@ struct SequencerView: View {
                                 func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
                                 start.write?(value(start, (start.read().number ?? 0) + shift))
                                 if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, (finish.read().number ?? 0) + shift)) }
-                                document.liveDrag()
+                                document.amendLastUndo()
                             }
                             document.selectionID = fresh.nodeID
                         }
