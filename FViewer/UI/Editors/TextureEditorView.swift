@@ -459,7 +459,7 @@ struct TextureEditorView: View {
             for t in stride(from: 0, to: mesh.indices.count - 2, by: 3) {
                 let ids = [Int(mesh.indices[t]), Int(mesh.indices[t + 1]), Int(mesh.indices[t + 2])]
                 guard ids.allSatisfy({ $0 < uvs.count }) else { continue }
-                let points = ids.map { CGPoint(x: frame.minX + CGFloat(uvs[$0].x) * frame.width, y: frame.minY + CGFloat(uvs[$0].y) * frame.height) }
+                let points = ids.map { CGPoint(x: frame.minX + CGFloat(uvs[$0].x + 0.5) * frame.width, y: frame.minY + CGFloat(uvs[$0].y + 0.5) * frame.height) }
                 wires.move(to: points[0])
                 wires.addLine(to: points[1])
                 wires.addLine(to: points[2])

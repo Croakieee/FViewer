@@ -70,11 +70,39 @@ final class EffectDocument: ObservableObject, Identifiable {
         rebuildOutline()
     }
 
-    func setName(_ name: String, for nodeID: String) {
+    private func applyName(_ name: String, _ nodeID: String) {
         if name.isEmpty { names[nodeID] = nil } else { names[nodeID] = name }
         saveMeta()
         rebuildOutline()
         revision += 1
+    }
+
+    private func pushNameUndo(_ nodeID: String, from old: String, to new: String) {
+        let grouped = !undoManager.isUndoing && !undoManager.isRedoing
+        if undoManager.isUndoing {
+            if !undoTitles.isEmpty { undoTitles.removeLast() }
+            redoTitles.append("Rename")
+        } else if undoManager.isRedoing {
+            if !redoTitles.isEmpty { redoTitles.removeLast() }
+            undoTitles.append("Rename")
+        } else {
+            undoTitles.append("Rename")
+            redoTitles = []
+        }
+        if grouped { undoManager.beginUndoGrouping() }
+        undoManager.registerUndo(withTarget: self) { document in
+            document.applyName(old, nodeID)
+            document.pushNameUndo(nodeID, from: new, to: old)
+        }
+        undoManager.setActionName("Rename")
+        if grouped { undoManager.endUndoGrouping() }
+    }
+
+    func setName(_ name: String, for nodeID: String) {
+        let old = names[nodeID] ?? ""
+        guard old != name else { return }
+        applyName(name, nodeID)
+        pushNameUndo(nodeID, from: old, to: name)
     }
     var savedEnd: Double?
     var savedIsolate = false

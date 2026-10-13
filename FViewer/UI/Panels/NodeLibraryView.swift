@@ -524,7 +524,7 @@ struct SettingsView: View {
                 row(command.title) {
                     Text(command.shift ? "⇧⌘" : "⌘").font(Theme.font).foregroundStyle(Theme.dim)
                     TextValueField(value: (UserDefaults.standard.string(forKey: "shortcut." + command.key) ?? command.fallback).uppercased()) { text in
-                        let letter = text.trimmingCharacters(in: .whitespaces).lowercased().prefix(1)
+                        let letter = text.trimmingCharacters(in: .whitespaces).lowercased().suffix(1)
                         UserDefaults.standard.set(letter.isEmpty ? command.fallback : String(letter), forKey: "shortcut." + command.key)
                         refresh += 1
                     }
@@ -543,7 +543,7 @@ struct SettingsView: View {
             ForEach(AppShortcuts.editorKeys, id: \.key) { command in
                 row(command.title) {
                     TextValueField(value: AppShortcuts.editorKey(command.key).uppercased()) { text in
-                        let letter = text.trimmingCharacters(in: .whitespaces).lowercased().prefix(1)
+                        let letter = text.trimmingCharacters(in: .whitespaces).lowercased().suffix(1)
                         if letter.isEmpty || String(letter) == command.fallback {
                             UserDefaults.standard.removeObject(forKey: "editkey." + command.key)
                         } else {

@@ -186,6 +186,8 @@ struct ModelViewport3D: View {
         guard modal == nil, !(session.selection.isEmpty && session.emitSelection.isEmpty) else { return }
         modal = ModelModal(kind: kind, start: mouse, before: session.capture(), axis: nil)
         session.status = hint(kind, nil)
+        session.modalConfirm = { confirm() }
+        session.modalOwner = "3d"
     }
 
     private func hint(_ kind: Character, _ axis: Int?) -> String {
@@ -237,6 +239,8 @@ struct ModelViewport3D: View {
         session.commit(title, from: modal.before)
         self.modal = nil
         session.status = ""
+        session.modalOwner = nil
+        session.modalConfirm = nil
     }
 
     private func cancel() {
@@ -244,6 +248,8 @@ struct ModelViewport3D: View {
         session.cancel(modal.before)
         self.modal = nil
         session.status = ""
+        session.modalOwner = nil
+        session.modalConfirm = nil
     }
 
     private func drawGrid(_ context: inout GraphicsContext, _ cam: ModelCamera) {

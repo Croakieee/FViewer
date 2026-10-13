@@ -217,6 +217,25 @@ struct ColorField: View {
     let onCommit: (SIMD4<Double>, SIMD4<Double>) -> Void
     @State private var origin: SIMD4<Double>?
     @State private var pending: DispatchWorkItem?
+    @State private var editing = false
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private func parsed(_ raw: String) -> SIMD4<Double>? {
+        let digits = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "#", with: "")
+        guard digits.count == 6 || digits.count == 8, let value = UInt64(digits, radix: 16) else { return nil }
+        if digits.count == 6 {
+            return SIMD4(Double((value >> 16) & 0xff) / 255, Double((value >> 8) & 0xff) / 255, Double(value & 0xff) / 255, color.w)
+        }
+        return SIMD4(Double((value >> 24) & 0xff) / 255, Double((value >> 16) & 0xff) / 255, Double((value >> 8) & 0xff) / 255,
+                     alpha ? Double(value & 0xff) / 255 : color.w)
+    }
+
+    private func finishEditing() {
+        guard editing else { return }
+        editing = false
+        if let next = parsed(text), next != color { onCommit(color, next) }
+    }
 
     private var hex: String {
         String(format: "#%02X%02X%02X", Int((min(max(color.x, 0), 1) * 255).rounded()), Int((min(max(color.y, 0), 1) * 255).rounded()),
@@ -228,11 +247,31 @@ struct ColorField: View {
             ZStack {
                 CheckerBackground()
                 Color(.sRGB, red: color.x, green: color.y, blue: color.z, opacity: alpha ? color.w : 1)
-                Text(hex + (alpha ? String(format: "  %.0f%%", color.w * 100) : "")).font(Theme.small).monospacedDigit()
-                    .foregroundStyle(color.x * 0.3 + color.y * 0.59 + color.z * 0.11 > 0.55 ? Color.black : Color.white)
+                if editing {
+                    TextField("", text: $text)
+                        .textFieldStyle(.plain)
+                        .font(Theme.small)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(color.x * 0.3 + color.y * 0.59 + color.z * 0.11 > 0.55 ? Color.black : Color.white)
+                        .focused($focused)
+                        .onSubmit { finishEditing() }
+                        .onExitCommand { editing = false }
+                        .onAppear { DispatchQueue.main.async { focused = true } }
+                        .onChange(of: focused) { old, now in if old && !now { finishEditing() } }
+                } else {
+                    Text(hex + (alpha ? String(format: "  %.0f%%", color.w * 100) : "")).font(Theme.small).monospacedDigit()
+                        .foregroundStyle(color.x * 0.3 + color.y * 0.59 + color.z * 0.11 > 0.55 ? Color.black : Color.white)
+                }
             }
             .frame(height: 20)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard !editing else { return }
+                text = ""
+                editing = true
+            }
+            .help("Click to type a hex colour: RRGGBB, or RRGGBBAA where alpha applies")
             ColorPicker("", selection: Binding(
                 get: { Color(.sRGB, red: color.x, green: color.y, blue: color.z, opacity: color.w) },
                 set: { picked in

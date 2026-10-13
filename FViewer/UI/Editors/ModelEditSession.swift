@@ -43,6 +43,8 @@ final class ModelEditSession: ObservableObject {
     @Published var target = SIMD3<Float>(0, 0, 0)
     @Published var uvScale: CGFloat = 300
     @Published var uvOrigin = CGPoint(x: 40, y: 40)
+    @Published var modalOwner: String?
+    var modalConfirm: (() -> Void)?
     var framed3D = false
     var framedUV = ""
 

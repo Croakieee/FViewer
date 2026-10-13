@@ -31,6 +31,12 @@ private struct ModelEditorContent: View {
 
     private var name: String { title.replacingOccurrences(of: " ", with: "_") }
 
+    @ViewBuilder private func modalCatcher(_ pane: String) -> some View {
+        if let owner = session.modalOwner, owner != pane {
+            Color.clear.contentShape(Rectangle()).onTapGesture { session.modalConfirm?() }
+        }
+    }
+
     var body: some View {
         let _ = document.revision
         VStack(spacing: 0) {
@@ -46,12 +52,12 @@ private struct ModelEditorContent: View {
             }
             HStack(spacing: 0) {
                 if spreadsheet {
-                    ModelSpreadsheet(document: document, model: session.model).frame(minWidth: 420)
+                    ModelSpreadsheet(document: document, model: session.model).frame(minWidth: 420).overlay { modalCatcher("") }
                 } else {
-                    ModelUvEditor(document: document, session: session).frame(minWidth: 300)
+                    ModelUvEditor(document: document, session: session).frame(minWidth: 300).overlay { modalCatcher("uv") }
                 }
                 Rectangle().fill(Theme.line).frame(width: 1)
-                ModelViewport3D(document: document, session: session).frame(minWidth: 320)
+                ModelViewport3D(document: document, session: session).frame(minWidth: 320).overlay { modalCatcher("3d") }
                 if sidebar {
                     Rectangle().fill(Theme.line).frame(width: 1)
                     ScrollView {
@@ -63,6 +69,7 @@ private struct ModelEditorContent: View {
                         .padding(.vertical, 8)
                     }
                     .frame(width: 250)
+                    .overlay { modalCatcher("") }
                 }
             }
             HStack(spacing: 8) {

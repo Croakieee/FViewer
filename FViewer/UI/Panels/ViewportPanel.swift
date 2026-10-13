@@ -126,7 +126,7 @@ struct ViewportFooter: View {
             readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(clock.time.rounded())))
             if clock.frameMilliseconds > 0 { readout("timing", String(format: "%.1f ms · %.0f fps", clock.frameMilliseconds, clock.framesPerSecond)) }
             Spacer(minLength: 4)
-            HeaderButton(symbol: "arrow.counterclockwise", help: "Reset View: frame the whole effect") { reset() }
+            HeaderButton(symbol: "arrow.counterclockwise", help: "Reset View: the default angle, framed on the whole effect") { reset() }
             CheckBox(isOn: camera.ortho, label: "ortho") { camera.ortho = $0 }.fixedSize()
             HStack(spacing: 4) {
                 Text("FOV").foregroundStyle(Theme.dim)
@@ -414,7 +414,10 @@ struct ViewportPanel: View {
                 .allowsHitTesting(false)
                 AxisGizmo(camera: camera).frame(maxWidth: .infinity, alignment: .topTrailing).padding(8)
             }
-            ViewportFooter(clock: document.clock, camera: camera) { frameAll() }
+            ViewportFooter(clock: document.clock, camera: camera) {
+                camera.setView(yaw: 0.7, pitch: 0.45)
+                frameAll()
+            }
         }
         .onAppear { frameAll() }
         .onChange(of: document.selectionID) { _, _ in

@@ -17,18 +17,18 @@ struct ModelUvEditor: View {
 
     private static let selected = Color(red: 1, green: 0.55, blue: 0.1)
 
-    private func screen(_ uv: SIMD2<Float>) -> CGPoint { CGPoint(x: origin.x + CGFloat(uv.x) * scale, y: origin.y + CGFloat(uv.y) * scale) }
-    private func uv(_ point: CGPoint) -> SIMD2<Float> { SIMD2(Float((point.x - origin.x) / scale), Float((point.y - origin.y) / scale)) }
+    private func screen(_ uv: SIMD2<Float>) -> CGPoint { CGPoint(x: origin.x + CGFloat(uv.x + 0.5) * scale, y: origin.y + CGFloat(uv.y + 0.5) * scale) }
+    private func uv(_ point: CGPoint) -> SIMD2<Float> { SIMD2(Float((point.x - origin.x) / scale) - 0.5, Float((point.y - origin.y) / scale) - 0.5) }
 
     private func frame(selectedOnly: Bool) {
         let all = session.currentUVs
         var picked = selectedOnly && !session.selection.isEmpty ? session.selection.filter { $0 < all.count }.map { all[$0] } : all
-        if !selectedOnly || picked.isEmpty { picked += [SIMD2(0, 0), SIMD2(1, 1)] }
+        if !selectedOnly || picked.isEmpty { picked += [SIMD2(-0.5, -0.5), SIMD2(0.5, 0.5)] }
         let low = picked.reduce(picked[0]) { simd_min($0, $1) }, high = picked.reduce(picked[0]) { simd_max($0, $1) }
         let extent = max(CGFloat(max(high.x - low.x, high.y - low.y)), 0.02)
         let room = max(min(size.width, size.height) - 48, 40)
         session.uvScale = room / extent
-        session.uvOrigin = CGPoint(x: (size.width - CGFloat(high.x + low.x) * scale) / 2, y: (size.height - CGFloat(high.y + low.y) * scale) / 2)
+        session.uvOrigin = CGPoint(x: (size.width - CGFloat(high.x + low.x + 1) * scale) / 2, y: (size.height - CGFloat(high.y + low.y + 1) * scale) / 2)
     }
 
     private func nearest(_ point: CGPoint) -> Int? {
@@ -74,6 +74,8 @@ struct ModelUvEditor: View {
         guard modal == nil, !session.selection.isEmpty else { return }
         modal = ModelModal(kind: kind, start: mouse, before: session.capture(), axis: nil)
         session.status = hint(kind, nil)
+        session.modalConfirm = { confirm() }
+        session.modalOwner = "uv"
     }
 
     private func applyModal() {
@@ -113,6 +115,8 @@ struct ModelUvEditor: View {
         session.commit(modal.kind == "g" ? "Move UVs" : modal.kind == "s" ? "Scale UVs" : "Rotate UVs", from: modal.before)
         self.modal = nil
         session.status = ""
+        session.modalOwner = nil
+        session.modalConfirm = nil
     }
 
     private func cancel() {
@@ -120,6 +124,8 @@ struct ModelUvEditor: View {
         session.cancel(modal.before)
         self.modal = nil
         session.status = ""
+        session.modalOwner = nil
+        session.modalConfirm = nil
     }
 
     private func drawGrid(_ context: inout GraphicsContext, _ canvas: CGSize) {
@@ -233,14 +239,14 @@ struct ModelUvEditor: View {
     private var textureMenu: some View {
         Menu {
             Button("None") { session.texturePath = "" }
-            ForEach(document.textureSlots) { slot in
-                Button(slot.name + " · " + (slot.path.split(separator: "/").last.map(String.init) ?? slot.path)) { session.texturePath = slot.path }
+            ForEach(Array(document.textureSlots.enumerated()), id: \.offset) { index, slot in
+                Button("Texture \(index) · " + slot.name) { session.texturePath = slot.path }
             }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "photo").font(.system(size: 10))
-                Text(session.texturePath.isEmpty ? "Image" : (session.texturePath.split(separator: "/").last.map(String.init) ?? "Image"))
-                    .font(Theme.small).lineLimit(1)
+                Text(session.texturePath.isEmpty ? "Image" : ((session.texturePath as NSString).lastPathComponent as NSString).deletingPathExtension)
+                    .font(Theme.small).lineLimit(1).truncationMode(.middle).frame(maxWidth: 80)
             }
             .foregroundStyle(Theme.text)
         }
@@ -300,15 +306,16 @@ struct ModelUvEditor: View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text("UV Editor").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text).fixedSize()
-                Text("UV Map").font(Theme.small).foregroundStyle(Theme.dim).fixedSize()
                 HStack(spacing: 1) {
                     ForEach(0..<4, id: \.self) { index in
                         SegmentButton(title: "\(index + 1)", active: session.uvSet == index) {
                             session.uvSet = index
                             frame(selectedOnly: false)
                         }
+                        .help("UV Map \(index + 1)")
                     }
                 }
+                .fixedSize()
                 textureMenu
                 Spacer()
                 HeaderButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Frame All (Home)") { frame(selectedOnly: false) }

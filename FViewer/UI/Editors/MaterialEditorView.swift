@@ -68,9 +68,25 @@ struct MaterialEditorView: View {
     @State private var previewPin: String?
     @State private var canvasSize = CGSize(width: 600, height: 300)
     @State private var framed = ""
+    @State private var pinned = ""
     @State private var lastTap: (time: Date, point: CGPoint) = (.distantPast, .zero)
     @State private var open: Set<String> = Set(MaterialGraph.categories)
     @FocusState private var focused: Bool
+
+    private func selectedAvfxParticle() -> String? {
+        guard document.format == .avfx, let selected = document.selectionID, selected.hasPrefix("avfx/Ptcl/") else { return nil }
+        let id = selected.split(separator: "/").prefix(3).joined(separator: "/")
+        return document.node(id) != nil ? id : nil
+    }
+
+    private var avfxParticle: String? {
+        if let live = selectedAvfxParticle() { return live }
+        return pinned.isEmpty || document.node(pinned) == nil ? nil : pinned
+    }
+
+    private func rememberParticle() {
+        if let live = selectedAvfxParticle(), live != pinned { pinned = live }
+    }
 
     private func origin(_ node: MaterialNode) -> CGPoint { CGPoint(x: CGFloat(node.x ?? 0) * zoom + pan.width, y: CGFloat(node.y ?? 0) * zoom + pan.height) }
 
@@ -687,14 +703,18 @@ struct MaterialEditorView: View {
                 selection = []
                 if let next = document.materialParticleID.flatMap({ document.materialGraph($0) }) { frameAll(next) }
             }
+        } else if document.format == .avfx, let particle = avfxParticle {
+            AvfxMaterialView(document: document, particleID: particle)
+                .onChange(of: document.selectionID) { _, _ in rememberParticle() }
+                .onAppear { rememberParticle() }
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "circle.hexagongrid").font(.system(size: 26)).foregroundStyle(Theme.dim)
                 Text("Material Editor").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text)
-                Text(document.format == .pixi ? "Select a particle in the Outliner to edit its material."
-                    : "Materials belong to 2D effects (.json). An .avfx particle is drawn by fixed game fields.")
-                    .font(Theme.small).foregroundStyle(Theme.dim)
+                Text("Select a particle in the Outliner to see how it is drawn.").font(Theme.small).foregroundStyle(Theme.dim)
             }
+            .onChange(of: document.selectionID) { _, _ in rememberParticle() }
+            .onAppear { rememberParticle() }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Theme.gray(0.125))
         }

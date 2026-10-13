@@ -270,7 +270,8 @@ struct RParticle {
 
 struct RBinder {
     var type = 0
-    var distance: Float = 0
+    var distance: RCurve?
+    var adjustToScreen = false
     var bindTargetPoint: Int
     var bindPointId: Int
 }
@@ -319,12 +320,12 @@ struct REffectSchema {
 private extension Array where Element == AvfxBlock {
     func int(_ tag: String, _ fallback: Int = 0) -> Int { first { $0.tag == tag }?.intValue ?? fallback }
     func float(_ tag: String, _ fallback: Float = 0) -> Float { first { $0.tag == tag }?.floatValue ?? fallback }
-    func bool(_ tag: String) -> Bool { int(tag) != 0 }
+    func bool(_ tag: String) -> Bool { int(tag) & 0xff == 1 }
 }
 
 private extension AvfxBlock {
-    func bool(_ tag: String) -> Bool { int(tag) != 0 }
-    func byteFlag(_ tag: String, _ fallback: UInt8 = 0) -> Bool { (child(tag)?.data.first ?? fallback) != 0 }
+    func bool(_ tag: String) -> Bool { int(tag) & 0xff == 1 }
+    func byteFlag(_ tag: String, _ fallback: UInt8 = 0) -> Bool { (child(tag)?.data.first ?? fallback) == 1 }
     func lastRecords(_ tag: String) -> [[AvfxBlock]] {
         children?.last { $0.tag == tag && $0.children != nil }?.records() ?? []
     }
@@ -498,8 +499,8 @@ enum AvfxSchemaReader {
         }
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
-            return RBinder(type: b.int("BnVr"), distance: b.child("Data")?.float("Dst") ?? 0, bindTargetPoint: props?.int("BPTP") ?? 0,
-                           bindPointId: props?.int("BPID", -1) ?? -1)
+            return RBinder(type: b.int("BnVr"), distance: curve(b.child("Data")?.child("Dst")), adjustToScreen: b.bool("bATS"),
+                           bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1)
         }
         var result = REffectSchema(
             revisedPosition: Vec3(root.float("RvPx"), root.float("RvPy"), root.float("RvPz")),

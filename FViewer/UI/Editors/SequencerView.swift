@@ -57,21 +57,25 @@ struct SequencerView: View {
 
     private func duplicateAtPlayhead(_ row: SequencerRow) {
         guard let id = row.nodeID, let node = document.node(id), let duplicate = node.actions.first(where: { $0.title == "Duplicate" }) else { return }
-        let before = Set(document.sequencerRows.map(\.id))
+        let before = document.sequencerRows.count
         let frame = clock.time.rounded()
         duplicate.perform()
-        guard let fresh = document.sequencerRows.first(where: { !before.contains($0.id) }), let start = fresh.startField else { return }
+        let rows = document.sequencerRows
+        guard rows.count > before, let at = rows.firstIndex(where: { $0.id == row.id }),
+              let fresh = rows[(at + 1)...].first(where: { $0.depth == row.depth }), let start = fresh.startField else { return }
         let shift = frame - fresh.start
-        guard shift != 0 else { return }
-        func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
-        start.write?(value(start, start.read().number + shift))
-        if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, finish.read().number + shift)) }
-        document.amendLastUndo()
+        if shift != 0 {
+            func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
+            start.write?(value(start, start.read().number + shift))
+            if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, finish.read().number + shift)) }
+            document.amendLastUndo()
+        }
+        document.selectionID = fresh.nodeID
     }
     @State private var viewStart: Double = 0
 
-    private func x(_ t: Double, _ width: CGFloat, _ span: Double) -> CGFloat { CGFloat((t + 2 - viewStart) / (span / viewZoom)) * width }
-    private func time(_ px: CGFloat, _ width: CGFloat, _ span: Double) -> Double { Double(px / max(width, 1)) * (span / viewZoom) - 2 + viewStart }
+    private func x(_ t: Double, _ width: CGFloat, _ span: Double) -> CGFloat { CGFloat((t + 2 / viewZoom - viewStart) / (span / viewZoom)) * width }
+    private func time(_ px: CGFloat, _ width: CGFloat, _ span: Double) -> Double { Double(px / max(width, 1)) * (span / viewZoom) - 2 / viewZoom + viewStart }
 
     private var triggerMenu: some View {
         Menu {

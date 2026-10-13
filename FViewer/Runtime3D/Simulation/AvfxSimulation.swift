@@ -378,7 +378,7 @@ final class AvfxSimulation {
             return { [weak self] in
                 guard let self else { return matrix_identity_float4x4 }
                 return Math3D.compose(self.cameraPosition, self.cameraRotation ?? simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), Vec3(1, 1, 1))
-                    * Math3D.translation(Vec3(0, 0, distance))
+                    * Math3D.translation(Vec3(0, 0, Eval.curve(distance, CurveTime(self.time), 0)))
             }
         }
         if useBindPoints, index >= 0, index < schema.binders.count, schema.binders[index].bindTargetPoint == 3,
