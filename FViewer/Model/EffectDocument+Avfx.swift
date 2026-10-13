@@ -581,6 +581,24 @@ extension EffectDocument {
             let scale = isAngle ? 180 / Double.pi : 1
             var channels: [CurveChannel] = []
             var settings: [PropField] = []
+            var missing: [MissingCurve] = []
+            var unassign: [String: () -> Void] = [:]
+            func slot(_ tag: String, _ name: String, order: [String], channelID: String) {
+                if let sub = child.child(tag), sub.children != nil {
+                    unassign[channelID] = { [weak self] in self?.removeChild(sub, from: child, title: "Remove " + title + " " + name) }
+                } else {
+                    let earlier = Set(order.prefix { $0 != tag })
+                    missing.append(MissingCurve(id: id + "+" + tag, title: name) { [weak self] in
+                        self?.performStructural("Add " + title + " " + name) {
+                            let list = child.children ?? []
+                            let position = (list.lastIndex { earlier.contains($0.tag) }).map { $0 + 1 } ?? 0
+                            let random = ["XR", "YR", "ZR"].contains(tag) || tag.hasPrefix("Ran") || tag == "RBri"
+                            let unit = curveClass == "AvfxCurveColor" || child.tag.hasPrefix("Scl") || child.tag == "Scale"
+                            child.insert(AvfxBlock.curveData(tag: tag, value: !random && unit ? 1 : 0), at: position)
+                        }
+                    })
+                }
+            }
             switch curveClass {
             case "AvfxCurveData":
                 channels = [avfxChannel(child, id: id + "/v", name: title, color: EffectDocument.channelColors[2], component: nil, scale: scale)]
@@ -595,6 +613,8 @@ extension EffectDocument {
                     channels.append(avfxChannel(sub, id: id + "/" + entry.tag, name: entry.name,
                                                 color: EffectDocument.channelColors[(i + 3) % EffectDocument.channelColors.count], component: nil, scale: 1))
                 }
+                let colorOrder = ["RGB"] + EffectDocument.colorChannels.map(\.tag)
+                for entry in EffectDocument.colorChannels { slot(entry.tag, entry.name, order: colorOrder, channelID: id + "/" + entry.tag) }
             default:
                 let axes: [(String, String, Int)] = [("X", "X", 0), ("Y", "Y", 1), ("Z", "Z", 2), ("XR", "Random X", 3), ("YR", "Random Y", 4), ("ZR", "Random Z", 5)]
                 for axis in axes {
@@ -603,9 +623,13 @@ extension EffectDocument {
                                                 component: nil, scale: scale))
                 }
                 settings = avfxFields((child.children ?? []).filter { $0.children == nil }, cls: curveClass, id: id)
+                let offered = curveClass == "AvfxCurve2Axis" ? axes.filter { !$0.0.hasPrefix("Z") } : axes
+                let axisOrder = ["ACT", "ACTR"] + axes.map(\.0)
+                for axis in offered { slot(axis.0, axis.1, order: axisOrder, channelID: id + "/" + axis.0) }
             }
             groups.append(CurveGroup(id: id, title: title, tag: child.tag, isAngle: isAngle, channels: channels, settings: settings,
-                                     remove: { [weak self] in self?.removeChild(child, from: block, title: "Remove " + title) }))
+                                     remove: { [weak self] in self?.removeChild(child, from: block, title: "Remove " + title) },
+                                     missing: missing, unassign: unassign))
         }
         return groups
     }

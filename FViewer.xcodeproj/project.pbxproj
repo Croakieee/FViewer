@@ -46,20 +46,20 @@
 			);
 			sourceTree = "<group>";
 		};
-		4E87C0023090000000F9F69E /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				4E87C0013090000000F9F69E /* Base.xcconfig */,
-			);
-			path = Config;
-			sourceTree = "<group>";
-		};
 		4E87A46C307BDFDF00F9F69E /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				4E87A46B307BDFDF00F9F69E /* FViewer.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		4E87C0023090000000F9F69E /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				4E87C0013090000000F9F69E /* Base.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

@@ -47,6 +47,7 @@ final class AvfxCatalog {
             return AvfxBlock.leaf(field.tag, int: Int(value))
         case "AvfxFloat", "AvfxRadians": return AvfxBlock.leaf(field.tag, float: Float(value))
         case "AvfxIntList": return AvfxBlock(tag: field.tag, data: [value < 0 ? 255 : UInt8(truncatingIfNeeded: Int(value))])
+        case "AvfxString": return AvfxBlock(tag: field.tag, data: [0])
         default: return nil
         }
     }
@@ -62,7 +63,7 @@ final class AvfxCatalog {
         switch field.baseType {
         case "AvfxCurve1Axis", "AvfxCurveData": return AvfxCatalog.freshCurve(field.tag)
         case "AvfxCurve2Axis", "AvfxCurve3Axis":
-            let axes = field.baseType == "AvfxCurve2Axis" ? ["X", "Y", "RX", "RY"] : ["X", "Y", "Z", "RX", "RY", "RZ"]
+            let axes = field.baseType == "AvfxCurve2Axis" ? ["X", "Y", "XR", "YR"] : ["X", "Y", "Z", "XR", "YR", "ZR"]
             return AvfxBlock(tag: field.tag, children: [AvfxBlock.leaf("ACT", int: 0), AvfxBlock.leaf("ACTR", int: 0)] + axes.map { AvfxCatalog.freshCurve($0) })
         case "AvfxCurveColor":
             let parts = (classes["AvfxCurveColor"] ?? []).map { AvfxCatalog.freshCurve($0.tag, color: $0.tag == "RGB") }

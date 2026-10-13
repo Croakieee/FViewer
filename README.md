@@ -8,17 +8,17 @@ Built with SwiftUI and Metal. Requires macOS 15.7 or later and Xcode to build.
 
 ## Building
 
-Open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. There are no external dependencies; the 2D runtime is a local Swift package in `Packages/VfxRuntime`.
+Open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. There are no external dependencies. The 2D runtime is a local Swift package in `Packages/VfxRuntime`.
 
 ### Signing
 
-Signing settings are not stored in the project. Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and set your own team and bundle ID suffix; the file is ignored by git. Do not pick a team in Signing & Capabilities: Xcode would write it back into the project file.
+Signing settings are not stored in the project. Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and set your team and bundle ID suffix. The file is ignored by git. Do not pick a team in Signing & Capabilities, Xcode would write it back into the project file.
 
 ## Opening files
 
 - **File → Open File** opens a single `.avfx` effect or a `.json` effect of the Pixi runtime.
-- **File → Open Folder** scans a folder of extracted game files. Effects appear in the File Browser; textures and models next to them are found automatically by their game path.
-- **File → Game** works with an installed game: set the `sqpack` folder once and open effects, textures and other files straight from the archives by game path.
+- **File → Open Folder** scans a folder of extracted game files. Effects appear in the File Browser. Textures and models are found by their game path.
+- **File → Game** works with an installed game. Set the `sqpack` folder once, then open files from the archives by game path.
 - Files can also be dropped onto the window.
 
 Originals are never overwritten. **Save** writes a copy next to the source with an `F` added to the name.
@@ -31,41 +31,41 @@ Originals are never overwritten. **Save** writes a copy next to the source with 
 | Viewport | Live preview. Drag to orbit, right-drag to pan, scroll to zoom; `1`, `3`, `7` switch to front, side and top views. The selected item gets move, rotate and scale handles. |
 | Properties | Every field of the selected item with its name from VFXEditor. A dot marks values that differ from the file on disk. |
 | File Browser | The open folder. Other tabs show the node library, history, texture and model assets, and the remaining game files of the folder. |
-| Bottom area | Four editors, described below. |
+| Bottom area | Timeline, Graph Editor, Node Editor, Item Editor. |
 
 ## Editors
 
 ### Timeline
 
-Strips show when each emitter of a timeline starts and ends. Drag a strip to move it, drag its edge to change its length. The curve inside a strip is the number of live particles on each frame; the timeline row shows the total.
+Strips show when each emitter of a timeline starts and ends. Drag a strip to move it, drag its edge to change its length. The curve inside a strip is the number of live particles on each frame. The timeline row shows the total.
 
 Playback controls set the frame, the end frame, speed, loop and the random seed. **Release** lets held particles and emitters play out, as when the game ends an effect.
 
 ### Graph Editor
 
-Edits animation curves: position, rotation, scale, colour and every other curve an item has. Keys can be added, moved, copied and given a type; extrapolation and random settings are on the right.
+Edits animation curves: position, rotation, scale, colour and every other curve an item has. Keys can be added, moved, copied and given a type. Extrapolation and random settings are on the right.
 
 ![Graph Editor](Screenshots/graph-editor.png)
 
 ### Node Editor
 
-Shows how the parts of the effect refer to each other: scheduler → timelines → emitters → particles → textures and models. Drag from one socket to another to connect; if a connection is not possible the editor says why.
+Shows how the parts of the effect refer to each other: scheduler → timelines → emitters → particles → textures and models. Drag from one socket to another to connect. If a connection is not possible, the editor says why.
 
 ![Node Editor](Screenshots/node-editor.png)
 
 ### Item Editor
 
-A focused editor for one particle, emitter or other item: its parameters, texture layers with a combined preview, colour over life, and its curves in one place.
+One particle, emitter or other item on a single page: parameters, texture layers with a combined preview, colour over life and curves.
 
 ![Item Editor](Screenshots/item-editor.png)
 
 ## Preview
 
-The viewport simulates the effect the way the game plays it: emitters, all drawable particle types, texture layers with their blend and UV settings, distortion, palette, soft particles, trails, light effectors, screen blur effectors and camera quake.
+The viewport plays the effect: emitters, particles, texture layers with their blend and UV settings, distortion, palette, soft particles, trails, light effectors, screen blur effectors and camera quake. It follows the reference previewers, not the game itself, so small differences from the game are possible.
 
-- **File → Game → Load Skeleton** shows a game skeleton with its bind points, so effects bound to a point sit where they would on a character.
+- **File → Game → Load Skeleton** shows a game skeleton with its bind points, so an effect bound to a point is drawn at that point.
 - **File → Game → Load Model** shows a game model with its texture as a reference object. **Load Model of This Effect** finds the model and skeleton from the effect's path.
-- **Settings → Preview Rules** lists the rules the preview follows. Each can be switched off to see what it changes.
+- **Settings → Preview Rules** lists the rules the preview follows. Each can be switched off.
 - **Effect Info → Preview Notes** lists what the preview does not draw for the open effect.
 
 Not drawn: Dissolve particles, Black Hole effectors, normal and reflection textures.
@@ -100,3 +100,13 @@ Textures are read from `.atex` and `.tex` (BC1–BC5, BC7 and uncompressed forma
 - **File → Game → Game Catalog** lists common effects, timelines and animations and the files of each monster model.
 - **Find Effects Using a Texture or Model** searches the open folder for effects that mention a name.
 - **Effects of Timeline** lists the effects a `.tmb` or `.pap` starts; **Timelines Using This Effect** does the reverse.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+[MIT](LICENSE). Field names, defaults and file layouts come from [Dalamud-VFXEditor](https://github.com/0ceal0t/Dalamud-VFXEditor); its notice is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+FINAL FANTASY XIV is a registered trademark of SQUARE ENIX CO., LTD. This project is not affiliated with SQUARE ENIX and contains no game assets.

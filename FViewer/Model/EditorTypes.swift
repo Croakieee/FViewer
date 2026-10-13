@@ -73,6 +73,8 @@ struct CurveGroup: Identifiable {
     var channels: [CurveChannel]
     var settings: [PropField]
     var remove: (() -> Void)?
+    var missing: [MissingCurve] = []
+    var unassign: [String: () -> Void] = [:]
 }
 
 struct MissingCurve: Identifiable {

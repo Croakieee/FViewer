@@ -282,6 +282,15 @@ struct CurveEditorView: View {
                             }
                             Spacer(minLength: 0)
                             Text("\(channel.read().count)").font(Theme.small).foregroundStyle(Theme.dim)
+                            if let unassign = group.unassign[channel.id], group.channels.count > 1 {
+                                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 14, height: 14)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        if activeChannel == channel.id { activeChannel = nil }
+                                        unassign()
+                                    }
+                                    .help("Remove this channel from the curve")
+                            }
                         }
                         .padding(.horizontal, 6)
                         .frame(height: 20)
@@ -294,6 +303,19 @@ struct CurveEditorView: View {
                         }
                         .onTapGesture { activeChannel = channel.id }
                         .help("Click: make active · Double-click: show only this channel")
+                    }
+                    ForEach(group.missing) { entry in
+                        HStack(spacing: 5) {
+                            Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 14)
+                            RoundedRectangle(cornerRadius: 2).stroke(Theme.dim, lineWidth: 1).frame(width: 10, height: 10)
+                            Text(entry.title).font(Theme.font).foregroundStyle(Theme.dim).lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 6)
+                        .frame(height: 20)
+                        .contentShape(Rectangle())
+                        .onTapGesture { entry.create() }
+                        .help("Add this channel to the curve")
                     }
                 } else {
                     parameterPicker(nil)
