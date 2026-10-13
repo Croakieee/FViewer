@@ -671,6 +671,10 @@ extension EffectDocument {
                                        tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
                 row.base = base
                 row.densityKey = emitter >= 0 ? "e\(emitter)" : "-"
+                if emitter >= 0, emitter < emitters.count {
+                    let from = Double(emitters[emitter].int("LpSt")), to = Double(emitters[emitter].int("LpEd"))
+                    if to > from, from >= 0 { row.loop = (start + from, start + to) }
+                }
                 row.startField = record.first { $0.tag == "StTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#StTm") }
                 row.endField = record.first { $0.tag == "EdTm" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#EdTm") }
                 row.enabledField = record.first { $0.tag == "bEna" }.flatMap { avfxField($0, cls: "AvfxTimelineItem", id: row.id + "#bEna") }

@@ -167,6 +167,7 @@ struct SequencerRow: Identifiable {
     var endField: PropField?
     var enabledField: PropField?
     var densityKey = "*"
+    var loop: (start: Double, end: Double)? = nil
 }
 
 struct TextureSlot: Identifiable {

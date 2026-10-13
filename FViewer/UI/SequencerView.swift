@@ -4,6 +4,12 @@ struct SequencerView: View {
     @ObservedObject var document: EffectDocument
     @ObservedObject var clock: PlaybackClock
     @AppStorage("timeline.density") private var showDensity = true
+    @AppStorage("timeline.seconds") private var showSeconds = false
+    @State private var locked: Set<String> = []
+
+    private func stamp(_ frame: Double) -> String {
+        showSeconds ? String(format: "%.2f", frame / 30) : "\(Int(frame.rounded()))"
+    }
     @State private var dragMode = 0
     @State private var dragRow: SequencerRow?
     @State private var dragStart: Double = 0
@@ -56,10 +62,44 @@ struct SequencerView: View {
                     .onTapGesture { document.commit(enabled, from: value, to: .bool(value != .bool(true))) }
                     .help("Enabled")
             }
+            if row.depth > 0, let id = row.nodeID {
+                let solo = document.soloPreview && document.selectionID == id
+                Image(systemName: "headphones").font(.system(size: 9)).foregroundStyle(solo ? Theme.changed : Theme.dim)
+                    .frame(width: 16, height: rowHeight).contentShape(Rectangle())
+                    .onTapGesture {
+                        if solo {
+                            document.setSolo(false)
+                        } else {
+                            document.selectionID = id
+                            document.setSolo(true)
+                        }
+                    }
+                    .help("Solo: play only this item")
+                Image(systemName: locked.contains(id) ? "lock.fill" : "lock.open").font(.system(size: 9))
+                    .foregroundStyle(locked.contains(id) ? Theme.text : Theme.dim)
+                    .frame(width: 16, height: rowHeight).contentShape(Rectangle())
+                    .onTapGesture { if locked.contains(id) { locked.remove(id) } else { locked.insert(id) } }
+                    .help("Lock: the strip cannot be moved or resized")
+            }
             if row.depth == 0, let id = row.nodeID, let add = document.node(id + "/Item")?.actions.first(where: { $0.title == "Add Item" }) {
                 Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.text)
                     .frame(width: 16, height: rowHeight).contentShape(Rectangle())
-                    .onTapGesture(perform: add.perform).help("Add an item to this timeline")
+                    .onTapGesture {
+                        let before = Set(document.sequencerRows.map(\.id))
+                        let frame = clock.time.rounded()
+                        add.perform()
+                        if let fresh = document.sequencerRows.first(where: { !before.contains($0.id) && $0.id.hasPrefix(id + "/") }), let start = fresh.startField {
+                            let shift = frame - fresh.start
+                            if shift != 0 {
+                                func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
+                                start.write?(value(start, (start.read().number ?? 0) + shift))
+                                if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, (finish.read().number ?? 0) + shift)) }
+                                document.liveChanged()
+                            }
+                            document.selectionID = fresh.nodeID
+                        }
+                    }
+                    .help("Add an item to this timeline at the playhead")
             }
         }
         .opacity(row.enabledField.map { $0.read() == .bool(true) ? 1 : 0.55 } ?? 1)
@@ -85,7 +125,15 @@ struct SequencerView: View {
             FlowLayout(spacing: 6) {
                 HStack(spacing: 6) {
                     HeaderButton(symbol: "backward.end.fill", help: "Jump to start") { clock.rewind() }
+                    HeaderButton(symbol: "backward.frame.fill", help: "Step one frame back") {
+                        clock.playing = false
+                        clock.time = max(0, (clock.time - 1).rounded())
+                    }
                     HeaderButton(symbol: clock.playing ? "pause.fill" : "play.fill", active: clock.playing, help: "Play / Pause") { clock.playing.toggle() }
+                    HeaderButton(symbol: "forward.frame.fill", help: "Step one frame forward") {
+                        clock.playing = false
+                        clock.time = (clock.time + 1).rounded()
+                    }
                     HeaderButton(symbol: "forward.end.fill", help: "Jump to end") { clock.time = end }
                     HeaderButton(symbol: "repeat", active: clock.loop, help: "Loop playback") { clock.loop.toggle() }
                     SoloButton(document: document)
@@ -97,13 +145,20 @@ struct SequencerView: View {
                     NumberField(label: "Frame", value: clock.time, isInteger: true, onLive: { clock.time = max(0, $0) },
                                 onCommit: { _, next in clock.time = max(0, next) })
                         .frame(width: 100)
+                    NumberField(label: "Start", value: clock.startFrame, isInteger: true, onLive: { clock.startFrame = min(max(0, $0.rounded()), end - 1) },
+                                onCommit: { _, next in clock.startFrame = min(max(0, next.rounded()), end - 1) })
+                        .frame(width: 96)
+                        .help("First frame of playback. Drag the edges of the range on the ruler to set it by hand")
                     NumberField(label: "End", value: end, isInteger: true, onLive: { clock.endFrame = max(1, $0.rounded()) },
                                 onCommit: { _, next in clock.endFrame = max(1, next.rounded()) })
                         .frame(width: 92)
                         .help("Last frame of playback. The timeline scale stays fixed to this range")
-                    HeaderButton(symbol: "arrow.uturn.backward", active: clock.endFrame != nil, help: "Use the effect's own length (\(Int(duration)) frames)") {
+                    HeaderButton(symbol: "arrow.uturn.backward", active: clock.endFrame != nil || clock.startFrame > 0,
+                                 help: "Use the effect's own length (\(Int(duration)) frames)") {
                         clock.endFrame = nil
+                        clock.startFrame = 0
                     }
+                    HeaderButton(symbol: "clock", active: showSeconds, help: "Show seconds instead of frames on the ruler") { showSeconds.toggle() }
                     ChoiceField(choices: [FieldChoice(name: "0.1×", value: 10), FieldChoice(name: "0.25×", value: 25), FieldChoice(name: "0.5×", value: 50),
                                           FieldChoice(name: "1×", value: 100), FieldChoice(name: "2×", value: 200)],
                                 value: Int((clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
@@ -153,7 +208,7 @@ struct SequencerView: View {
                                 line.move(to: CGPoint(x: x(t, width, span), y: rulerHeight))
                                 line.addLine(to: CGPoint(x: x(t, width, span), y: canvasSize.height))
                                 context.stroke(line, with: .color(Color.white.opacity(0.06)), lineWidth: 1)
-                                context.draw(Text("\(Int(t))").font(Theme.small).foregroundStyle(Theme.dim), at: CGPoint(x: x(t, width, span) + 3, y: 9), anchor: .leading)
+                                context.draw(Text(stamp(t)).font(Theme.small).foregroundStyle(Theme.dim), at: CGPoint(x: x(t, width, span) + 3, y: 9), anchor: .leading)
                                 t += step
                             }
                             context.fill(Path(CGRect(x: 0, y: 0, width: width, height: rulerHeight)), with: .color(Color.black.opacity(0.25)))
@@ -194,6 +249,18 @@ struct SequencerView: View {
                                         }
                                     }
                                 }
+                                if let loop = row.loop {
+                                    let from = x(loop.start, width, span), to = x(loop.end, width, span)
+                                    var mark = Path()
+                                    mark.move(to: CGPoint(x: from, y: bar.maxY - 3))
+                                    mark.addLine(to: CGPoint(x: from, y: bar.maxY))
+                                    mark.addLine(to: CGPoint(x: to, y: bar.maxY))
+                                    mark.addLine(to: CGPoint(x: to, y: bar.maxY - 3))
+                                    context.stroke(mark, with: .color(Color(red: 1, green: 0.85, blue: 0.3)), lineWidth: 1.5)
+                                }
+                                if let id = row.nodeID, locked.contains(id) {
+                                    context.fill(shape, with: .color(Color.black.opacity(0.3)))
+                                }
                                 if row.endField != nil && !row.openEnded {
                                     context.fill(Path(CGRect(x: bar.maxX - 4, y: bar.minY + 2, width: 2, height: bar.height - 4)), with: .color(Color.black.opacity(0.35)))
                                 }
@@ -218,7 +285,17 @@ struct SequencerView: View {
                             context.stroke(playhead, with: .color(Theme.playhead), lineWidth: 1.5)
                             let box = CGRect(x: px - 16, y: 1, width: 32, height: rulerHeight - 2)
                             context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(Theme.playhead))
-                            context.draw(Text("\(Int(clock.time.rounded()))").font(Theme.small).foregroundStyle(.white), at: CGPoint(x: px, y: rulerHeight / 2))
+                            if clock.startFrame > 0 {
+                                let startX = x(clock.startFrame, width, span)
+                                var startLine = Path()
+                                startLine.move(to: CGPoint(x: startX, y: 0))
+                                startLine.addLine(to: CGPoint(x: startX, y: canvasSize.height))
+                                context.stroke(startLine, with: .color(Color(red: 1, green: 0.63, blue: 0.16).opacity(0.8)), lineWidth: 1)
+                            }
+                            var range = Path()
+                            range.addRect(CGRect(x: x(clock.startFrame, width, span), y: rulerHeight - 3, width: max(endX - x(clock.startFrame, width, span), 0), height: 3))
+                            context.fill(range, with: .color(Color(red: 1, green: 0.63, blue: 0.16).opacity(0.7)))
+                            context.draw(Text(stamp(clock.time)).font(Theme.small).foregroundStyle(.white), at: CGPoint(x: px, y: rulerHeight / 2))
                         }
                         .background(ScrollMonitor(
                             onScroll: { delta, flags, point in
@@ -243,8 +320,8 @@ struct SequencerView: View {
         }
         .background(GeometryReader { geometry in
             Color.clear
-                .onAppear { labelWidth = min(max(geometry.size.width * 0.16, 140), 300) }
-                .onChange(of: geometry.size.width) { _, width in labelWidth = min(max(width * 0.16, 140), 300) }
+                .onAppear { labelWidth = min(max(geometry.size.width * 0.2, 200), 320) }
+                .onChange(of: geometry.size.width) { _, width in labelWidth = min(max(width * 0.2, 200), 320) }
         })
     }
 
@@ -261,9 +338,18 @@ struct SequencerView: View {
             frozenSpan = liveValue
             liveSpan = liveValue
             let index = Int((drag.startLocation.y - rulerHeight) / rowHeight)
+            if drag.startLocation.y <= rulerHeight {
+                let finish = clock.endFrame ?? max(30, (rows.map(\.end).max() ?? 30).rounded(.up))
+                if abs(drag.startLocation.x - x(finish, width, liveValue)) <= 5 {
+                    dragMode = 6
+                } else if abs(drag.startLocation.x - x(clock.startFrame, width, liveValue)) <= 5 {
+                    dragMode = 5
+                }
+            }
             if drag.startLocation.y > rulerHeight, index >= 0, index < rows.count {
                 let row = rows[index]
                 document.selectionID = row.nodeID
+                if let id = row.nodeID, locked.contains(id) { return }
                 let left = x(row.start, width, liveValue), right = x(row.end, width, liveValue)
                 if drag.startLocation.x >= left - 4, drag.startLocation.x <= right + 4, row.startField != nil || row.endField != nil {
                     dragRow = row
@@ -284,6 +370,12 @@ struct SequencerView: View {
         let span = liveSpan
         if dragMode == 1 {
             clock.time = max(0, time(drag.location.x, width, span).rounded())
+            return
+        }
+        if dragMode == 5 || dragMode == 6 {
+            let frame = max(0, time(drag.location.x, width, span).rounded())
+            let finish = clock.endFrame ?? max(30, (rows.map(\.end).max() ?? 30).rounded(.up))
+            if dragMode == 5 { clock.startFrame = min(frame, finish - 1) } else { clock.endFrame = max(frame, clock.startFrame + 1) }
             return
         }
         guard let row = dragRow, abs(drag.translation.width) > 2 else { return }

@@ -256,6 +256,35 @@ struct ColorField: View {
     }
 }
 
+final class ClickCatcherView: NSView {
+    var onLeft: () -> Void = {}
+    var onRight: () -> Void = {}
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { onRight() } else { onLeft() }
+    }
+
+    override func rightMouseDown(with event: NSEvent) { onRight() }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+struct ClickCatcher: NSViewRepresentable {
+    let onLeft: () -> Void
+    let onRight: () -> Void
+
+    func makeNSView(context: Context) -> ClickCatcherView {
+        let view = ClickCatcherView()
+        view.onLeft = onLeft
+        view.onRight = onRight
+        return view
+    }
+
+    func updateNSView(_ view: ClickCatcherView, context: Context) {
+        view.onLeft = onLeft
+        view.onRight = onRight
+    }
+}
+
 struct UnsetRows: View {
     let items: [MissingCurve]
 

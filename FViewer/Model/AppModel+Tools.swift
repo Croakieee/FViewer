@@ -352,6 +352,23 @@ extension AppModel {
         notice = "Exported \(result.written) texture\(result.written == 1 ? "" : "s") as PNG" + (result.missing.isEmpty ? "" : " · \(result.missing.count) skipped")
     }
 
+    var effectFolder: URL? { document?.url.deletingLastPathComponent() ?? libraryRoot }
+
+    func revealEffectFolder() {
+        if let document {
+            NSWorkspace.shared.activateFileViewerSelecting([document.url])
+        } else if let libraryRoot {
+            NSWorkspace.shared.open(libraryRoot)
+        }
+    }
+
+    func copyEffectFolder() {
+        guard let folder = effectFolder else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(folder.path, forType: .string)
+        notice = "Copied \(folder.path)"
+    }
+
     func openDropped(_ urls: [URL]) -> Bool {
         var handled = false
         for url in urls {

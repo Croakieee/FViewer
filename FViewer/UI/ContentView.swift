@@ -124,8 +124,14 @@ struct TopBar: View {
             }
             Spacer()
             if let root = app.libraryRoot {
-                Image(systemName: "folder").font(.system(size: 10)).foregroundStyle(Theme.dim)
-                Text(root.lastPathComponent).font(Theme.small).foregroundStyle(Theme.dim)
+                HStack(spacing: 4) {
+                    Image(systemName: "folder").font(.system(size: 10)).foregroundStyle(Theme.dim)
+                    Text(root.lastPathComponent).font(Theme.small).foregroundStyle(Theme.dim)
+                }
+                .padding(.horizontal, 4)
+                .frame(height: 20)
+                .overlay(ClickCatcher(onLeft: { app.revealEffectFolder() }, onRight: { app.copyEffectFolder() }))
+                .help("Click: show the folder of the open effect in Finder · Right-click: copy its path")
             }
         }
         .padding(.horizontal, 10)
