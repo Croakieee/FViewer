@@ -381,12 +381,12 @@ struct InspectorView: View {
                 }
             }
             if !missingFields.isEmpty {
-                addMenu("Add Field", missingFields).padding(.horizontal, 14)
+                Panel(title: "Not Set", trailing: "\(missingFields.count)") { UnsetRows(items: missingFields) }
             }
             if !curves.isEmpty || !missing.isEmpty {
-                Panel(title: "Animation", trailing: "\(curves.count)") {
+                Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missing.count)") {
                     ForEach(curves) { group in curveRow(group) }
-                    if !missing.isEmpty { addMenu("Add Curve", missing) }
+                    if !missing.isEmpty { UnsetRows(items: missing) }
                 }
             }
             if !node.children.isEmpty {
@@ -398,26 +398,6 @@ struct InspectorView: View {
                 JSONTextPanel(document: document, node: node, original: text).id(node.id + "#\(document.revision)")
             }
         }
-    }
-
-    private func addMenu(_ title: String, _ items: [MissingCurve]) -> some View {
-        Menu {
-            ForEach(items) { item in Button(item.title) { item.create() } }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "plus").font(.system(size: 9, weight: .bold))
-                Text(title).font(Theme.font)
-                Spacer()
-                Text("\(items.count) available").font(Theme.small).foregroundStyle(Theme.dim)
-            }
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 6)
-            .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
     }
 
     private func curveChanged(_ group: CurveGroup) -> Bool {

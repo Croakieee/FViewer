@@ -256,6 +256,29 @@ struct ColorField: View {
     }
 }
 
+struct UnsetRows: View {
+    let items: [MissingCurve]
+
+    var body: some View {
+        FlowLayout(spacing: 4) {
+            ForEach(items) { item in
+                HStack(spacing: 3) {
+                    Image(systemName: "plus").font(.system(size: 8, weight: .bold))
+                    Text(item.title).font(Theme.small).lineLimit(1)
+                }
+                .foregroundStyle(Theme.dim)
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(RoundedRectangle(cornerRadius: 4).stroke(Theme.dim.opacity(0.45), lineWidth: 1))
+                .contentShape(Rectangle())
+                .onTapGesture { item.create() }
+                .help("Not in the file yet. Click to add it with its default value")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct HelpBadge: View {
     let text: String
     var symbol = "questionmark.circle"

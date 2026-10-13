@@ -404,11 +404,13 @@ private struct ItemPage: View {
                         }
                     }
                     if index == split.count - 1 {
-                        if !missingFields.isEmpty { addMenu("Add Field", missingFields).padding(.horizontal, 14) }
+                        if !missingFields.isEmpty {
+                            Panel(title: "Not Set", trailing: "\(missingFields.count)") { UnsetRows(items: missingFields) }
+                        }
                         if !curves.isEmpty || !missingCurves.isEmpty {
-                            Panel(title: "Animation", trailing: "\(curves.count)") {
+                            Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missingCurves.count)") {
                                 ForEach(curves) { group in curveRow(group) }
-                                if !missingCurves.isEmpty { addMenu("Add Curve", missingCurves) }
+                                if !missingCurves.isEmpty { UnsetRows(items: missingCurves) }
                             }
                         }
                         if !node.children.isEmpty {
@@ -431,26 +433,6 @@ private struct ItemPage: View {
         if case .avfx(let block, _, let record) = node.payload, record == nil, block.tag == "UvSt" {
             Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
         }
-    }
-
-    private func addMenu(_ title: String, _ items: [MissingCurve]) -> some View {
-        Menu {
-            ForEach(items) { item in Button(item.title) { item.create() } }
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "plus").font(.system(size: 9, weight: .bold))
-                Text(title).font(Theme.font)
-                Spacer()
-                Text("\(items.count) available").font(Theme.small).foregroundStyle(Theme.dim)
-            }
-            .foregroundStyle(Theme.text)
-            .padding(.horizontal, 6)
-            .frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
     }
 
     private func curveRow(_ group: CurveGroup) -> some View {
