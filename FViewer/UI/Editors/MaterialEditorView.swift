@@ -539,7 +539,7 @@ struct MaterialEditorView: View {
                     HeaderButton(symbol: "plus.magnifyingglass", help: "Zoom in") { zoomBy(1.2, at: CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)) }
                     HeaderButton(symbol: "minus.magnifyingglass", help: "Zoom out") { zoomBy(1 / 1.2, at: CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2)) }
                     HeaderButton(symbol: "arrow.up.left.and.arrow.down.right", help: "Frame All (Home)") { frameAll(graph) }
-                    Text("\(Int((zoom * 100).rounded()))%").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: 38)
+                    Text("\(Int(safe: (zoom * 100).rounded()))%").font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: 38)
                     HelpBadge(text: "Double-click the canvas: add a node by name\nDrag from an output to an input: connect\nClick an input: disconnect · drag it: move the wire\nDrag a header: move · Shift-click or drag a box: select several\n⌘C ⌘V ⌘D copy, paste, duplicate · Delete removes\nScroll: pan · Pinch or ⌘-scroll: zoom · Home: frame all")
                 }
                 .padding(5)

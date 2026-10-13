@@ -165,7 +165,7 @@ struct ModelSpreadsheet: View {
                             onCommit: { old, next in
                                 func write(_ value: Double) {
                                     guard index * 2 + 1 < block.data.count else { return }
-                                    let v = UInt16(max(0, min(65535, value)))
+                                    let v = UInt16(Int(safe: value, in: 0...65535))
                                     block.data[index * 2] = UInt8(v & 0xff)
                                     block.data[index * 2 + 1] = UInt8(v >> 8)
                                 }

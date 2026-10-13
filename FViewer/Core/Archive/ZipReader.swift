@@ -39,6 +39,7 @@ enum ZipReader {
         if entry.method == 0 { return raw }
         guard entry.method == 8 else { throw AvfxError.malformed("\(entry.path): unsupported compression method \(entry.method)") }
         guard entry.size > 0 else { return [] }
+        guard entry.size <= 1 << 30, entry.size <= max(raw.count, 1) * 2000 else { throw AvfxError.malformed("\(entry.path): declared size is not plausible") }
         var out = [UInt8](repeating: 0, count: entry.size)
         let written = compression_decode_buffer(&out, entry.size, raw, raw.count, nil, COMPRESSION_ZLIB)
         guard written == entry.size else { throw AvfxError.malformed("\(entry.path): could not be decompressed") }

@@ -172,7 +172,7 @@ extension EffectDocument {
                                         },
                                         write: {
                                             guard case .color(let r, let g, let b, _) = $0 else { return }
-                                            value.value = .string(String(format: "#%02x%02x%02x", Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded())))
+                                            value.value = .string(String(format: "#%02x%02x%02x", Int(safe: (r * 255).rounded()), Int(safe: (g * 255).rounded()), Int(safe: (b * 255).rounded())))
                                         }))
             case .string:
                 fields.append(PropField(id: id, label: member.key, tag: member.key, kind: .text, read: { .text(value.string ?? "") },

@@ -72,7 +72,7 @@ final class GeometryBuffers {
 
     init(_ device: MTLDevice, _ g: GeometryData) {
         func buffer<T>(_ a: [T]) -> MTLBuffer {
-            a.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: max(4, $0.count), options: .storageModeShared)! }
+            a.withUnsafeBytes { raw in raw.baseAddress.map { device.makeBuffer(bytes: $0, length: max(4, raw.count), options: .storageModeShared)! } ?? device.makeBuffer(length: 4, options: .storageModeShared)! }
         }
         let n = g.vertexCount
         positions = buffer(g.positions)

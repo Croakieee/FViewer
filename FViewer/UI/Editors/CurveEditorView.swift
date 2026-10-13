@@ -338,7 +338,9 @@ struct CurveEditorView: View {
             let tStep = gridStep(range.t1 - range.t0, target: Double(canvasSize.width) / 70)
             let vStep = gridStep(range.v1 - range.v0, target: Double(canvasSize.height) / 40)
             var t = (range.t0 / tStep).rounded(.down) * tStep
-            while t <= range.t1 {
+            var gridLines = 0
+            while t <= range.t1, gridLines < 400 {
+                gridLines += 1
                 var line = Path()
                 line.move(to: CGPoint(x: x(t), y: top))
                 line.addLine(to: CGPoint(x: x(t), y: canvasSize.height))
@@ -346,7 +348,9 @@ struct CurveEditorView: View {
                 t += tStep
             }
             var v = (range.v0 / vStep).rounded(.down) * vStep
-            while v <= range.v1 {
+            gridLines = 0
+            while v <= range.v1, gridLines < 400 {
+                gridLines += 1
                 if y(v) > top + 6 {
                     var line = Path()
                     line.move(to: CGPoint(x: 0, y: y(v)))

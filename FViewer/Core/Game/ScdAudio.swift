@@ -37,7 +37,7 @@ enum MsAdpcm {
         for index in 2..<s.count {
             let predicted = (s1 * c.0 + s2 * c.1) >> 8
             let difference = s[index] - predicted
-            let step = Int((Double(difference) / Double(delta)).rounded())
+            let step = Int(safe: (Double(difference) / Double(delta)).rounded())
             let nibble = min(7, max(-8, step))
             let made = clamp16(predicted + nibble * delta)
             error += (s[index] - made) * (s[index] - made)
@@ -136,6 +136,7 @@ extension GameFiles {
     static func scdOgg(_ b: [UInt8], _ audio: ScdAudio) -> [UInt8]? {
         guard audio.format == 0x06 else { return nil }
         let at = audio.offset + 0x20 + scdAux(b, audio)
+        guard at >= 0, at + 24 <= b.count else { return nil }
         let mode = Int(b.u16(at)), key = b[at + 2]
         let tableSize = i32(b, at + 16), headerSize = i32(b, at + 20)
         let start = at + 0x20 + tableSize

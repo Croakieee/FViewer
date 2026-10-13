@@ -123,7 +123,7 @@ struct ViewportFooter: View {
     var body: some View {
         HStack(spacing: 12) {
             readout("effect", clock.status.isEmpty ? "—" : clock.status)
-            readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(clock.time.rounded())))
+            readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(safe: clock.time.rounded())))
             if clock.frameMilliseconds > 0 { readout("timing", String(format: "%.1f ms · %.0f fps", clock.frameMilliseconds, clock.framesPerSecond)) }
             Spacer(minLength: 4)
             HeaderButton(symbol: "arrow.counterclockwise", help: "Reset View: the default angle, framed on the whole effect") { reset() }
@@ -471,7 +471,7 @@ struct PlaneButton: View {
                     }
                     row("Seed") {
                         NumberField(label: nil, value: Double(clock.seed), isInteger: true, onLive: { _ in },
-                                    onCommit: { _, v in clock.seed = Int(min(max(v, 1), 999_999)) })
+                                    onCommit: { _, v in clock.seed = Int(safe: v, in: 1...999_999) })
                     }
                     ForEach(document.effectParams, id: \.name) { param in
                         row(param.name) {

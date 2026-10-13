@@ -261,7 +261,30 @@ extension AppModel {
         }
     }
 
+    func confirmDiscardingGameFile() -> Bool {
+        guard let file = gameFile, file.unsaved else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Save changes to \(file.url.lastPathComponent)?"
+        alert.informativeText = "The File Inspector has changes that were not saved as a copy."
+        alert.addButton(withTitle: "Save Copy")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don't Save")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            do {
+                try writeGameFileCopy(file)
+                return true
+            } catch {
+                errorMessage = error.localizedDescription
+                return false
+            }
+        case .alertThirdButtonReturn: return true
+        default: return false
+        }
+    }
+
     func inspectGameFile(_ url: URL) {
+        guard confirmDiscardingGameFile() else { return }
         do {
             gameFile = try GameFileDocument(url: url)
             openGameFileWindow?()
@@ -300,8 +323,10 @@ extension AppModel {
     @discardableResult func writeGameFileCopy(_ file: GameFileDocument) throws -> URL {
         let directory = file.url.deletingLastPathComponent()
         let base = file.url.deletingPathExtension().lastPathComponent
-        let target = freeURL(directory, base, file.url.pathExtension)
+        let target = file.savedCopy ?? freeURL(directory, base, file.url.pathExtension)
         try Data(file.bytes).write(to: target, options: .atomic)
+        file.savedCopy = target
+        file.savedBytes = file.bytes
         return target
     }
 
@@ -608,7 +633,7 @@ extension AppModel {
         let name = document.url.lastPathComponent.lowercased()
         let size = (try? document.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
         var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
-        if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+        if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
         let wanted = [name, base + "." + document.url.pathExtension.lowercased()]
         if let direct = gamePath(forAsset: document.url), direct.hasPrefix("vfx/") { return direct }
         var fallback: String?
@@ -702,7 +727,7 @@ extension AppModel {
     func findTimelines(using document: EffectDocument) {
         if !gameFiles.isEmpty {
             var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
-            if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+            if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
             timelineHitsTitle = "Timelines Using This Effect"
             let needle = Array((base + ".avfx").utf8)
             let urls = gameFiles.filter { ["tmb", "pap"].contains($0.url.pathExtension.lowercased()) }.map(\.url)
@@ -720,7 +745,7 @@ extension AppModel {
         timelineHitsTitle = "Timelines Using This Effect"
         guard let folder = chooseFolder("Folder with .tmb and .pap Files") else { return }
         var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
-        if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+        if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
         let needle = Array((base + ".avfx").utf8)
         notice = "Searching timelines for \(base).avfx…"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in

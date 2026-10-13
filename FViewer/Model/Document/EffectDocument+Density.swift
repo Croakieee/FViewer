@@ -76,7 +76,7 @@ extension EffectDocument {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, self.previewRevision == wanted, self.densityRevision != wanted else { return }
             let span = max(self.sequencerRows.map(\.end).max() ?? 60, self.clock.endFrame ?? 0)
-            guard let job = DensityJob(document: self, frames: min(max(Int(span.rounded(.up)) + 1, 30), 900)) else { return }
+            guard let job = DensityJob(document: self, frames: min(max(Int(safe: span.rounded(.up)) + 1, 30), 900)) else { return }
             self.densityJob = job
             self.runDensity(job, revision: wanted)
         }

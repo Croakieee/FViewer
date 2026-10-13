@@ -166,21 +166,22 @@ enum Gltf {
             let accessor = accessors[index]
             if accessor["sparse"] != nil { throw AvfxError.malformed("Sparse accessors are not supported; re-export without them") }
             let components = ["SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4][accessor["type"]?.string ?? ""] ?? 1
-            let count = Int(accessor["count"]?.number ?? 0)
-            let type = Int(accessor["componentType"]?.number ?? 5126)
+            let count = Int(safe: accessor["count"]?.number ?? 0)
+            let type = Int(safe: accessor["componentType"]?.number ?? 5126)
             let normalized = accessor["normalized"]?.bool ?? false
-            guard let viewIndex = accessor["bufferView"]?.number.map(Int.init), viewIndex < views.count else {
+            guard count >= 0, count <= 4_000_000 else { throw AvfxError.malformed("Accessor \(index) has an invalid count") }
+            guard let viewIndex = accessor["bufferView"]?.number.map({ Int(safe: $0) }), viewIndex >= 0, viewIndex < views.count else {
                 return ([Float](repeating: 0, count: count * components), components)
             }
             let view = views[viewIndex]
-            let bufferIndex = Int(view["buffer"]?.number ?? 0)
-            guard bufferIndex < buffers.count else { throw AvfxError.malformed("Buffer \(bufferIndex) does not exist") }
+            let bufferIndex = Int(safe: view["buffer"]?.number ?? 0)
+            guard bufferIndex >= 0, bufferIndex < buffers.count else { throw AvfxError.malformed("Buffer \(bufferIndex) does not exist") }
             let buffer = buffers[bufferIndex]
             let size = [5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4][type] ?? 4
-            let start = Int(view["byteOffset"]?.number ?? 0) + Int(accessor["byteOffset"]?.number ?? 0)
-            let stride = Int(view["byteStride"]?.number ?? 0)
+            let start = Int(safe: view["byteOffset"]?.number ?? 0) + Int(safe: accessor["byteOffset"]?.number ?? 0)
+            let stride = Int(safe: view["byteStride"]?.number ?? 0)
             let step = stride > 0 ? stride : size * components
-            guard count == 0 || start + (count - 1) * step + size * components <= buffer.count else {
+            guard count == 0 || (start >= 0 && step > 0 && start + (count - 1) * step + size * components <= buffer.count) else {
                 throw AvfxError.malformed("Accessor \(index) reads past the end of its buffer")
             }
             var values: [Float] = []
@@ -212,13 +213,13 @@ enum Gltf {
                     skipped += 1
                     continue
                 }
-                guard let attributes = primitive["attributes"], let positionIndex = attributes["POSITION"]?.number.map(Int.init) else { continue }
+                guard let attributes = primitive["attributes"], let positionIndex = attributes["POSITION"]?.number.map({ Int(safe: $0) }) else { continue }
                 let base = UInt32(mesh.positions.count)
                 let positions = try read(positionIndex).values
                 let count = positions.count / 3
                 for i in 0..<count { mesh.positions.append(SIMD3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])) }
                 func vectors(_ key: String) throws -> (values: [Float], components: Int)? {
-                    guard let index = attributes[key]?.number.map(Int.init) else { return nil }
+                    guard let index = attributes[key]?.number.map({ Int(safe: $0) }) else { return nil }
                     let data = try read(index)
                     return data.values.count / max(data.components, 1) == count ? data : nil
                 }
@@ -259,9 +260,9 @@ enum Gltf {
                         mesh.uvs[set].append(contentsOf: first)
                     }
                 }
-                if Int(primitive["mode"]?.number ?? 4) == 4 {
-                    if let indexAccessor = primitive["indices"]?.number.map(Int.init) {
-                        mesh.indices.append(contentsOf: try read(indexAccessor).values.map { base + UInt32($0) })
+                if Int(safe: primitive["mode"]?.number ?? 4) == 4 {
+                    if let indexAccessor = primitive["indices"]?.number.map({ Int(safe: $0) }) {
+                        mesh.indices.append(contentsOf: try read(indexAccessor).values.map { base + UInt32(Int(safe: $0, in: 0...4_000_000)) })
                     } else {
                         mesh.indices.append(contentsOf: (0..<UInt32(count)).map { base + $0 })
                     }

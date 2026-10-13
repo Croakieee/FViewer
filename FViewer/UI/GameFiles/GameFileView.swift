@@ -59,6 +59,9 @@ final class GameFileDocument: ObservableObject {
     }
 
     var dirty: Bool { bytes != original }
+    var savedBytes: [UInt8]?
+    var savedCopy: URL?
+    var unsaved: Bool { dirty && bytes != savedBytes }
     var tmbBlocks: [TmbBlock] { GameFiles.tmbBlocks(bytes) }
 
     func setInt(_ at: Int, _ value: Int) { GameFiles.put32(&bytes, at, UInt32(bitPattern: Int32(truncatingIfNeeded: value))) }
@@ -301,7 +304,10 @@ private struct TmbView: View {
                                 row("Name") {
                                     TextValueField(value: animation.name) { text in
                                         let raw = Array(text.utf8.prefix(31))
-                                        for slot in 0..<32 { file.bytes[at + slot] = slot < raw.count ? raw[slot] : 0 }
+                                        var edited = file.bytes
+                    guard at >= 0, at + 32 <= edited.count else { return }
+                    for slot in 0..<32 { edited[at + slot] = slot < raw.count ? raw[slot] : 0 }
+                    file.bytes = edited
                                     }
                                     .frame(width: 260)
                                 }
@@ -797,7 +803,10 @@ private struct RecordsView: View {
         case .text(let length, let fill):
             TextValueField(value: GameFiles.string(b, field.at, max: length)) { text in
                 let raw = Array(text.utf8.prefix(length - 1))
-                for slot in 0..<length { file.bytes[field.at + slot] = slot < raw.count ? raw[slot] : slot == raw.count ? 0 : fill }
+                var edited = file.bytes
+                    guard field.at >= 0, field.at + length <= edited.count else { return }
+                    for slot in 0..<length { edited[field.at + slot] = slot < raw.count ? raw[slot] : slot == raw.count ? 0 : fill }
+                    file.bytes = edited
             }
             .frame(width: 260)
         case .float:
@@ -811,11 +820,11 @@ private struct RecordsView: View {
                 number(field.at + slot * 4, Double(GameFiles.f32(b, field.at + slot * 4)) * 180 / .pi, suffix: "°") { putFloat(field.at + slot * 4, $0 * .pi / 180) }
             }
         case .short:
-            number(field.at, Double(GameFiles.i16(b, field.at)), integer: true) { GameFiles.put16(&file.bytes, field.at, Int($0)) }
+            number(field.at, Double(GameFiles.i16(b, field.at)), integer: true) { GameFiles.put16(&file.bytes, field.at, Int(safe: $0, in: -32768...65535)) }
         case .int:
-            number(field.at, Double(b.u32(field.at)), integer: true, width: 130) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, min($0, 4_294_967_295)))) }
+            number(field.at, Double(b.u32(field.at)), integer: true, width: 130) { GameFiles.put32(&file.bytes, field.at, UInt32(Int(safe: $0, in: 0...4_294_967_295))) }
         case .byte:
-            number(field.at, Double(b[field.at]), integer: true) { file.bytes[field.at] = UInt8(max(0, min($0, 255))) }
+            number(field.at, Double(b[field.at]), integer: true) { file.bytes[field.at] = UInt8(safe: $0) }
         case .double:
             number(field.at, Double(bitPattern: UInt64(b.u32(field.at)) | UInt64(b.u32(field.at + 4)) << 32)) { putDouble(field.at, $0) }
         case .doubles(let count):
@@ -829,13 +838,19 @@ private struct RecordsView: View {
         case .chars(let length):
             TextValueField(value: String(decoding: b[field.at..<(field.at + length)].prefix { $0 != 0 }, as: UTF8.self)) { text in
                 let raw = Array(text.utf8.prefix(length))
-                for slot in 0..<length { file.bytes[field.at + slot] = slot < raw.count ? raw[slot] : 0x20 }
+                var edited = file.bytes
+                    guard field.at >= 0, field.at + length <= edited.count else { return }
+                    for slot in 0..<length { edited[field.at + slot] = slot < raw.count ? raw[slot] : 0x20 }
+                    file.bytes = edited
             }
         case .half:
             number(field.at, Double(GameFiles.half(b.u16(field.at)))) { value in
                 let bits = GameFiles.halfBits(Float(value))
-                file.bytes[field.at] = UInt8(bits & 0xFF)
-                file.bytes[field.at + 1] = UInt8(bits >> 8)
+                var edited = file.bytes
+                guard field.at >= 0, field.at + 1 < edited.count else { return }
+                edited[field.at] = UInt8(bits & 0xFF)
+                edited[field.at + 1] = UInt8(bits >> 8)
+                file.bytes = edited
             }
         case .sparse(let pairs):
             ChoiceField(choices: pairs.map { FieldChoice(name: $0.1, value: $0.0) }, value: Int(b.u32(field.at))) { GameFiles.put32(&file.bytes, field.at, UInt32(max(0, $0))) }
@@ -944,8 +959,11 @@ private struct MtrlPanels: View {
         return ColorField(color: value, alpha: false, onLive: { _ in }, onCommit: { _, next in
             for axis in 0..<3 {
                 let bits = GameFiles.halfBits(Float(next[axis]))
-                file.bytes[at + axis * 2] = UInt8(bits & 0xFF)
-                file.bytes[at + axis * 2 + 1] = UInt8(bits >> 8)
+                var edited = file.bytes
+                guard at + axis * 2 >= 0, at + axis * 2 + 1 < edited.count else { return }
+                edited[at + axis * 2] = UInt8(bits & 0xFF)
+                edited[at + axis * 2 + 1] = UInt8(bits >> 8)
+                file.bytes = edited
             }
         })
         .frame(width: 150)
@@ -1077,7 +1095,7 @@ private struct MtrlPanels: View {
                         label(hex(at + 4), 80)
                         Text("Texture").font(Theme.font).foregroundStyle(Theme.dim)
                         NumberField(label: nil, value: Double(file.bytes[at + 8]), isInteger: true, onLive: { _ in },
-                                    onCommit: { _, v in file.bytes[at + 8] = UInt8(max(0, min(v, 255))) }).frame(width: 60)
+                                    onCommit: { _, v in file.bytes[at + 8] = UInt8(safe: v) }).frame(width: 60)
                         Spacer(minLength: 0)
                         HeaderButton(symbol: "trash", help: "Remove this sampler") { change { $0.samplers.remove(at: layout.samplers.firstIndex(of: at) ?? 0) } }
                     }

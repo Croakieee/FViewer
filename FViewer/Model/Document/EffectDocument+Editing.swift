@@ -46,6 +46,17 @@ extension EffectDocument {
     ]
 
     func remapReferences(_ root: AvfxBlock, tag: String, removed: Int) {
+        let prefix = "avfx/" + tag + "/"
+        var renamed: [String: String] = [:]
+        for (key, name) in names {
+            guard key.hasPrefix(prefix) else { renamed[key] = name; continue }
+            let rest = key.dropFirst(prefix.count)
+            let digits = rest.prefix { $0.isNumber }
+            guard let index = Int(digits) else { renamed[key] = name; continue }
+            if index == removed { continue }
+            renamed[index > removed ? prefix + String(index - 1) + rest.dropFirst(digits.count) : key] = name
+        }
+        replaceNames(renamed)
         for reference in EffectDocument.referenceTable[tag] ?? [] {
             for owner in root.childrenNamed(reference.owner) {
                 if let list = reference.list {
@@ -61,7 +72,7 @@ extension EffectDocument {
         guard tag == "Tex" || tag == "Modl" else { return }
         for particle in root.childrenNamed("Ptcl") {
             let lists = tag == "Tex" ? [particle.child("TC1")?.child("TLst")] : [particle.child("Data")?.child("MdNo")]
-            for list in lists.compactMap({ $0 }) where list.data.count < 4 || tag == "Tex" {
+            for list in lists.compactMap({ $0 }) {
                 list.data = list.data.map { $0 == 255 ? 255 : Int($0) == removed ? 255 : Int($0) > removed ? $0 - 1 : $0 }
             }
         }

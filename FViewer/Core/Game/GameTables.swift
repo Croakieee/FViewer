@@ -157,10 +157,10 @@ extension GameFiles {
         var exponent = Int(floor(log2(magnitude)))
         if exponent > 15 { return sign | 0x7BFF }
         if exponent < -14 {
-            let mantissa = Int((magnitude / powf(2, -14) * 1024).rounded())
+            let mantissa = Int(safe: (magnitude / powf(2, -14) * 1024).rounded())
             return sign | UInt16(min(mantissa, 1023))
         }
-        var mantissa = Int(((magnitude / powf(2, Float(exponent)) - 1) * 1024).rounded())
+        var mantissa = Int(safe: ((magnitude / powf(2, Float(exponent)) - 1) * 1024).rounded())
         if mantissa == 1024 {
             mantissa = 0
             exponent += 1

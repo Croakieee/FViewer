@@ -101,6 +101,7 @@ final class JSONNode: Identifiable {
     }
 
     static func format(_ n: Double) -> String {
+        guard n.isFinite else { return "0" }
         if n.isFinite, n == n.rounded(), abs(n) < 1e15 { return String(Int64(n)) }
         var s = String(n)
         if s.hasSuffix(".0") { s.removeLast(2) }
@@ -136,6 +137,7 @@ enum JSONParseError: LocalizedError {
 struct JSONParser {
     private let s: [UInt8]
     private var p = 0
+    private var depth = 0
 
     static func parse(_ data: Data) throws -> JSONNode {
         var parser = JSONParser(s: [UInt8](data))
@@ -167,6 +169,9 @@ struct JSONParser {
     }
 
     private mutating func value() throws -> JSONNode {
+        depth += 1
+        defer { depth -= 1 }
+        guard depth <= 128 else { throw JSONParseError.syntax("nested deeper than 128 levels", p) }
         skipSpace()
         guard p < s.count else { throw JSONParseError.syntax("unexpected end of file", p) }
         switch s[p] {
@@ -205,7 +210,7 @@ struct JSONParser {
             if literal("null") { return JSONNode(.null) }
             let start = p
             while p < s.count, "+-0123456789.eE".utf8.contains(s[p]) { p += 1 }
-            guard p > start, let n = Double(String(decoding: s[start..<p], as: UTF8.self)) else {
+            guard p > start, let n = Double(String(decoding: s[start..<p], as: UTF8.self)), n.isFinite else {
                 throw JSONParseError.syntax("invalid value", start)
             }
             return JSONNode(.number(n))
@@ -226,10 +231,16 @@ struct JSONParser {
                 case UInt8(ascii: "b"): bytes.append(0x08)
                 case UInt8(ascii: "f"): bytes.append(0x0c)
                 case UInt8(ascii: "u"):
-                    guard p + 4 < s.count, let code = UInt32(String(decoding: s[p + 1...p + 4], as: UTF8.self), radix: 16),
-                          let scalar = UnicodeScalar(code) else { throw JSONParseError.syntax("invalid \\u escape", p) }
-                    bytes.append(contentsOf: Array(String(Character(scalar)).utf8))
+                    guard p + 4 < s.count, var code = UInt32(String(decoding: s[p + 1...p + 4], as: UTF8.self), radix: 16) else {
+                        throw JSONParseError.syntax("invalid \\u escape", p)
+                    }
                     p += 4
+                    if code >= 0xD800, code < 0xDC00, p + 6 < s.count, s[p + 1] == UInt8(ascii: "\\"), s[p + 2] == UInt8(ascii: "u"),
+                       let low = UInt32(String(decoding: s[p + 3...p + 6], as: UTF8.self), radix: 16), low >= 0xDC00, low < 0xE000 {
+                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00)
+                        p += 6
+                    }
+                    bytes.append(contentsOf: Array(String(Character(UnicodeScalar(code) ?? "\u{FFFD}")).utf8))
                 default: bytes.append(s[p])
                 }
             } else {

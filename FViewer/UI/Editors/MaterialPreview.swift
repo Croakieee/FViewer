@@ -42,7 +42,7 @@ final class MaterialPixels {
         return { name, uv in
             guard let texture = loaded[name] else { return SIMD4(repeating: 1) }
             let u = uv.x - uv.x.rounded(.down), v = uv.y - uv.y.rounded(.down)
-            let x = min(Int(u * Float(texture.width)), texture.width - 1), y = min(Int(v * Float(texture.height)), texture.height - 1)
+            let x = Int(safe: u * Float(texture.width), in: 0...texture.width - 1), y = Int(safe: v * Float(texture.height), in: 0...texture.height - 1)
             let o = (y * texture.width + x) * 4
             let a = Float(texture.data[o + 3]) / 255
             guard a > 0 else { return SIMD4(0, 0, 0, 0) }
@@ -94,10 +94,10 @@ final class MaterialPixels {
                 if pin == "normal" { value = SIMD4(value.x * 0.5 + 0.5, value.y * 0.5 + 0.5, value.z * 0.5 + 0.5, 1) }
                 let alpha = showsAlpha ? min(max(value.w, 0), 1) : 1
                 let o = (y * side + x) * 4
-                pixels[o] = UInt8(min(max(value.x, 0), 1) * alpha * 255)
-                pixels[o + 1] = UInt8(min(max(value.y, 0), 1) * alpha * 255)
-                pixels[o + 2] = UInt8(min(max(value.z, 0), 1) * alpha * 255)
-                pixels[o + 3] = UInt8(alpha * 255)
+                pixels[o] = UInt8(safe: min(max(value.x, 0), 1) * alpha * 255)
+                pixels[o + 1] = UInt8(safe: min(max(value.y, 0), 1) * alpha * 255)
+                pixels[o + 2] = UInt8(safe: min(max(value.z, 0), 1) * alpha * 255)
+                pixels[o + 3] = UInt8(safe: alpha * 255)
             }
         }
         return MaterialPixels.makeImage(pixels, side, side)

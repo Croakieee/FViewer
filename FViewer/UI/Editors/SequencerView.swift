@@ -8,7 +8,7 @@ struct SequencerView: View {
     @State private var locked: Set<String> = []
 
     private func stamp(_ frame: Double) -> String {
-        showSeconds ? String(format: "%.2f", frame / 30) : "\(Int(frame.rounded()))"
+        showSeconds ? String(format: "%.2f", frame / 30) : "\(Int(safe: frame.rounded()))"
     }
     @State private var dragMode = 0
     @State private var dragRow: SequencerRow?
@@ -210,14 +210,14 @@ struct SequencerView: View {
                         .frame(width: 92)
                         .help("Last frame of playback. The timeline scale stays fixed to this range")
                     HeaderButton(symbol: "arrow.uturn.backward", active: clock.endFrame != nil || clock.startFrame > 0,
-                                 help: "Use the effect's own length (\(Int(duration)) frames)") {
+                                 help: "Use the effect's own length (\(Int(safe: duration)) frames)") {
                         clock.endFrame = nil
                         clock.startFrame = 0
                     }
                     HeaderButton(symbol: "clock", active: showSeconds, help: "Show seconds instead of frames on the ruler") { showSeconds.toggle() }
                     ChoiceField(choices: [FieldChoice(name: "0.1×", value: 10), FieldChoice(name: "0.25×", value: 25), FieldChoice(name: "0.5×", value: 50),
                                           FieldChoice(name: "1×", value: 100), FieldChoice(name: "2×", value: 200)],
-                                value: Int((clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
+                                value: Int(safe: (clock.speed * 100).rounded())) { clock.speed = Double($0) / 100 }
                         .frame(width: 64)
                         .help("Playback speed")
                     NumberField(label: "Seed", value: Double(clock.seed), isInteger: true, onLive: { _ in },
@@ -260,7 +260,8 @@ struct SequencerView: View {
                     GeometryReader { geometry in
                         Canvas { context, canvasSize in
                             let width = canvasSize.width
-                            let step: Double = span > 400 ? 50 : span > 160 ? 20 : span > 60 ? 10 : 5
+                            let base: Double = span > 400 ? 50 : span > 160 ? 20 : span > 60 ? 10 : 5
+                            let step = max(base, (span / 200 / 50).rounded(.up) * 50)
                             var t = 0.0
                             while t <= span {
                                 var line = Path()
@@ -289,7 +290,7 @@ struct SequencerView: View {
                                 }
                                 if showDensity, let values = document.density[row.densityKey], let peak = densityPeak[row.densityKey], peak > 0 {
                                     let area = row.depth == 0 ? CGRect(x: bar.minX, y: top + 2, width: bar.width, height: rowHeight - 4) : bar.insetBy(dx: 0, dy: 1)
-                                    let first = max(0, Int(row.start.rounded(.down))), last = min(values.count - 1, Int(row.end.rounded(.up)))
+                                    let first = max(0, Int(safe: row.start.rounded(.down))), last = min(values.count - 1, Int(safe: row.end.rounded(.up)))
                                     if last > first {
                                         var fill = Path()
                                         var line = Path()

@@ -200,7 +200,11 @@ enum GeometryBuilder {
                   color: Vec4(unit(16), unit(17), unit(18), unit(19)), uv: SIMD2(half(20), half(22)), uv2: SIMD2(half(24), half(26)),
                   uv3: SIMD2(half(28), half(30)), uv4: SIMD2(half(32), half(34)))
         }
-        for o in stride(from: 0, to: idx.count - 1, by: 2) { g.indices.append(UInt32(idx.u16(o))) }
+        let total = UInt16(min(g.vertexCount, 65535))
+        for o in stride(from: 0, to: idx.count - 5, by: 6) {
+            let a = idx.u16(o), b = idx.u16(o + 2), c = idx.u16(o + 4)
+            if a < total, b < total, c < total { g.indices.append(contentsOf: [UInt32(a), UInt32(b), UInt32(c)]) }
+        }
         return g
     }
 

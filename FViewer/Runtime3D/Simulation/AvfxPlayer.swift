@@ -83,7 +83,7 @@ final class AvfxPlayer {
         if simulation.clipLog.count != loggedClips {
             loggedClips = simulation.clipLog.count
             let names = ["KILL": "Kill", "REST": "Reset", "END ": "End", "FADI": "Fade In", "ULLP": "Unlock Loop Point", "TRG ": "Trigger", "RTRG": "Random Trigger"]
-            let lines = simulation.clipLog.map { "Frame \(Int($0.time.rounded())): \(names[$0.type] ?? $0.type.trimmingCharacters(in: .whitespaces))" }
+            let lines = simulation.clipLog.map { "Frame \(Int(safe: $0.time.rounded())): \(names[$0.type] ?? $0.type.trimmingCharacters(in: .whitespaces))" }
             DispatchQueue.main.async { if clock.clipLog != lines { clock.clipLog = lines } }
         }
         if statusTick % 12 == 0 {

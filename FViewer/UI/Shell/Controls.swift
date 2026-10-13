@@ -35,7 +35,7 @@ struct NumberField: View {
     @FocusState private var focused: Bool
 
     private var formatted: String {
-        if isInteger { return String(Int(value.rounded())) }
+        if isInteger { return String(Int(safe: value.rounded())) }
         let digits = self.digits ?? (abs(value) >= 100 ? 2 : abs(value) >= 1 ? 3 : 4)
         return String(format: "%.\(digits)f", value)
     }
@@ -123,8 +123,8 @@ struct NumberField: View {
     private func finishEditing() {
         editing = false
         let cleaned = text.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
-        guard let parsed = Double(cleaned) else { return }
-        let next = isInteger ? parsed.rounded() : parsed
+        guard let parsed = Double(cleaned), parsed.isFinite else { return }
+        let next = isInteger ? min(max(parsed.rounded(), -2_000_000_000), 2_000_000_000) : min(max(parsed, -1e9), 1e9)
         if next != value { onCommit(value, next) }
     }
 }
@@ -238,8 +238,8 @@ struct ColorField: View {
     }
 
     private var hex: String {
-        String(format: "#%02X%02X%02X", Int((min(max(color.x, 0), 1) * 255).rounded()), Int((min(max(color.y, 0), 1) * 255).rounded()),
-               Int((min(max(color.z, 0), 1) * 255).rounded()))
+        String(format: "#%02X%02X%02X", Int(safe: (min(max(color.x, 0), 1) * 255).rounded()), Int(safe: (min(max(color.y, 0), 1) * 255).rounded()),
+               Int(safe: (min(max(color.z, 0), 1) * 255).rounded()))
     }
 
     var body: some View {
@@ -684,7 +684,7 @@ struct RecipeRows: View {
     private func value(_ field: PropField) -> Int {
         switch field.read() {
         case .bool(let on): return on ? 1 : 0
-        default: return Int(field.read().number.rounded())
+        default: return Int(safe: field.read().number.rounded())
         }
     }
 
@@ -692,7 +692,7 @@ struct RecipeRows: View {
         values.allSatisfy { entry in
             guard let field = fields.first(where: { $0.tag == entry.0 && $0.write != nil }) else { return false }
             if case .bool(let on) = field.read() { return (on ? 1 : 0) == entry.1 }
-            return Int(field.read().number.rounded()) == entry.1
+            return Int(safe: field.read().number.rounded()) == entry.1
         }
     }
 

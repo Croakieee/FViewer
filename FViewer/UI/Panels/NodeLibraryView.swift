@@ -470,7 +470,7 @@ struct SettingsView: View {
         Panel(title: "General") {
             row("Autosave every") {
                 NumberField(label: nil, value: Double(autosave), isInteger: true, onLive: { _ in }, onCommit: { _, next in
-                    autosave = Int(min(max(next, 1), 120))
+                    autosave = Int(safe: next, in: 1...120)
                     app.startAutosave()
                 })
                 .frame(width: 80)

@@ -77,19 +77,29 @@ func meshGeometry(_ name: String, _ model: ModelData, _ unit: Double) -> Geometr
         positions[i] = Float(p[i] * unit)
         positions[i + 1] = Float(-p[i + 1] * unit)
     }
-    let channel = { (c: Int) -> [Float] in (c < model.uvs.count ? model.uvs[c] : model.uvs[0]).map { Float($0 + 0.5) } }
+    let channel = { (c: Int) -> [Float] in
+        var out = (c < model.uvs.count ? model.uvs[c] : model.uvs.first ?? []).map { Float($0 + 0.5) }
+        if out.count < n * 2 { out += [Float](repeating: 0.5, count: n * 2 - out.count) }
+        return out
+    }
     var color = [Float](repeating: 1, count: n * 4)
+    let colored = (model.color?.count ?? 0) >= n * 3, faded = (model.alpha?.count ?? 0) >= n
     for i in 0..<n {
-        if let rgb = model.color {
+        if colored, let rgb = model.color {
             color[i * 4] = Float(rgb[i * 3])
             color[i * 4 + 1] = Float(rgb[i * 3 + 1])
             color[i * 4 + 2] = Float(rgb[i * 3 + 2])
         }
-        if let a = model.alpha { color[i * 4 + 3] = Float(a[i]) }
+        if faded, let a = model.alpha { color[i * 4 + 3] = Float(a[i]) }
     }
-    let z = model.z.map { $0.map { Float($0 * unit) } } ?? [Float](repeating: 0, count: n)
+    var z = model.z.map { $0.map { Float($0 * unit) } } ?? [Float](repeating: 0, count: n)
+    if z.count < n { z += [Float](repeating: 0, count: n - z.count) }
+    var indices: [UInt32] = []
+    for t in stride(from: 0, to: model.indices.count - 2, by: 3) where model.indices[t] < n && model.indices[t + 1] < n && model.indices[t + 2] < n {
+        indices.append(contentsOf: model.indices[t...t + 2])
+    }
     let g = GeometryData(
-        positions: positions, uvs: channel(0), indices: model.indices,
+        positions: positions, uvs: channel(0), indices: indices,
         extra: ExtraAttributes(uv2: channel(1), uv3: channel(2), uv4: channel(3), color: color, z: z))
     meshes[key] = g
     return g
@@ -105,7 +115,7 @@ final class RingGeometry {
     private var shape = ""
 
     init(segments: Int, rows: Int) {
-        let n = max(1, segments), m = max(1, rows)
+        let n = min(max(1, segments), 512), m = min(max(1, rows), 64)
         var uvs = [Float](repeating: 0, count: (n + 1) * (m + 1) * 2)
         var indices: [UInt32] = []
         for i in 0...n {

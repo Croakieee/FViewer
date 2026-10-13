@@ -25,6 +25,12 @@ struct ModGroup {
 }
 
 enum PenumbraExport {
+    static func folderName(_ name: String) -> String {
+        let cleaned = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: "\\", with: "-").replacingOccurrences(of: "..", with: "-")
+            .trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? "option" : cleaned
+    }
+
     static func normalized(_ gamePath: String) -> String {
         gamePath.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\\", with: "/").lowercased()
     }
@@ -39,7 +45,7 @@ enum PenumbraExport {
 
     static func guessEffectPath(_ document: EffectDocument) -> String {
         var name = document.url.deletingPathExtension().lastPathComponent
-        if document.isEditedCopy { name.removeLast(EffectDocument.editSuffix.count) }
+        if document.isEditedCopy, name.hasSuffix(EffectDocument.editSuffix) { name.removeLast(EffectDocument.editSuffix.count) }
         let file = name + "." + document.url.pathExtension
         for slot in document.textureSlots {
             let parts = slot.path.lowercased().split(separator: "/").map(String.init)
@@ -77,7 +83,7 @@ enum PenumbraExport {
                     JSONMember(key: "Description", node: text("")),
                     JSONMember(key: "Priority", node: JSONNode(.number(0))),
                     JSONMember(key: "Layout", node: JSONNode(.array([]))),
-                ] + redirects(index + 1, folder: "\(group.name)/\(name)".lowercased())))
+                ] + redirects(index + 1, folder: "\(PenumbraExport.folderName(group.name))/\(PenumbraExport.folderName(name))".lowercased())))
             }
             groups.append(JSONNode(.object([
                 JSONMember(key: "Id", node: text(UUID().uuidString.lowercased())),

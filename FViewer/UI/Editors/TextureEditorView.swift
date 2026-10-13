@@ -82,10 +82,10 @@ final class TextureEditorModel: ObservableObject {
         return CGFloat(x) >= rect.minX && CGFloat(x) < rect.maxX && CGFloat(y) >= rect.minY && CGFloat(y) < rect.maxY
     }
 
-    func stamp(at point: CGPoint, erase: Bool) {
+    private func stamp(at point: CGPoint, erase: Bool, into pixels: inout [UInt8]) {
         let radius = max(size / 2, 0.5)
-        let x0 = Int((Double(point.x) - radius).rounded(.down)), x1 = Int((Double(point.x) + radius).rounded(.up))
-        let y0 = Int((Double(point.y) - radius).rounded(.down)), y1 = Int((Double(point.y) + radius).rounded(.up))
+        let x0 = Int(safe: (Double(point.x) - radius).rounded(.down)), x1 = Int(safe: (Double(point.x) + radius).rounded(.up))
+        let y0 = Int(safe: (Double(point.y) - radius).rounded(.down)), y1 = Int(safe: (Double(point.y) + radius).rounded(.up))
         let rgb = [color.x, color.y, color.z].map { $0 * 255 }
         for y in y0...y1 {
             for x in x0...x1 where allowed(x, y) {
@@ -96,13 +96,13 @@ final class TextureEditorModel: ObservableObject {
                 let strength = falloff * opacity
                 let at = (y * image.width + x) * 4
                 if erase {
-                    if channels[3] { image.rgba[at + 3] = UInt8(max(0, Double(image.rgba[at + 3]) * (1 - strength))) }
+                    if channels[3] { pixels[at + 3] = UInt8(max(0, Double(pixels[at + 3]) * (1 - strength))) }
                 } else {
                     for k in 0..<3 where channels[k] {
-                        image.rgba[at + k] = UInt8(max(0, min(255, Double(image.rgba[at + k]) * (1 - strength) + rgb[k] * strength)))
+                        pixels[at + k] = UInt8(max(0, min(255, Double(pixels[at + k]) * (1 - strength) + rgb[k] * strength)))
                     }
                     if channels[3] {
-                        image.rgba[at + 3] = UInt8(max(0, min(255, Double(image.rgba[at + 3]) * (1 - strength) + color.w * 255 * strength)))
+                        pixels[at + 3] = UInt8(max(0, min(255, Double(pixels[at + 3]) * (1 - strength) + color.w * 255 * strength)))
                     }
                 }
             }
@@ -111,11 +111,13 @@ final class TextureEditorModel: ObservableObject {
 
     func stroke(from a: CGPoint, to b: CGPoint, erase: Bool) {
         let distance = hypot(b.x - a.x, b.y - a.y)
-        let steps = max(1, Int(distance / CGFloat(max(size / 4, 0.5))))
+        let steps = Int(safe: distance / CGFloat(max(size / 4, 0.5)), in: 1...20000)
+        var pixels = image.rgba
         for i in 0...steps {
             let t = CGFloat(i) / CGFloat(steps)
-            stamp(at: CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t), erase: erase)
+            stamp(at: CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t), erase: erase, into: &pixels)
         }
+        image.rgba = pixels
         revision += 1
     }
 
@@ -127,31 +129,45 @@ final class TextureEditorModel: ObservableObject {
     }
 
     func fill(at point: CGPoint) {
-        let sx = Int(point.x), sy = Int(point.y)
+        let sx = Int(safe: point.x), sy = Int(safe: point.y)
         guard allowed(sx, sy) else { return }
         checkpoint()
         let width = image.width, height = image.height
-        let start = (sy * width + sx) * 4
-        let target = [Int(image.rgba[start]), Int(image.rgba[start + 1]), Int(image.rgba[start + 2]), Int(image.rgba[start + 3])]
-        let paint = [color.x, color.y, color.z, color.w].map { UInt8(max(0, min(255, ($0 * 255).rounded()))) }
-        var visited = [Bool](repeating: false, count: width * height)
-        var stack = [(sx, sy)]
-        let limit = Int(tolerance)
-        while let (x, y) = stack.popLast() {
-            guard x >= 0, y >= 0, x < width, y < height, !visited[y * width + x], allowed(x, y) else { continue }
-            let at = (y * width + x) * 4
-            var close = true
-            for k in 0..<4 where abs(Int(image.rgba[at + k]) - target[k]) > limit { close = false }
-            guard close else { continue }
-            visited[y * width + x] = true
-            for k in 0..<4 where channels[k] {
-                image.rgba[at + k] = UInt8(Double(image.rgba[at + k]) * (1 - opacity) + Double(paint[k]) * opacity)
-            }
-            stack.append((x + 1, y))
-            stack.append((x - 1, y))
-            stack.append((x, y + 1))
-            stack.append((x, y - 1))
+        var pixels = image.rgba
+        guard pixels.count >= width * height * 4 else { return }
+        var x0 = 0, y0 = 0, x1 = width, y1 = height
+        if let rect = selection {
+            x0 = max(0, Int(safe: rect.minX.rounded(.up)))
+            y0 = max(0, Int(safe: rect.minY.rounded(.up)))
+            x1 = min(width, Int(safe: rect.maxX.rounded(.up)))
+            y1 = min(height, Int(safe: rect.maxY.rounded(.up)))
         }
+        let start = (sy * width + sx) * 4
+        let target = [Int(pixels[start]), Int(pixels[start + 1]), Int(pixels[start + 2]), Int(pixels[start + 3])]
+        let paint = [color.x, color.y, color.z, color.w].map { Double(UInt8(safe: ($0 * 255).rounded())) }
+        let limit = Int(safe: tolerance)
+        let mask = channels
+        let keep = 1 - opacity, mix = opacity
+        var visited = [Bool](repeating: false, count: width * height)
+        var stack = [sy * width + sx]
+        pixels.withUnsafeMutableBufferPointer { buffer in
+            visited.withUnsafeMutableBufferPointer { seen in
+                while let cell = stack.popLast() {
+                    if seen[cell] { continue }
+                    let at = cell * 4
+                    if abs(Int(buffer[at]) - target[0]) > limit || abs(Int(buffer[at + 1]) - target[1]) > limit
+                        || abs(Int(buffer[at + 2]) - target[2]) > limit || abs(Int(buffer[at + 3]) - target[3]) > limit { continue }
+                    seen[cell] = true
+                    for k in 0..<4 where mask[k] { buffer[at + k] = UInt8(safe: Double(buffer[at + k]) * keep + paint[k] * mix) }
+                    let x = cell % width, y = cell / width
+                    if x + 1 < x1, !seen[cell + 1] { stack.append(cell + 1) }
+                    if x - 1 >= x0, !seen[cell - 1] { stack.append(cell - 1) }
+                    if y + 1 < y1, !seen[cell + width] { stack.append(cell + width) }
+                    if y - 1 >= y0, !seen[cell - width] { stack.append(cell - width) }
+                }
+            }
+        }
+        image.rgba = pixels
         revision += 1
     }
 
@@ -356,7 +372,7 @@ struct TextureEditorView: View {
             Button("Scale to 200%") { model.apply("Scale") { $0.resized(width: min($0.width * 2, 8192), height: min($0.height * 2, 8192)) } }
             Button("Scale to Power of Two") {
                 model.apply("Scale") { image in
-                    func nearest(_ value: Int) -> Int { max(1, 1 << Int((log2(Double(max(value, 1)))).rounded())) }
+                    func nearest(_ value: Int) -> Int { max(1, 1 << Int(safe: (log2(Double(max(value, 1)))).rounded())) }
                     return image.resized(width: nearest(image.width), height: nearest(image.height))
                 }
             }
@@ -432,7 +448,7 @@ struct TextureEditorView: View {
     }
 
     private func pixel(at point: CGPoint) -> (x: Int, y: Int, rgba: [UInt8])? {
-        let x = Int(point.x.rounded(.down)), y = Int(point.y.rounded(.down))
+        let x = Int(safe: point.x.rounded(.down)), y = Int(safe: point.y.rounded(.down))
         guard x >= 0, y >= 0, x < model.image.width, y < model.image.height else { return nil }
         let at = (y * model.image.width + x) * 4
         guard at + 3 < model.image.rgba.count else { return nil }
@@ -676,7 +692,7 @@ struct TextureEditorView: View {
     private var statusBar: some View {
         HStack(spacing: 12) {
             Text("\(model.image.width) × \(model.image.height)").font(Theme.small).foregroundStyle(Theme.text)
-            Text("\(Int((model.zoom * 100).rounded()))%").font(Theme.small).foregroundStyle(Theme.dim)
+            Text("\(Int(safe: (model.zoom * 100).rounded()))%").font(Theme.small).foregroundStyle(Theme.dim)
             if let rect = model.selection {
                 Text("Selection \(Int(rect.minX)), \(Int(rect.minY))  \(Int(rect.width)) × \(Int(rect.height))").font(Theme.small).foregroundStyle(Theme.dim)
             }

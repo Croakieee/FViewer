@@ -198,10 +198,10 @@ public final class EffectCore {
 
     private func create(_ e: EmitterInstance, _ c: Creation) throws {
         let item = c.item
-        let count = max(0, Int(evalParam(item.count, e.ageAt(c.time), 1, c.time - e.born).rounded(.toNearestOrAwayFromZero)))
+        let count = Int(finite: evalParam(item.count, e.ageAt(c.time), 1, c.time - e.born).rounded(.toNearestOrAwayFromZero), in: 0...maxParticles)
         let first = e.takeCopies(c.itemIndex, count)
         let points = e.def.emission?.points
-        for copy in 0..<count {
+        copies: for copy in 0..<count {
             let seed = hash(Int(e.seed), c.itemIndex, c.nth, copy)
             if random01(seed, Slot.probability) >= (item.probability ?? 1) { continue }
             let n = first + copy
@@ -212,7 +212,7 @@ public final class EffectCore {
             let parent = attach(e, item.follow ?? .spawn, c.time, turn, item.copyRotationOrder ?? .xyz)
             switch item.target {
             case .particle(let id):
-                guard particleList.count < maxParticles else { continue }
+                guard particleList.count < maxParticles else { break copies }
                 let def = defs.particle(id)
                 let spawn = Spawn(
                     emitter: e, time: c.time, parent: parent, seed: seed, inheritColor: item.inheritColor ?? false, life: item.life,

@@ -44,7 +44,7 @@ struct AvfxMaterialView: View {
         layer.fields.filter { $0.tag == "TxNo" || $0.tag.hasPrefix("TLst") || $0.label.hasPrefix("Mask Texture") }
     }
 
-    private func textureIndices(_ layer: Layer) -> [Int] { textureFields(layer).map { Int($0.read().number.rounded()) }.filter { $0 >= 0 } }
+    private func textureIndices(_ layer: Layer) -> [Int] { textureFields(layer).map { Int(safe: $0.read().number.rounded()) }.filter { $0 >= 0 } }
 
     private func textureIndex(_ layer: Layer) -> Int { textureIndices(layer).first ?? -1 }
 
@@ -53,9 +53,9 @@ struct AvfxMaterialView: View {
     private func text(_ field: PropField?) -> String {
         guard let field else { return "—" }
         let value = field.read()
-        if case .choice(let choices) = field.kind { return choices.first { $0.value == Int(value.number.rounded()) }?.name ?? "\(Int(value.number))" }
+        if case .choice(let choices) = field.kind { return choices.first { $0.value == Int(safe: value.number.rounded()) }?.name ?? "\(Int(value.number))" }
         if case .bool(let on) = value { return on ? "on" : "off" }
-        return "\(Int(value.number.rounded()))"
+        return "\(Int(safe: value.number.rounded()))"
     }
 
     private func texturePoint(_ index: Int) -> CGPoint { CGPoint(x: pan.width, y: pan.height + CGFloat(index) * (AvfxMaterialView.textureHeight + 14)) }

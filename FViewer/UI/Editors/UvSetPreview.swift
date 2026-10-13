@@ -51,7 +51,7 @@ struct UvSetPreview: View {
                 ty -= ty.rounded(.down)
                 let at = (y * side + x) * 4
                 if let texture, texture.width > 0, texture.height > 0 {
-                    let px = min(texture.width - 1, Int(tx * Double(texture.width))), py = min(texture.height - 1, Int(ty * Double(texture.height)))
+                    let px = Int(safe: tx * Double(texture.width), in: 0...texture.width - 1), py = Int(safe: ty * Double(texture.height), in: 0...texture.height - 1)
                     let from = (py * texture.width + px) * 4
                     let alpha = texture.alphaOnly ? 255 : Int(texture.rgba[from + 3])
                     for k in 0..<3 {

@@ -174,7 +174,7 @@ struct ExportModSheet: View {
             prepared = true
             if name.isEmpty {
                 var base = document.url.deletingPathExtension().lastPathComponent
-                if document.isEditedCopy { base.removeLast(EffectDocument.editSuffix.count) }
+                if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
                 name = base
             }
             for effect in candidates { paths[effect.id] = effect.gamePath.isEmpty ? PenumbraExport.guessEffectPath(effect) : effect.gamePath }

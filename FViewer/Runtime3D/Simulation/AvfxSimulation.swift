@@ -175,7 +175,7 @@ final class EmitterInstance {
                 let perItem = item.createTime == 1 ? max(0, item.createCount) : 1
                 let base = Eval.curve(schema.createCount, at, 1)
                     + Eval.randomOffset(schema.createCountRandom, type: schema.createCountRandom?.random ?? 0, at, random.next())
-                let count = Int(base.rounded()) * perItem
+                let count = min(Int(safe: base.rounded(), in: 0...4000) * perItem, 4000)
                 if count > 0 { out.append((item, count)) }
                 let interval = Eval.curve(schema.createInterval, at, 0)
                     + Eval.randomOffset(schema.createIntervalRandom, type: schema.createIntervalRandom?.random ?? 0, at, random.next())
@@ -1014,7 +1014,7 @@ final class AvfxSimulation {
             }
             if let tc1 = s.tc1, tc1.textures.count > 1 {
                 let n = Eval.curve(tc1.texN, t, 0) + Eval.curve(tc1.texNRandom, t, 0) * p.seed.get(15)
-                draw.frame = min(tc1.textures.count - 1, max(0, Int(n.rounded(.down))))
+                draw.frame = min(tc1.textures.count - 1, max(0, Int(safe: n.rounded(.down))))
             }
             let plainUv = PreviewRules.isOn("plainUv") && (s.type == ParticleKind.windmill || (s.type == ParticleKind.powder && s.simple == nil))
             let layers: [RTextureLayer?] = [s.tc1, s.tc2, s.distortion, s.tc3, s.tc4]

@@ -361,7 +361,7 @@ enum AvfxSchemaReader {
     }
 
     static func emitterItem(_ r: [AvfxBlock], index: Int) -> REmitterItem {
-        REmitterItem(index: index, enabled: r.bool("bEnb"), target: r.int("TgtB"), createTime: r.int("CrTm"), createCount: r.int("CrCn", 1),
+        REmitterItem(index: index, enabled: r.bool("bEnb"), target: r.int("TgtB"), createTime: r.int("CrTm"), createCount: min(max(r.int("CrCn", 1), 0), 4000),
                      probability: r.int("CrPr", 100), influenceCoord: r.int("PICd"), influenceColor: r.int("PICo"), inheritScale: r.bool("ICbS"),
                      inheritRotation: r.bool("ICbR"), inheritPosition: r.bool("ICbP"), overrideLife: r.bool("bOvr"),
                      overrideLifeValue: Float(r.int("OvrV")), overrideLifeRandom: Float(r.int("OvrR")), generateDelay: r.int("GenD"),
@@ -396,7 +396,7 @@ enum AvfxSchemaReader {
         func i(_ tag: String, _ fallback: Int = 0) -> Int { block.int(tag, fallback) }
         return RSimple(
             injectionPosition: i("SIPT"), injectionModel: i("IJMN", -1), createNewAfterDeath: block.byteFlag("bCrN"),
-            lineLength: SIMD2(f("LLin"), f("LLax")), createCount: i("CCnt", 1), createArea: Vec3(f("CrAX"), f("CrAY"), f("CrAZ")),
+            lineLength: SIMD2(f("LLin"), f("LLax")), createCount: min(max(i("CCnt", 1), 0), 4000), createArea: Vec3(f("CrAX"), f("CrAY"), f("CrAZ")),
             gravity: Vec3(f("CGX"), f("CGY"), f("CGZ")), scaleStart: SIMD2(f("SBX", 1), f("SBY", 1)), scaleEnd: SIMD2(f("SEX", 1), f("SEY", 1)),
             scaleCurve: f("SC", 1), scaleRandomX: SIMD2(f("SRX0", 1), f("SRX1", 1)), scaleRandomY: SIMD2(f("SRY0", 1), f("SRY1", 1)),
             scaleRandomLink: block.byteFlag("bSRL"), scaleByParent: block.byteFlag("bSnP"), bindParent: block.byteFlag("bBnP", 255),
@@ -419,7 +419,7 @@ enum AvfxSchemaReader {
 
     static func polyline(_ block: AvfxBlock?) -> RPolyline? {
         guard let block, block.children != nil else { return nil }
-        return RPolyline(createType: block.int("LnCT"), pointCount: block.int("PnC", 2), pointCountCenter: block.int("PnCC"), useEdge: block.bool("bEdg"),
+        return RPolyline(createType: block.int("LnCT"), pointCount: min(max(block.int("PnC", 2), 2), 512), pointCountCenter: min(max(block.int("PnCC"), 0), 512), useEdge: block.bool("bEdg"),
                          width: curve(block.child("Wd")), widthBegin: curve(block.child("WdB")), widthCenter: curve(block.child("WdC")),
                          widthEnd: curve(block.child("WdE")), length: curve(block.child("Len")), colorBegin: optionalColor(block.child("ColB")),
                          colorCenter: optionalColor(block.child("ColC")), colorEnd: optionalColor(block.child("ColE")),
@@ -461,7 +461,7 @@ enum AvfxSchemaReader {
                 particleItems: particleRecords.enumerated().map { emitterItem($0.element, index: $0.offset) },
                 emitterItems: emitterRecords.enumerated().map { emitterItem($0.element, index: $0.offset) },
                 modelIndex: data?.int("MdNo", -1) ?? -1, generateMethod: data?.int("GeMT") ?? 0, injectionSpeed: curve(data?.child("IjS")),
-                injectionSpeedRandom: curve(data?.child("IjSR")), divideX: data?.int("DivX", 1) ?? 1, divideY: data?.int("DivY", 1) ?? 1,
+                injectionSpeedRandom: curve(data?.child("IjSR")), divideX: min(max(data?.int("DivX", 1) ?? 1, 1), 256), divideY: min(max(data?.int("DivY", 1) ?? 1, 0), 256),
                 radius: curve(data?.child("Rad")) ?? curve(data?.child("Rads")), length: curve(data?.child("Len")),
                 coneAngle: curve(data?.child("IjA")), coneAngleRandom: curve(data?.child("IjAR")),
                 coneRotation: [curve(data?.child("AnX")), curve(data?.child("AnY")), curve(data?.child("AnZ"))],

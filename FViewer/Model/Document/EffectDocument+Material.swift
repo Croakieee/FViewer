@@ -327,15 +327,22 @@ enum MaterialLibrary {
         let clean = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-").trimmingCharacters(in: .whitespaces)
         guard !clean.isEmpty, let folder else { return }
         let nodes: [[String: Any]] = graph.nodes.map { node in
-            var entry: [String: Any] = ["id": node.id, "type": node.type, "x": node.x ?? 0, "y": node.y ?? 0]
+            var entry: [String: Any] = ["id": node.id, "type": node.type, "x": (node.x ?? 0).finite, "y": (node.y ?? 0).finite]
             if let texture = node.texture { entry["texture"] = texture }
             if let name = node.name { entry["name"] = name }
-            if let params = node.params { entry["params"] = params }
+            if let graph = node.graph { entry["graph"] = graph }
+            if let params = node.params { entry["params"] = params.mapValues { $0.isFinite ? $0 : 0 } }
             return entry
         }
         let links = graph.links.map { ["from": $0.from, "out": $0.out, "to": $0.to, "in": $0.input] }
         guard let data = try? JSONSerialization.data(withJSONObject: ["nodes": nodes, "links": links], options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? data.write(to: folder.appendingPathComponent(clean + ".material"), options: .atomic)
+        var target = folder.appendingPathComponent(clean + ".material")
+        var copy = 2
+        while FileManager.default.fileExists(atPath: target.path) {
+            target = folder.appendingPathComponent("\(clean) \(copy).material")
+            copy += 1
+        }
+        try? data.write(to: target, options: .atomic)
     }
 
     static func load(_ url: URL) -> MaterialGraph? {

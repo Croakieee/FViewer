@@ -190,6 +190,7 @@ final class AppModel: ObservableObject {
     var dirtyDocuments: [EffectDocument] { documents.values.filter(\.isDirty).sorted { $0.title < $1.title } }
 
     func confirmDiscardingChanges() -> Bool {
+        guard confirmDiscardingGameFile() else { return false }
         let dirty = dirtyDocuments
         guard !dirty.isEmpty else { return true }
         let alert = NSAlert()
@@ -763,7 +764,12 @@ final class AppModel: ObservableObject {
             let name = "\(base)-\(formatter.string(from: Date())).\(document.url.pathExtension)"
             if (try? document.serializedData().write(to: folder.appendingPathComponent(name), options: .atomic)) != nil { written += 1 }
             let older = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
-                .filter { $0.lastPathComponent.hasPrefix(base + "-") }.sorted { $0.lastPathComponent > $1.lastPathComponent }
+                .filter { url in
+                    let stem = url.deletingPathExtension().lastPathComponent
+                    guard stem.hasPrefix(base + "-"), url.pathExtension == document.url.pathExtension else { return false }
+                    let stamp = stem.dropFirst(base.count + 1)
+                    return stamp.count == 15 && stamp.allSatisfy { $0.isNumber || $0 == "-" }
+                }.sorted { $0.lastPathComponent > $1.lastPathComponent }
             for url in older.dropFirst(autosaveCopies) { try? FileManager.default.removeItem(at: url) }
         }
         return written
@@ -1097,12 +1103,12 @@ final class AppModel: ObservableObject {
         let parts = lower.split(separator: "/").map(String.init)
         for start in 0..<max(parts.count, 1) {
             let suffix = parts[start...].joined(separator: "/")
-            if let hit = texturePaths.first(where: { $0.key == suffix || $0.key.hasSuffix("/" + suffix) })?.value { return hit }
+            if let hit = texturePaths.filter({ $0.key == suffix || $0.key.hasSuffix("/" + suffix) }).min(by: { ($0.key.count, $0.key) < ($1.key.count, $1.key) })?.value { return hit }
         }
         let file = (lower as NSString).lastPathComponent
         if let hit = textureFiles[file] { return hit }
         let hashed = String(format: "~%08x", ~ZipWriter.crc32(Array(file.utf8)))
-        return textureFiles[hashed] ?? textureFiles.first { ($0.key as NSString).deletingPathExtension == hashed }?.value
+        return textureFiles[hashed] ?? textureFiles.filter { ($0.key as NSString).deletingPathExtension == hashed }.min { $0.key < $1.key }?.value
     }
 
     func image(for path: String) -> CGImage? {

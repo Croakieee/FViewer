@@ -60,10 +60,10 @@ struct FieldControl: View {
         switch field.kind {
         case .int:
             NumberField(label: label, value: value.number, isInteger: true, roundTop: roundTop, roundBottom: roundBottom,
-                        onLive: { document.setLive(field, .int(Int($0))) },
+                        onLive: { document.setLive(field, .int(Int(safe: $0))) },
                         onCommit: { old, new in
-                            field.write?(.int(Int(old)))
-                            document.commit(field, from: .int(Int(old)), to: .int(Int(new)))
+                            field.write?(.int(Int(safe: old)))
+                            document.commit(field, from: .int(Int(safe: old)), to: .int(Int(safe: new)))
                         })
         case .double, .angle:
             let angle: Bool = { if case .angle = field.kind { return true }; return false }()

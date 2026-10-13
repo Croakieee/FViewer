@@ -49,7 +49,8 @@ final class AvfxBlock: Identifiable {
         return root
     }
 
-    static func parse(_ buf: [UInt8], _ start: Int, _ end: Int) throws -> [AvfxBlock] {
+    static func parse(_ buf: [UInt8], _ start: Int, _ end: Int, depth: Int = 0) throws -> [AvfxBlock] {
+        guard depth < 64 else { throw AvfxError.malformed("Blocks are nested deeper than 64 levels") }
         var out: [AvfxBlock] = []
         var p = start
         while p + 8 <= end {
@@ -60,7 +61,7 @@ final class AvfxBlock: Identifiable {
             }
             let tag = decodeTag(raw)
             if !binaryLeafTags.contains(tag), looksLikeBlocks(buf, p + 8, p + 8 + size) {
-                out.append(AvfxBlock(rawTag: raw, children: try parse(buf, p + 8, p + 8 + size)))
+                out.append(AvfxBlock(rawTag: raw, children: try parse(buf, p + 8, p + 8 + size, depth: depth + 1)))
             } else {
                 out.append(AvfxBlock(rawTag: raw, data: Array(buf[p + 8..<p + 8 + size])))
             }
@@ -149,7 +150,7 @@ final class AvfxBlock: Identifiable {
     }
 
     var floatValue: Float {
-        get { data.count >= 4 ? Float(bitPattern: data.u32(0)) : 0 }
+        get { data.count >= 4 ? Float(bitPattern: data.u32(0)).bounded(1e9) : 0 }
         set { if data.count >= 4 { data.setU32(0, newValue.bitPattern) } }
     }
 
@@ -206,11 +207,15 @@ final class AvfxBlock: Identifiable {
 }
 
 extension Array where Element == UInt8 {
-    func u16(_ at: Int) -> UInt16 { UInt16(self[at]) | UInt16(self[at + 1]) << 8 }
-    func u32(_ at: Int) -> UInt32 {
-        UInt32(self[at]) | UInt32(self[at + 1]) << 8 | UInt32(self[at + 2]) << 16 | UInt32(self[at + 3]) << 24
+    func u16(_ at: Int) -> UInt16 {
+        guard at >= 0, at + 1 < count else { return 0 }
+        return UInt16(self[at]) | UInt16(self[at + 1]) << 8
     }
-    func f32(_ at: Int) -> Float { Float(bitPattern: u32(at)) }
+    func u32(_ at: Int) -> UInt32 {
+        guard at >= 0, at + 3 < count else { return 0 }
+        return UInt32(self[at]) | UInt32(self[at + 1]) << 8 | UInt32(self[at + 2]) << 16 | UInt32(self[at + 3]) << 24
+    }
+    func f32(_ at: Int) -> Float { Float(bitPattern: u32(at)).bounded(1e9) }
     mutating func setU32(_ at: Int, _ v: UInt32) {
         self[at] = UInt8(v & 0xff)
         self[at + 1] = UInt8((v >> 8) & 0xff)

@@ -330,7 +330,7 @@ extension EffectDocument {
                              write: { block.floatValue = Float($0.number * .pi / 180) })
         case "AvfxInt", "AvfxFlag":
             return PropField(id: id, label: label, tag: block.tag, kind: .int, read: { .int(block.intValue) },
-                             write: { block.intValue = Int($0.number.rounded()) })
+                             write: { block.intValue = Int(safe: $0.number.rounded()) })
         case "AvfxString":
             return PropField(id: id, label: label, tag: block.tag, kind: .text, read: { .text(block.stringValue) },
                              write: { if case .text(let v) = $0 { block.stringValue = v } })
@@ -397,7 +397,7 @@ extension EffectDocument {
             fields.append(PropField(id: "\(id)#frame\(i)", label: "Frame \(i + 1)", tag: "Frms", kind: .int,
                                     read: { .int(Int(Int16(bitPattern: frames.data.u16(i * 2)))) },
                                     write: {
-                                        let v = UInt16(bitPattern: Int16(truncatingIfNeeded: Int($0.number.rounded())))
+                                        let v = UInt16(bitPattern: Int16(truncatingIfNeeded: Int(safe: $0.number.rounded())))
                                         frames.data[i * 2] = UInt8(v & 0xff)
                                         frames.data[i * 2 + 1] = UInt8(v >> 8)
                                     }))
@@ -477,7 +477,7 @@ extension EffectDocument {
             let at = 4 + i * 4
             return PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .int,
                              read: { .int(Int(Int32(bitPattern: block.data.u32(at)))) },
-                             write: { block.data.setU32(at, UInt32(bitPattern: Int32(truncatingIfNeeded: Int($0.number.rounded())))) })
+                             write: { block.data.setU32(at, UInt32(bitPattern: Int32(truncatingIfNeeded: Int(safe: $0.number.rounded())))) })
         }
         func flagField(_ label: String, at: Int, suffix: String, isOn: @escaping () -> Bool, set: @escaping (Bool) -> UInt32) -> PropField {
             PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .bool, read: { .bool(isOn()) },
@@ -539,7 +539,7 @@ extension EffectDocument {
                 let sorted = points.sorted { $0.time < $1.time }
                 guard let component else {
                     block.curveKeys = sorted.map {
-                        AvfxKey(time: Int($0.time.rounded()), type: $0.interpolation, x: Float($0.tangentOut), y: Float($0.tangentIn),
+                        AvfxKey(time: Int(safe: $0.time.rounded()), type: $0.interpolation, x: Float($0.tangentOut), y: Float($0.tangentIn),
                                 z: Float($0.value / scale))
                     }
                     return
@@ -554,7 +554,7 @@ extension EffectDocument {
                         old.count == sorted.count ? Double([old[i].x, old[i].y, old[i].z][c]) : CurveMath.sample(others[c], at: point.time)
                     }
                     values[component] = min(max(point.value, 0), 1)
-                    return AvfxKey(time: Int(point.time.rounded()), type: old.count == sorted.count ? old[i].type : 1,
+                    return AvfxKey(time: Int(safe: point.time.rounded()), type: old.count == sorted.count ? old[i].type : 1,
                                    x: Float(values[0]), y: Float(values[1]), z: Float(values[2]))
                 }
             },

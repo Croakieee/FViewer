@@ -505,7 +505,7 @@ struct CreationRibbonPanel: View {
                 guardCount += 1
                 let at = CurveTime(t)
                 let perItem = item.createTime == 1 ? max(0, item.createCount) : 1
-                let count = Int(Eval.curve(e.createCount, at, 1).rounded()) * perItem
+                let count = min(Int(safe: Eval.curve(e.createCount, at, 1).rounded(), in: 0...4000) * perItem, 4000)
                 if count > 0 { result.append((t, count)) }
                 let interval = Eval.curve(e.createInterval, at, 0)
                 if interval > 0, item.createTime == 0 { t += interval } else { break }

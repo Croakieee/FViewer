@@ -47,10 +47,10 @@ struct TextureImage {
         var out = [UInt8](repeating: 0, count: w * h * 4)
         for y in 0..<h {
             let fy = (Double(y) + 0.5) * Double(height) / Double(h) - 0.5
-            let y0 = Int(fy.rounded(.down)), ty = fy - Double(y0)
+            let y0 = Int(safe: fy.rounded(.down)), ty = fy - Double(y0)
             for x in 0..<w {
                 let fx = (Double(x) + 0.5) * Double(width) / Double(w) - 0.5
-                let x0 = Int(fx.rounded(.down)), tx = fx - Double(x0)
+                let x0 = Int(safe: fx.rounded(.down)), tx = fx - Double(x0)
                 let a = pixel(x0, y0), b = pixel(x0 + 1, y0), c = pixel(x0, y0 + 1), d = pixel(x0 + 1, y0 + 1)
                 let to = (y * w + x) * 4
                 for k in 0..<4 {
@@ -214,10 +214,10 @@ enum TextureCodec {
         var out: [UInt8] = []
         out.appendU32(0x0080_0000)
         out.appendU32(format.rawValue)
-        out.appendU16(UInt16(width))
-        out.appendU16(UInt16(height))
+        out.appendU16(UInt16(min(max(width, 0), 65535)))
+        out.appendU16(UInt16(min(max(height, 0), 65535)))
         out.appendU16(1)
-        out.append(UInt8(sizes.count))
+        out.append(UInt8(min(sizes.count, 255)))
         out.append(0)
         out.appendU32(0)
         out.appendU32(UInt32(min(1, sizes.count - 1)))

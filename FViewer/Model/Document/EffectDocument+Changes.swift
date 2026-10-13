@@ -101,7 +101,7 @@ extension EffectDocument {
         case .double(let v): return JSONNode.format((v * 10000).rounded() / 10000)
         case .bool(let v): return v ? "on" : "off"
         case .text(let v): return v
-        case .color(let r, let g, let b, _): return String(format: "#%02X%02X%02X", Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded()))
+        case .color(let r, let g, let b, _): return String(format: "#%02X%02X%02X", Int(safe: (r * 255).rounded()), Int(safe: (g * 255).rounded()), Int(safe: (b * 255).rounded()))
         }
     }
 }

@@ -70,6 +70,12 @@ final class EffectDocument: ObservableObject, Identifiable {
         rebuildOutline()
     }
 
+    func replaceNames(_ next: [String: String]) {
+        guard next != names else { return }
+        names = next
+        saveMeta()
+    }
+
     private func applyName(_ name: String, _ nodeID: String) {
         if name.isEmpty { names[nodeID] = nil } else { names[nodeID] = name }
         saveMeta()
@@ -179,12 +185,27 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     static let editSuffix = "F"
 
-    var isEditedCopy: Bool { url.deletingPathExtension().lastPathComponent.hasSuffix(EffectDocument.editSuffix) }
+    private static let ownedMark = "croakie.FViewer.edited"
+
+    static func isOwned(_ url: URL) -> Bool { getxattr(url.path, ownedMark, nil, 0, 0, 0) >= 0 }
+
+    private static func markOwned(_ url: URL) {
+        let value: [UInt8] = [1]
+        setxattr(url.path, ownedMark, value, value.count, 0, 0)
+    }
+
+    var isEditedCopy: Bool { EffectDocument.isOwned(url) }
 
     var saveDestination: URL {
         if isEditedCopy { return url }
-        let name = url.deletingPathExtension().lastPathComponent + EffectDocument.editSuffix
-        return url.deletingLastPathComponent().appendingPathComponent(name).appendingPathExtension(url.pathExtension)
+        let folder = url.deletingLastPathComponent(), ext = url.pathExtension
+        var name = url.deletingPathExtension().lastPathComponent + EffectDocument.editSuffix
+        var candidate = folder.appendingPathComponent(name).appendingPathExtension(ext)
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            name += EffectDocument.editSuffix
+            candidate = folder.appendingPathComponent(name).appendingPathExtension(ext)
+        }
+        return candidate
     }
 
     func save(to target: URL? = nil) throws {
@@ -193,7 +214,9 @@ final class EffectDocument: ObservableObject, Identifiable {
             throw AvfxError.malformed("Original files are never overwritten. Choose another name")
         }
         try serializedData().write(to: destination, options: .atomic)
+        EffectDocument.markOwned(destination)
         url = destination
+        saveMeta()
         cleanDepth = undoTitles.count
         isDirty = false
     }
@@ -251,7 +274,7 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     func amendLastUndo() {
         guard let lastRedo else { return }
-        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID)
+        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names)
         rebuildOutline()
         revision += 1
     }
@@ -266,6 +289,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         let avfx: AvfxBlock?
         let json: JSONNode?
         let selection: String?
+        let names: [String: String]
     }
 
     private final class SnapshotBox {
@@ -273,23 +297,28 @@ final class EffectDocument: ObservableObject, Identifiable {
         init(_ state: Snapshot) { self.state = state }
     }
 
-    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID) }
+    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names) }
 
     private func restore(_ state: Snapshot) {
         if let avfx = state.avfx { avfxRoot = avfx.deepCopy() }
         if let json = state.json { jsonRoot = json.deepCopy() }
+        if names != state.names {
+            names = state.names
+            saveMeta()
+        }
     }
 
     func registerUndo(_ title: String, undo: () -> Void, redo: () -> Void) {
         undo()
-        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID)
+        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names)
         redo()
-        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID))
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names))
     }
 
     func registerUndo(_ title: String, since before: Any) {
         guard let before = before as? Snapshot else { return }
-        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID))
+        if before.names == names, before.avfx?.serialized() == avfxRoot?.serialized(), before.json?.serialized() == jsonRoot?.serialized() { return }
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names))
     }
 
     private var undoSuspended = false
