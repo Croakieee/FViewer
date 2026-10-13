@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import AppKit
 import Combine
 import Foundation
@@ -511,5 +512,76 @@ extension AppModel {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private var backgroundImageURL: URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let folder = base.appendingPathComponent("FViewer", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("preview-background.png")
+    }
+
+    func loadPreviewSettings() {
+        let defaults = UserDefaults.standard
+        if let parts = defaults.string(forKey: "preview.color")?.split(separator: ",").compactMap({ Double($0) }), parts.count == 3 {
+            ViewportRenderer.backgroundColor = SIMD3(parts[0], parts[1], parts[2])
+        }
+        if let url = backgroundImageURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
+            ViewportRenderer.backgroundImage = image
+            ViewportRenderer.backgroundToken += 1
+        }
+        if defaults.object(forKey: "preview.bloom.threshold") != nil {
+            ViewportRenderer.bloom = (defaults.bool(forKey: "preview.bloom.on"), defaults.float(forKey: "preview.bloom.threshold"),
+                                      defaults.float(forKey: "preview.bloom.intensity"), defaults.float(forKey: "preview.bloom.radius"))
+        }
+    }
+
+    func setPreviewColor(_ color: SIMD3<Double>?) {
+        ViewportRenderer.backgroundColor = color
+        if let color {
+            UserDefaults.standard.set("\(color.x),\(color.y),\(color.z)", forKey: "preview.color")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "preview.color")
+        }
+        objectWillChange.send()
+    }
+
+    func choosePreviewImage() {
+        let panel = NSOpenPanel()
+        panel.title = "Preview Background Image"
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        ViewportRenderer.backgroundImage = image
+        ViewportRenderer.backgroundToken += 1
+        if let target = backgroundImageURL, let destination = CGImageDestinationCreateWithURL(target as CFURL, "public.png" as CFString, 1, nil) {
+            CGImageDestinationAddImage(destination, image, nil)
+            CGImageDestinationFinalize(destination)
+        }
+        objectWillChange.send()
+    }
+
+    func clearPreviewImage() {
+        ViewportRenderer.backgroundImage = nil
+        ViewportRenderer.backgroundToken += 1
+        if let target = backgroundImageURL { try? FileManager.default.removeItem(at: target) }
+        objectWillChange.send()
+    }
+
+    func setBloom(on: Bool? = nil, threshold: Float? = nil, intensity: Float? = nil, radius: Float? = nil) {
+        var bloom = ViewportRenderer.bloom
+        if let on { bloom.on = on }
+        if let threshold { bloom.threshold = min(max(threshold, 0), 1) }
+        if let intensity { bloom.intensity = min(max(intensity, 0), 4) }
+        if let radius { bloom.radius = min(max(radius, 0.002), 0.2) }
+        ViewportRenderer.bloom = bloom
+        let defaults = UserDefaults.standard
+        defaults.set(bloom.on, forKey: "preview.bloom.on")
+        defaults.set(bloom.threshold, forKey: "preview.bloom.threshold")
+        defaults.set(bloom.intensity, forKey: "preview.bloom.intensity")
+        defaults.set(bloom.radius, forKey: "preview.bloom.radius")
+        objectWillChange.send()
     }
 }

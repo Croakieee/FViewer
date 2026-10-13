@@ -28,6 +28,7 @@ private enum GraphDrag {
     case keys(origin: [String: [CurveKeyPoint]], selected: [String: Set<Int>], restore: [String: () -> Void])
     case handle(key: KeyRef, outgoing: Bool, restore: () -> Void)
     case box(additive: Bool)
+    case scale(origin: [String: [CurveKeyPoint]], selected: [String: Set<Int>], restore: [String: () -> Void], bounds: SIMD4<Double>, handle: Int)
     case idle
 }
 
@@ -52,12 +53,16 @@ struct CurveEditorView: View {
     @State private var dragActive = false
     @AppStorage("curves.radians") private var radians = false
     @AppStorage("curves.palette") private var paletteText = ""
+    @AppStorage("curves.saved") private var savedText = ""
     @State private var aim: (key: KeyRef, outgoing: Bool, reach: CGFloat)?
     @State private var ghost: [String: [CurveKeyPoint]] = [:]
     @State private var ghostStamp = 0
     @State private var lastDrag: DragGesture.Value?
     @GestureState private var pressing = false
     @State private var lastClick: (time: Date, point: CGPoint) = (.distantPast, .zero)
+    @State private var stopDrag: (track: Int, time: Double, restore: () -> Void, moved: Bool)?
+    @State private var stopPicked: (track: Int, time: Double)?
+    @State private var stopClick: (time: Date, x: CGFloat) = (.distantPast, 0)
 
     private var size: CGSize { cache.size }
 
@@ -478,6 +483,15 @@ struct CurveEditorView: View {
                     context.stroke(shape, with: .color(isSelected ? Color(red: 1, green: 0.63, blue: 0.16) : channel.color), lineWidth: 1.5)
                 }
             }
+            if let bounds = selectionBounds() {
+                let rect = transformRect(bounds)
+                context.stroke(Path(rect), with: .color(Color(red: 1, green: 0.63, blue: 0.16).opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                for corner in transformHandles(rect) {
+                    let grip = CGRect(x: corner.x - 3.5, y: corner.y - 3.5, width: 7, height: 7)
+                    context.fill(Path(grip), with: .color(Color.white))
+                    context.stroke(Path(grip), with: .color(Color(red: 1, green: 0.63, blue: 0.16)), lineWidth: 1)
+                }
+            }
             if case .box = drag {
                 let rect = CGRect(x: min(boxStart.x, boxEnd.x), y: min(boxStart.y, boxEnd.y), width: abs(boxEnd.x - boxStart.x), height: abs(boxEnd.y - boxStart.y))
                 context.fill(Path(rect), with: .color(Color.white.opacity(0.06)))
@@ -619,6 +633,70 @@ struct CurveEditorView: View {
         return nil
     }
 
+    private func selectionBounds() -> SIMD4<Double>? {
+        var times: [Double] = [], values: [Double] = []
+        for ref in selection {
+            guard let keys = channel(ref.channel)?.read(), ref.index < keys.count else { continue }
+            times.append(keys[ref.index].time)
+            values.append(keys[ref.index].value)
+        }
+        guard times.count > 1, let t0 = times.min(), let t1 = times.max(), let v0 = values.min(), let v1 = values.max() else { return nil }
+        return SIMD4(t0, t1, v0, v1)
+    }
+
+    private func transformRect(_ bounds: SIMD4<Double>) -> CGRect {
+        CGRect(x: x(bounds.x), y: y(bounds.w), width: x(bounds.y) - x(bounds.x), height: y(bounds.z) - y(bounds.w)).insetBy(dx: -10, dy: -10)
+    }
+
+    private func transformHandles(_ rect: CGRect) -> [CGPoint] {
+        [0, 1, 2, 3, 4, 5, 6, 7].map { index -> CGPoint in
+            let column = [0, 1, 2, 0, 2, 0, 1, 2][index], row = [0, 0, 0, 1, 1, 2, 2, 2][index]
+            return CGPoint(x: rect.minX + rect.width * CGFloat(column) / 2, y: rect.minY + rect.height * CGFloat(row) / 2)
+        }
+    }
+
+    private func hitTransformHandle(_ point: CGPoint) -> (handle: Int, bounds: SIMD4<Double>)? {
+        guard let bounds = selectionBounds() else { return nil }
+        for (index, corner) in transformHandles(transformRect(bounds)).enumerated() where hypot(corner.x - point.x, corner.y - point.y) < 7 {
+            return (index, bounds)
+        }
+        return nil
+    }
+
+    private func writeMoved(_ origin: [String: [CurveKeyPoint]], _ selected: [String: Set<Int>], _ map: (CurveKeyPoint) -> CurveKeyPoint) {
+        var nextSelection: Set<KeyRef> = []
+        for (id, keys) in origin {
+            guard let channel = channel(id) else { continue }
+            let marks = selected[id] ?? []
+            var moved = keys.enumerated().map { index, key -> (CurveKeyPoint, Bool) in
+                guard marks.contains(index) else { return (key, false) }
+                var next = map(key)
+                next.time = max(0, next.time.rounded())
+                next.value = (next.value * 1000).rounded() / 1000
+                if channel.clampUnit { next.value = min(max(next.value, 0), 1) }
+                return (next, true)
+            }
+            moved = moved.enumerated().sorted { a, b in
+                a.element.0.time != b.element.0.time ? a.element.0.time < b.element.0.time : a.offset < b.offset
+            }.map(\.element)
+            for i in 1..<max(moved.count, 1) where moved[i].0.time <= moved[i - 1].0.time {
+                moved[i].0.time = moved[i - 1].0.time + 1
+            }
+            channel.write(moved.map(\.0))
+            for (i, entry) in moved.enumerated() where entry.1 { nextSelection.insert(KeyRef(channel: id, index: i)) }
+        }
+        selection = nextSelection
+        if let active = activeKey, !nextSelection.contains(active) { activeKey = nextSelection.first { $0.channel == active.channel } }
+        document.liveDrag()
+    }
+
+    private func beginScaleDrag(_ handle: Int, _ bounds: SIMD4<Double>) {
+        beginKeyDrag()
+        if case .keys(let origin, let selected, let restore) = drag {
+            drag = .scale(origin: origin, selected: selected, restore: restore, bounds: bounds, handle: handle)
+        }
+    }
+
     private func beginKeyDrag() {
         var origin: [String: [CurveKeyPoint]] = [:]
         var selected: [String: Set<Int>] = [:]
@@ -644,6 +722,8 @@ struct CurveEditorView: View {
             let shift = flags.contains(.shift), command = flags.contains(.command), option = flags.contains(.option)
             if gesture.startLocation.y < rulerHeight {
                 drag = .scrub
+            } else if let grip = hitTransformHandle(gesture.startLocation) {
+                beginScaleDrag(grip.handle, grip.bounds)
             } else if let (ref, outgoing) = hitHandle(gesture.startLocation), let channel = channel(ref.channel) {
                 ghost = [channel.id: channel.read()]
                 aim = (ref, outgoing, 40)
@@ -683,6 +763,8 @@ struct CurveEditorView: View {
                     activeKey = hit
                     beginKeyDrag()
                 }
+            } else if !command, !shift, let bounds = selectionBounds(), transformRect(bounds).contains(gesture.startLocation) {
+                beginKeyDrag()
             } else {
                 boxStart = gesture.startLocation
                 boxEnd = gesture.startLocation
@@ -727,6 +809,26 @@ struct CurveEditorView: View {
             selection = nextSelection
             if let active = activeKey, !nextSelection.contains(active) { activeKey = nextSelection.first { $0.channel == active.channel } }
             document.liveDrag()
+        case .scale(let origin, let selected, _, let bounds, let handle):
+            if hypot(gesture.translation.width, gesture.translation.height) > 2 { dragActive = true }
+            guard dragActive else { return }
+            let column = [0, 1, 2, 0, 2, 0, 1, 2][handle], row = [0, 0, 0, 1, 1, 2, 2, 2][handle]
+            var timeFactor = 1.0, valueFactor = 1.0
+            let timeAnchor = column == 0 ? bounds.y : bounds.x, valueAnchor = row == 0 ? bounds.z : bounds.w
+            if column != 1, bounds.y - bounds.x > 1e-9 {
+                let grabbed = column == 0 ? bounds.x : bounds.y
+                timeFactor = (time(gesture.location.x + (column == 0 ? 10 : -10)) - timeAnchor) / (grabbed - timeAnchor)
+            }
+            if row != 1, bounds.w - bounds.z > 1e-9 {
+                let grabbed = row == 0 ? bounds.w : bounds.z
+                valueFactor = (value(gesture.location.y + (row == 0 ? 10 : -10)) - valueAnchor) / (grabbed - valueAnchor)
+            }
+            writeMoved(origin, selected) { key in
+                var next = key
+                next.time = timeAnchor + (key.time - timeAnchor) * timeFactor
+                next.value = valueAnchor + (key.value - valueAnchor) * valueFactor
+                return next
+            }
         case .handle(let ref, let outgoing, _):
             guard let channel = channel(ref.channel) else { return }
             var keys = channel.read()
@@ -767,6 +869,12 @@ struct CurveEditorView: View {
                 let after = restore.keys.compactMap { id in channel(id).map { $0.snapshot() } }
                 let before = Array(restore.values)
                 document.registerUndo("Move Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+            }
+        case .scale(_, _, let restore, _, _):
+            if dragActive {
+                let after = restore.keys.compactMap { id in channel(id).map { $0.snapshot() } }
+                let before = Array(restore.values)
+                document.registerUndo("Scale Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
             }
         case .handle(let ref, _, let restore):
             if let channel = channel(ref.channel) {
@@ -910,9 +1018,59 @@ struct CurveEditorView: View {
         ("Blink", [(0, 1), (0.45, 1), (0.5, 0), (0.55, 1), (1, 1)], false),
     ]
 
+    private var savedPresets: [(name: String, points: [(Double, Double)], spline: Bool)] {
+        savedText.split(separator: "|").compactMap { entry -> (name: String, points: [(Double, Double)], spline: Bool)? in
+            let parts = entry.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { return nil }
+            let fields = parts[1].split(separator: ";")
+            guard let flag = fields.first else { return nil }
+            let points = fields.dropFirst().compactMap { pair -> (Double, Double)? in
+                let numbers = pair.split(separator: ",").compactMap { Double($0) }
+                return numbers.count == 2 ? (numbers[0], numbers[1]) : nil
+            }
+            return points.count > 1 ? (String(parts[0]), points, flag == "s") : nil
+        }
+    }
+
+    private func savePreset() {
+        guard let channel = currentChannel() else { return }
+        let keys = channel.read()
+        guard keys.count > 1, let first = keys.map(\.time).min(), let last = keys.map(\.time).max(), last > first else { return }
+        let alert = NSAlert()
+        alert.messageText = "Save Curve Preset"
+        alert.informativeText = "The shape of the active channel is saved under this name. Saving under an existing name replaces it."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 22))
+        field.stringValue = channel.name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        storePreset(field.stringValue, keys)
+    }
+
+    func storePreset(_ rawName: String, _ keys: [CurveKeyPoint]) {
+        let name = rawName.replacingOccurrences(of: "|", with: " ").replacingOccurrences(of: "=", with: " ").trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let first = keys.map(\.time).min(), let last = keys.map(\.time).max(), last > first else { return }
+        let low = keys.map(\.value).min() ?? 0, high = keys.map(\.value).max() ?? 1
+        let span = max(high - low, 1e-9)
+        let spline = keys.contains { $0.interpolation == CurveKeyPoint.spline }
+        let body = keys.map { String(format: "%.4f,%.4f", ($0.time - first) / (last - first), high - low < 1e-9 ? 1 : ($0.value - low) / span) }
+        var entries = savedText.split(separator: "|").map(String.init).filter { !$0.hasPrefix(name + "=") }
+        entries.append(name + "=" + (spline ? "s" : "l") + ";" + body.joined(separator: ";"))
+        savedText = entries.joined(separator: "|")
+    }
+
+    private func removeSavedPreset(_ name: String) {
+        savedText = savedText.split(separator: "|").map(String.init).filter { !$0.hasPrefix(name + "=") }.joined(separator: "|")
+    }
+
     private func applyPreset(_ index: Int) {
-        guard let channel = currentChannel(), index < CurveEditorView.presets.count else { return }
-        let preset = CurveEditorView.presets[index]
+        guard index < CurveEditorView.presets.count else { return }
+        applyShape(CurveEditorView.presets[index])
+    }
+
+    private func applyShape(_ preset: (name: String, points: [(Double, Double)], spline: Bool)) {
+        guard let channel = currentChannel() else { return }
         let keys = channel.read()
         let first = keys.map(\.time).min() ?? 0
         var last = keys.map(\.time).max() ?? 0
@@ -1245,11 +1403,248 @@ struct CurveEditorView: View {
         setStops(group, stops.enumerated().map { ((span.first + Double($0) * step).rounded(), $1.color) }, title: "Distribute Color Stops")
     }
 
+    private func alphaChannel(_ group: CurveGroup) -> CurveChannel? { group.channels.first { $0.name == "Alpha" } }
+
+    private func trackSpan(_ group: CurveGroup) -> (first: Double, last: Double) {
+        let times = gradientStops(group).map(\.time) + (alphaChannel(group)?.read().map(\.time) ?? [])
+        let first = times.min() ?? 0
+        var last = times.max() ?? 0
+        if last - first < 1 { last = first + max(1, (document.clock.endFrame ?? document.sequencerRows.map(\.end).max() ?? 30).rounded()) }
+        return (first, last)
+    }
+
+    private func trackX(_ time: Double, _ span: (first: Double, last: Double), _ width: CGFloat) -> CGFloat {
+        8 + CGFloat((time - span.first) / (span.last - span.first)) * (width - 16)
+    }
+
+    private func trackTime(_ x: CGFloat, _ span: (first: Double, last: Double), _ width: CGFloat) -> Double {
+        max(0, (span.first + Double((x - 8) / max(width - 16, 1)) * (span.last - span.first)).rounded())
+    }
+
+    private func drawTracks(_ context: inout GraphicsContext, _ size: CGSize, _ group: CurveGroup) {
+        let span = trackSpan(group)
+        let channels = gradientChannels(group).map { $0.read() }
+        let alpha = alphaChannel(group)?.read() ?? []
+        let bar = CGRect(x: 8, y: 16, width: size.width - 16, height: 22)
+        context.fill(Path(bar), with: .color(Color(white: 0.1)))
+        if channels.count == 3 {
+            var px: CGFloat = 0
+            while px < bar.width {
+                let t = span.first + (span.last - span.first) * Double(px / bar.width)
+                let color = Color(.sRGB, red: CurveMath.sample(channels[0], at: t), green: CurveMath.sample(channels[1], at: t), blue: CurveMath.sample(channels[2], at: t))
+                context.fill(Path(CGRect(x: bar.minX + px, y: bar.minY, width: 2, height: 11)), with: .color(color))
+                let opacity = alpha.isEmpty ? 1 : min(max(CurveMath.sample(alpha, at: t), 0), 1)
+                context.fill(Path(CGRect(x: bar.minX + px, y: bar.minY + 11, width: 2, height: 11)), with: .color(color.opacity(opacity)))
+                px += 2
+            }
+        }
+        context.stroke(Path(bar), with: .color(Color.black.opacity(0.6)), lineWidth: 1)
+        let orange = Color(red: 1, green: 0.63, blue: 0.16)
+        for key in alpha {
+            let cx = trackX(key.time, span, size.width)
+            let chosen = stopPicked?.track == 0 && stopPicked?.time == key.time
+            var marker = Path()
+            marker.move(to: CGPoint(x: cx, y: 15))
+            marker.addLine(to: CGPoint(x: cx - 5, y: 9))
+            marker.addLine(to: CGPoint(x: cx - 5, y: 1))
+            marker.addLine(to: CGPoint(x: cx + 5, y: 1))
+            marker.addLine(to: CGPoint(x: cx + 5, y: 9))
+            marker.closeSubpath()
+            context.fill(marker, with: .color(Color(white: min(max(key.value, 0), 1))))
+            context.stroke(marker, with: .color(chosen ? orange : Color(white: 0.55)), lineWidth: chosen ? 1.6 : 1)
+        }
+        for stop in gradientStops(group) {
+            let cx = trackX(stop.time, span, size.width)
+            let chosen = stopPicked?.track == 1 && stopPicked?.time == stop.time
+            var marker = Path()
+            marker.move(to: CGPoint(x: cx, y: 39))
+            marker.addLine(to: CGPoint(x: cx - 5, y: 45))
+            marker.addLine(to: CGPoint(x: cx - 5, y: 53))
+            marker.addLine(to: CGPoint(x: cx + 5, y: 53))
+            marker.addLine(to: CGPoint(x: cx + 5, y: 45))
+            marker.closeSubpath()
+            context.fill(marker, with: .color(Color(.sRGB, red: stop.color.x, green: stop.color.y, blue: stop.color.z)))
+            context.stroke(marker, with: .color(chosen ? orange : Color(white: 0.75)), lineWidth: chosen ? 1.6 : 1)
+        }
+    }
+
+    private func trackTimes(_ group: CurveGroup, _ track: Int) -> [Double] {
+        track == 0 ? (alphaChannel(group)?.read().map(\.time) ?? []) : gradientStops(group).map(\.time)
+    }
+
+    private func moveTrackStop(_ group: CurveGroup, _ track: Int, from: Double, to: Double) -> Bool {
+        guard from != to, !trackTimes(group, track).contains(to) else { return false }
+        if track == 0 {
+            guard let channel = alphaChannel(group) else { return false }
+            var keys = channel.read()
+            guard let index = keys.firstIndex(where: { $0.time == from }) else { return false }
+            keys[index].time = to
+            channel.write(keys)
+        } else {
+            var stops = gradientStops(group)
+            guard let index = stops.firstIndex(where: { $0.time == from }) else { return false }
+            stops[index].time = to
+            writeStops(group, stops)
+        }
+        return true
+    }
+
+    private func trackSnapshot(_ group: CurveGroup, _ track: Int) -> (() -> Void)? {
+        track == 0 ? alphaChannel(group)?.snapshot() : gradientChannels(group).first?.snapshot()
+    }
+
+    private func addTrackStop(_ group: CurveGroup, _ track: Int, at time: Double) {
+        guard !trackTimes(group, track).contains(time), let before = trackSnapshot(group, track) else { return }
+        if track == 0 {
+            guard let channel = alphaChannel(group) else { return }
+            var keys = channel.read()
+            keys.append(CurveKeyPoint(time: time, value: keys.isEmpty ? 1 : min(max(CurveMath.sample(keys, at: time), 0), 1), interpolation: CurveKeyPoint.linear,
+                                      tangentOut: 0, tangentIn: 0))
+            channel.write(keys)
+        } else {
+            let keys = gradientChannels(group).map { $0.read() }
+            guard keys.count == 3 else { return }
+            var stops = gradientStops(group)
+            stops.append((time, SIMD3(CurveMath.sample(keys[0], at: time), CurveMath.sample(keys[1], at: time), CurveMath.sample(keys[2], at: time))))
+            writeStops(group, stops)
+        }
+        if let after = trackSnapshot(group, track) { document.registerUndo(track == 0 ? "Add Alpha Stop" : "Add Color Stop", undo: before, redo: after) }
+        stopPicked = (track, time)
+    }
+
+    private func removeTrackStop(_ group: CurveGroup, _ track: Int, at time: Double) {
+        guard trackTimes(group, track).count > 1, let before = trackSnapshot(group, track) else { return }
+        if track == 0 {
+            guard let channel = alphaChannel(group) else { return }
+            channel.write(channel.read().filter { $0.time != time })
+        } else {
+            writeStops(group, gradientStops(group).filter { $0.time != time })
+        }
+        if let after = trackSnapshot(group, track) { document.registerUndo(track == 0 ? "Remove Alpha Stop" : "Remove Color Stop", undo: before, redo: after) }
+        stopPicked = nil
+    }
+
+    private func trackChanged(_ gesture: DragGesture.Value, _ group: CurveGroup, _ width: CGFloat) {
+        let span = trackSpan(group)
+        if stopDrag == nil {
+            let track = gesture.startLocation.y < 16 ? 0 : gesture.startLocation.y > 38 ? 1 : -1
+            guard track >= 0 else { return }
+            var best: (time: Double, distance: CGFloat)?
+            for time in trackTimes(group, track) {
+                let d = abs(trackX(time, span, width) - gesture.startLocation.x)
+                if d < 8, d < (best?.distance ?? .infinity) { best = (time, d) }
+            }
+            guard let best, let restore = trackSnapshot(group, track) else { return }
+            stopDrag = (track, best.time, restore, false)
+            stopPicked = (track, best.time)
+        }
+        guard var active = stopDrag, abs(gesture.translation.width) > 2 || active.moved else { return }
+        let target = trackTime(gesture.location.x, span, width)
+        if moveTrackStop(group, active.track, from: active.time, to: target) {
+            active.time = target
+            stopPicked = (active.track, target)
+            document.liveDrag()
+        }
+        active.moved = true
+        stopDrag = active
+    }
+
+    private func trackEnded(_ gesture: DragGesture.Value, _ group: CurveGroup, _ width: CGFloat) {
+        let track = gesture.startLocation.y < 16 ? 0 : gesture.startLocation.y > 38 ? 1 : -1
+        let now = Date()
+        let double = now.timeIntervalSince(stopClick.time) < NSEvent.doubleClickInterval && abs(stopClick.x - gesture.location.x) < 5
+        if let active = stopDrag {
+            if active.moved {
+                if let after = trackSnapshot(group, active.track) {
+                    document.registerUndo(active.track == 0 ? "Move Alpha Stop" : "Move Color Stop", undo: active.restore, redo: after)
+                }
+            } else if double {
+                removeTrackStop(group, active.track, at: active.time)
+            }
+        } else if track >= 0, double {
+            addTrackStop(group, track, at: trackTime(gesture.location.x, trackSpan(group), width))
+        }
+        stopClick = double ? (.distantPast, 0) : (now, gesture.location.x)
+        stopDrag = nil
+    }
+
+    private func gradientTracks(_ group: CurveGroup) -> some View {
+        GeometryReader { geometry in
+            Canvas { context, size in drawTracks(&context, size, group) }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { trackChanged($0, group, geometry.size.width) }
+                    .onEnded { trackEnded($0, group, geometry.size.width) })
+        }
+        .frame(height: 54)
+        .help("Alpha stops above, colour stops below. Drag a stop to move it, double-click a track to add one, double-click a stop to remove it")
+    }
+
+    @ViewBuilder private func pickedStopRow(_ group: CurveGroup) -> some View {
+        if let picked = stopPicked, picked.track == 0, let channel = alphaChannel(group), let index = channel.read().firstIndex(where: { $0.time == picked.time }) {
+            HStack(spacing: 4) {
+                Text("Alpha").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 34, alignment: .leading)
+                NumberField(label: nil, value: channel.read()[index].value, step: 0.01,
+                            onLive: { _ in },
+                            onCommit: { _, next in
+                                change(channel, "Alpha Stop") { keys in if index < keys.count { keys[index].value = min(max(next, 0), 1) } }
+                            })
+                Text("frame \(Int(picked.time))").font(Theme.small).foregroundStyle(Theme.dim)
+            }
+        } else if let picked = stopPicked, picked.track == 1, let stop = gradientStops(group).first(where: { $0.time == picked.time }) {
+            let span = trackSpan(group)
+            HStack(spacing: 4) {
+                ColorField(color: SIMD4(stop.color.x, stop.color.y, stop.color.z, 1), alpha: false,
+                           onLive: { color in
+                               var live = gradientStops(group)
+                               guard let index = live.firstIndex(where: { $0.time == picked.time }) else { return }
+                               live[index].color = SIMD3(color.x, color.y, color.z)
+                               writeStops(group, live)
+                               document.liveDrag()
+                           },
+                           onCommit: { old, new in
+                               var edited = gradientStops(group)
+                               guard let index = edited.firstIndex(where: { $0.time == picked.time }) else { return }
+                               edited[index].color = SIMD3(old.x, old.y, old.z)
+                               writeStops(group, edited)
+                               edited[index].color = SIMD3(new.x, new.y, new.z)
+                               setStops(group, edited, title: "Color Stop")
+                               stopPicked = picked
+                           })
+                NumberField(label: nil, value: (picked.time - span.first) / (span.last - span.first) * 100, suffix: "%", step: 0.5, digits: 0,
+                            onLive: { _ in },
+                            onCommit: { _, next in
+                                let target = (span.first + min(max(next, 0), 100) / 100 * (span.last - span.first)).rounded()
+                                guard let before = trackSnapshot(group, 1), moveTrackStop(group, 1, from: picked.time, to: target),
+                                      let after = trackSnapshot(group, 1) else { return }
+                                document.registerUndo("Move Color Stop", undo: before, redo: after)
+                                stopPicked = (1, target)
+                            })
+                    .frame(width: 56)
+                    .help("Location of the stop along the gradient")
+                Image(systemName: "plus.square.on.square").font(.system(size: 10)).foregroundStyle(Theme.dim).frame(width: 18, height: 18).contentShape(Rectangle())
+                    .onTapGesture {
+                        var target = picked.time + 1
+                        let taken = Set(gradientStops(group).map(\.time))
+                        while taken.contains(target) { target += 1 }
+                        var stops = gradientStops(group)
+                        stops.append((target, stop.color))
+                        setStops(group, stops, title: "Duplicate Color Stop")
+                        stopPicked = (1, target)
+                    }
+                    .help("Duplicate this stop one frame later")
+            }
+        }
+    }
+
     private func gradientPanel(_ group: CurveGroup) -> some View {
         let stops = gradientStops(group)
         return VStack(alignment: .leading, spacing: 4) {
+            gradientTracks(group)
+            pickedStopRow(group)
             ForEach(Array(stops.enumerated()), id: \.offset) { index, stop in
                 HStack(spacing: 4) {
+                    Circle().fill(stopPicked?.track == 1 && stopPicked?.time == stop.time ? Color(red: 1, green: 0.63, blue: 0.16) : Color.clear).frame(width: 5, height: 5)
                     NumberField(label: nil, value: stop.time, isInteger: true, step: 1,
                                 onLive: { _ in },
                                 onCommit: { _, next in
@@ -1392,6 +1787,44 @@ struct CurveEditorView: View {
                             HelpBadge(text: "A preset replaces the keys of the active channel with a ready shape, kept inside the channel's current time and value range.")
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        FlowLayout(spacing: 4) {
+                            Text("Saved").font(Theme.small).foregroundStyle(Theme.dim).frame(height: 18)
+                            ForEach(Array(savedPresets.enumerated()), id: \.offset) { _, preset in
+                                Text(preset.name).font(Theme.small).foregroundStyle(Theme.text).padding(.horizontal, 6).frame(height: 18)
+                                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { applyShape(preset) }
+                                    .contextMenu { Button("Remove Preset") { removeSavedPreset(preset.name) } }
+                            }
+                            HStack(spacing: 3) {
+                                Image(systemName: "plus").font(.system(size: 8, weight: .bold))
+                                Text("Save").font(Theme.small)
+                            }
+                            .foregroundStyle(Theme.dim)
+                            .padding(.horizontal, 6)
+                            .frame(height: 18)
+                            .background(RoundedRectangle(cornerRadius: 4).stroke(Theme.dim.opacity(0.45), lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .onTapGesture { savePreset() }
+                            .help("Save the shape of the active channel as a named preset. Right-click a saved preset to remove it")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                Panel(title: "Range") {
+                    HStack(spacing: 4) {
+                        Text("Value").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 34, alignment: .leading)
+                        NumberField(label: nil, value: range.v0, step: 0.01, onLive: { if $0 < range.v1 - 1e-6 { range.v0 = $0 } },
+                                    onCommit: { _, next in if next < range.v1 - 1e-6 { range.v0 = next } })
+                        NumberField(label: nil, value: range.v1, step: 0.01, onLive: { if $0 > range.v0 + 1e-6 { range.v1 = $0 } },
+                                    onCommit: { _, next in if next > range.v0 + 1e-6 { range.v1 = next } })
+                    }
+                    HStack(spacing: 4) {
+                        Text("Frame").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 34, alignment: .leading)
+                        NumberField(label: nil, value: range.t0, isInteger: true, step: 1, onLive: { if $0 < range.t1 - 1 { range.t0 = $0 } },
+                                    onCommit: { _, next in if next < range.t1 - 1 { range.t0 = next } })
+                        NumberField(label: nil, value: range.t1, isInteger: true, step: 1, onLive: { if $0 > range.t0 + 1 { range.t1 = $0 } },
+                                    onCommit: { _, next in if next > range.t0 + 1 { range.t1 = next } })
                     }
                 }
                 if let group, gradientChannels(group).count == 3, document.format == .avfx {
@@ -1425,6 +1858,26 @@ struct CurveEditorView: View {
                             if channel.read()[active.index].interpolation == CurveKeyPoint.spline {
                                 keyField("Handle Out", channel, active.index, step: 0.01, get: { $0.tangentOut }, set: { $0.tangentOut = $1 })
                                 keyField("Handle In", channel, active.index, step: 0.01, get: { $0.tangentIn }, set: { $0.tangentIn = $1 })
+                                HStack(spacing: 2) {
+                                    Color.clear.frame(width: 72, height: 1)
+                                    SegmentButton(title: "Flat", active: false) {
+                                        change(channel, "Flat Handles") { keys in
+                                            if active.index < keys.count {
+                                                keys[active.index].tangentIn = 0
+                                                keys[active.index].tangentOut = 0
+                                            }
+                                        }
+                                    }
+                                    SegmentButton(title: "Auto", active: false) {
+                                        change(channel, "Auto Handles") { keys in
+                                            if active.index < keys.count {
+                                                keys[active.index].tangentIn = 1
+                                                keys[active.index].tangentOut = 1
+                                            }
+                                        }
+                                    }
+                                    Spacer(minLength: 0)
+                                }
                             }
                         }
                     }

@@ -556,11 +556,67 @@ struct AssetsView: View {
     @EnvironmentObject var app: AppModel
     @Binding var mode: Int
     @State private var filter = ""
+    @State private var selected: URL?
+    @AppStorage("assets.usedFirst") private var usedFirst = false
+
+    private func usage() -> (used: [URL: [TextureSlot]], missing: [TextureSlot]) {
+        var used: [URL: [TextureSlot]] = [:]
+        var missing: [TextureSlot] = []
+        for slot in app.document?.textureSlots ?? [] where !slot.path.isEmpty {
+            if let url = app.textureURL(slot.path) { used[url, default: []].append(slot) } else { missing.append(slot) }
+        }
+        return (used, missing)
+    }
+
+    private func details(_ asset: (name: String, relative: String, url: URL), _ slots: [TextureSlot]) -> some View {
+        let image = app.assetImage(asset.url)
+        let bytes = (try? asset.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return HStack(alignment: .top, spacing: 8) {
+            ZStack {
+                CheckerBackground()
+                if let image { Image(decorative: image, scale: 1).resizable().interpolation(.medium).aspectRatio(contentMode: .fit) }
+            }
+            .frame(width: 84, height: 84)
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(asset.name).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                Text(asset.relative).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                Text((image.map { "\($0.width) × \($0.height) · " } ?? "") + ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))
+                    .font(Theme.small).foregroundStyle(Theme.dim)
+                if slots.isEmpty {
+                    Text("Unused by this effect").font(Theme.small).foregroundStyle(Theme.dim)
+                } else {
+                    Text("Referenced by").font(Theme.small).foregroundStyle(Theme.dim)
+                    FlowLayout(spacing: 3) {
+                        ForEach(slots) { slot in
+                            Text(slot.nodeID.flatMap { app.document?.node($0)?.title } ?? slot.name).font(Theme.small).foregroundStyle(Theme.text)
+                                .padding(.horizontal, 5).frame(height: 16)
+                                .background(RoundedRectangle(cornerRadius: 3).fill(Theme.gray(0.24)))
+                                .contentShape(Rectangle())
+                                .onTapGesture { if let id = slot.nodeID { app.document?.selectionID = id } }
+                        }
+                    }
+                }
+                if slots.isEmpty, let document = app.document, document.format == .avfx {
+                    SegmentButton(title: "Add to Effect", active: false) {
+                        if let index = app.addTextureAsset(asset.url, to: document) { document.selectionID = "avfx/Tex/\(index)" }
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(Theme.panel)
+        .overlay(Rectangle().fill(Theme.line).frame(height: 1), alignment: .top)
+    }
 
     var body: some View {
         let needle = filter.lowercased()
         let all = app.textureAssets
-        let textures = Array(all.filter { needle.isEmpty || $0.relative.contains(needle) }.prefix(300))
+        let state = usage()
+        let matching = all.filter { needle.isEmpty || $0.relative.contains(needle) }
+        let ordered = usedFirst ? matching.filter { state.used[$0.url] != nil } + matching.filter { state.used[$0.url] == nil } : matching
+        let textures = Array(ordered.prefix(300))
         let models = app.modelAssets.filter { needle.isEmpty || $0.name.contains(needle) }
         VStack(spacing: 0) {
             EditorHeader(symbol: "photo.on.rectangle", title: "Assets") {
@@ -571,6 +627,7 @@ struct AssetsView: View {
                 .padding(.horizontal, 6)
                 .frame(height: 20)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
+                HeaderButton(symbol: "arrow.up.arrow.down", active: usedFirst, help: "Sort: textures used by the open effect first") { usedFirst.toggle() }
                 HeaderButton(symbol: "folder", help: "Show the File Browser") { mode = 0 }
             }
             ScrollView {
@@ -616,11 +673,17 @@ struct AssetsView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                                 Text(asset.name).font(.system(size: 8)).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.middle)
                             }
+                            .padding(2)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(selected == asset.url ? Theme.selection : Color.clear))
+                            .overlay(alignment: .topTrailing) {
+                                if state.used[asset.url] != nil { Circle().fill(Theme.changed).frame(width: 6, height: 6).padding(4) }
+                            }
                             .help(asset.relative)
                             .contentShape(Rectangle())
                             .onTapGesture(count: 2) {
                                 if let document = app.document, let index = app.addTextureAsset(asset.url, to: document) { document.selectionID = "avfx/Tex/\(index)" }
                             }
+                            .onTapGesture { selected = selected == asset.url ? nil : asset.url }
                             .draggable(asset.url)
                         }
                     }
@@ -642,6 +705,25 @@ struct AssetsView: View {
                 .padding(.vertical, 6)
             }
             .background(Theme.gray(0.157))
+            if let selected, let asset = all.first(where: { $0.url == selected }) { details(asset, state.used[selected] ?? []) }
+            HStack(spacing: 8) {
+                Text("\(all.count) textures · \(state.used.count) used here").font(Theme.small).foregroundStyle(Theme.dim)
+                Spacer(minLength: 4)
+                if !state.missing.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8))
+                        Text("\(state.missing.count) missing asset ref\(state.missing.count == 1 ? "" : "s")").font(Theme.small)
+                    }
+                    .foregroundStyle(Color.orange)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if let id = state.missing.first?.nodeID { app.document?.selectionID = id } }
+                    .help(state.missing.map(\.path).joined(separator: "\n") + "\n\nClick to select the first one")
+                }
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background(Theme.header)
         }
     }
 }

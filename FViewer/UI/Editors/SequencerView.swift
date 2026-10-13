@@ -25,6 +25,49 @@ struct SequencerView: View {
 
     private func currentSpan(_ end: Double) -> Double { frozenSpan ?? max(end, 1) * 1.08 + 4 }
     @State private var viewZoom: Double = 1
+    @AppStorage("timeline.snap") private var snapping = true
+
+    private func renameTarget(_ row: SequencerRow) -> String? {
+        guard let id = row.nodeID else { return nil }
+        switch document.visibilityKey(forNodeID: id) {
+        case .emitter(let index): return "avfx/Emit/\(index)"
+        case .particle(let index): return "avfx/Ptcl/\(index)"
+        case .timeline(let index): return "avfx/TmLn/\(index)"
+        case nil: return document.node(id) != nil ? id : nil
+        }
+    }
+
+    private func snapped(_ frame: Double, _ row: SequencerRow, _ width: CGFloat, _ span: Double) -> Double {
+        guard snapping else { return frame }
+        let reach = 7 * (span / viewZoom) / Double(max(width, 1))
+        var marks = [clock.time.rounded(), clock.startFrame]
+        if let end = clock.endFrame { marks.append(end) }
+        for other in document.sequencerRows where other.id != row.id && other.depth > 0 {
+            marks.append(other.start)
+            if !other.openEnded { marks.append(other.end) }
+        }
+        var best = frame
+        var nearest = reach
+        for mark in marks where abs(mark - frame) < nearest {
+            nearest = abs(mark - frame)
+            best = mark
+        }
+        return best
+    }
+
+    private func duplicateAtPlayhead(_ row: SequencerRow) {
+        guard let id = row.nodeID, let node = document.node(id), let duplicate = node.actions.first(where: { $0.title == "Duplicate" }) else { return }
+        let before = Set(document.sequencerRows.map(\.id))
+        let frame = clock.time.rounded()
+        duplicate.perform()
+        guard let fresh = document.sequencerRows.first(where: { !before.contains($0.id) }), let start = fresh.startField else { return }
+        let shift = frame - fresh.start
+        guard shift != 0 else { return }
+        func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
+        start.write?(value(start, start.read().number + shift))
+        if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, finish.read().number + shift)) }
+        document.amendLastUndo()
+    }
     @State private var viewStart: Double = 0
 
     private func x(_ t: Double, _ width: CGFloat, _ span: Double) -> CGFloat { CGFloat((t + 2 - viewStart) / (span / viewZoom)) * width }
@@ -52,6 +95,8 @@ struct SequencerView: View {
             Color.clear.frame(width: CGFloat(row.depth) * 12)
             RoundedRectangle(cornerRadius: 2).fill(row.tint.color).frame(width: 8, height: 8)
             Text(row.label).font(Theme.font).foregroundStyle(document.selectionID == row.nodeID ? .white : Theme.text).lineLimit(1)
+                .onTapGesture(count: 2) { if let target = renameTarget(row) { AppDelegate.model?.renameNode(target) } }
+                .help("Double-click to rename")
             if let id = row.nodeID, changes.contains(id) { ChangeDot(added: changes.added.contains(id)) }
             Spacer(minLength: 0)
             if let enabled = row.enabledField {
@@ -105,6 +150,13 @@ struct SequencerView: View {
         .opacity(row.enabledField.map { $0.read() == .bool(true) ? 1 : 0.55 } ?? 1)
         .contextMenu {
             if let id = row.nodeID, let node = document.node(id) {
+                if let target = renameTarget(row) { Button("Rename…") { AppDelegate.model?.renameNode(target) } }
+                Button("Copy Parameters") { ParameterClipboard.copy(node, in: document) }
+                Button("Paste Parameters") { ParameterClipboard.paste(into: node, in: document) }
+                if row.depth > 0, node.actions.contains(where: { $0.title == "Duplicate" }) {
+                    Button("Duplicate at Playhead") { duplicateAtPlayhead(row) }
+                }
+                Divider()
                 ForEach(node.actions) { action in Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform) }
             }
         }
@@ -175,6 +227,9 @@ struct SequencerView: View {
                     .onAppear { if showDensity { document.scheduleDensity() } }
                     .onChange(of: document.previewRevision) { _, _ in if showDensity { document.scheduleDensity() } }
                     .onChange(of: document.id) { _, _ in if showDensity { document.scheduleDensity() } }
+                    HeaderButton(symbol: "dot.squareshape.split.2x2", active: snapping,
+                                 help: "Snap: a dragged strip sticks to the playhead, the playback range and the edges of other strips") { snapping.toggle() }
+                    Slider(value: $viewZoom, in: 1...40).controlSize(.mini).frame(width: 70).help("Timeline zoom")
                     HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
                         viewZoom = 1
                         viewStart = 0
@@ -382,13 +437,20 @@ struct SequencerView: View {
         let delta = (Double(drag.translation.width / max(width, 1)) * span / viewZoom).rounded()
         func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
         if dragMode == 2 {
-            let shift = max(delta, -dragStart)
+            var shift = max(delta, -dragStart)
+            let byStart = snapped(dragStart + shift, row, width, span)
+            if byStart != dragStart + shift {
+                shift = byStart - dragStart
+            } else if !row.openEnded, dragEnd > 0 {
+                shift = snapped(dragEnd + shift, row, width, span) - dragEnd
+            }
+            shift = max(shift, -dragStart)
             if let start = row.startField { start.write?(value(start, dragStart + shift)) }
             if let end = row.endField, !row.openEnded, dragEnd > 0 { end.write?(value(end, dragEnd + shift)) }
         } else if dragMode == 3, let end = row.endField {
-            end.write?(value(end, max(dragStart + 1, dragEnd + delta)))
+            end.write?(value(end, max(dragStart + 1, snapped(dragEnd + delta, row, width, span))))
         } else if dragMode == 4, let start = row.startField {
-            start.write?(value(start, min(max(0, dragStart + delta), dragEnd - 1)))
+            start.write?(value(start, min(max(0, snapped(dragStart + delta, row, width, span)), dragEnd - 1)))
         }
         document.liveDrag()
     }

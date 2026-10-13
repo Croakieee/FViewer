@@ -8,6 +8,8 @@ final class ViewportCamera: ObservableObject {
     @Published var pitch: Float = 0.45
     @Published var distance: Float = 8
     @Published var target = SIMD3<Float>(0, 1, 0)
+    @Published var ortho = false
+    @Published var fov: Float = 0.75
 
     var eye: SIMD3<Float> {
         target + distance * SIMD3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
@@ -121,6 +123,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var floor: DrawItem?
     private var sceneColor: MTLTexture?
     private var postPipeline: MTLRenderPipelineState?
+    private var bloomPipeline: MTLRenderPipelineState?
+    private var backdrop: (token: Int, aspect: Float, item: DrawItem)?
+    static var bloom: (on: Bool, threshold: Float, intensity: Float, radius: Float) = (false, 0.7, 0.8, 0.03)
+    static var backgroundColor: SIMD3<Double>?
+    static var backgroundImage: CGImage?
+    static var backgroundToken = 0
     static var referenceMesh: MeshData?
     static var referenceToken = 0
     private var referenceToken = -1
@@ -173,6 +181,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         post.fragmentFunction = library.makeFunction(name: "postFragment")
         post.colorAttachments[0].pixelFormat = .bgra8Unorm
         postPipeline = try? device.makeRenderPipelineState(descriptor: post)
+        post.fragmentFunction = library.makeFunction(name: "bloomFragment")
+        bloomPipeline = try? device.makeRenderPipelineState(descriptor: post)
 
         let depth = MTLDepthStencilDescriptor()
         depth.depthCompareFunction = .lessEqual
@@ -368,6 +378,52 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         var count = SIMD4<Float>(0, 1, 0, 0)
     }
 
+    private func applyBloom(buffer: MTLCommandBuffer, target: MTLTexture) {
+        guard let bloomPipeline, !target.isFramebufferOnly else { return }
+        if postSource?.width != target.width || postSource?.height != target.height {
+            let copy = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: target.pixelFormat, width: target.width, height: target.height, mipmapped: false)
+            copy.usage = [.shaderRead]
+            copy.storageMode = .private
+            postSource = device.makeTexture(descriptor: copy)
+        }
+        guard let postSource, let blit = buffer.makeBlitCommandEncoder() else { return }
+        blit.copy(from: target, to: postSource)
+        blit.endEncoding()
+        let settings = ViewportRenderer.bloom
+        var uniforms = SIMD4<Float>(settings.threshold, settings.intensity, settings.radius, Float(target.width) / Float(max(target.height, 1)))
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .dontCare
+        pass.colorAttachments[0].storeAction = .store
+        guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+        encoder.setRenderPipelineState(bloomPipeline)
+        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+        encoder.setFragmentTexture(postSource, index: 0)
+        encoder.setFragmentSamplerState(postSampler ?? sampler, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        encoder.endEncoding()
+    }
+
+    private func backdropItem(aspect: Float) -> DrawItem? {
+        guard let image = ViewportRenderer.backgroundImage else {
+            backdrop = nil
+            return nil
+        }
+        if let backdrop, backdrop.token == ViewportRenderer.backgroundToken, abs(backdrop.aspect - aspect) < 1e-4 { return backdrop.item }
+        let loader = MTKTextureLoader(device: device)
+        guard let map = backdrop?.token == ViewportRenderer.backgroundToken ? backdrop?.item.map
+                : try? loader.newTexture(cgImage: image, options: [.SRGB: false, .generateMipmaps: true]) else { return nil }
+        let ratio = Float(image.width) / Float(max(image.height, 1)) / max(aspect, 1e-4)
+        let w: Float = ratio >= 1 ? ratio : 1, h: Float = ratio >= 1 ? 1 : 1 / ratio
+        let corners = [(-w, -h, Float(0), Float(1)), (w, -h, 1, 1), (w, h, 1, 0), (-w, -h, 0, 1), (w, h, 1, 0), (-w, h, 0, 0)]
+        let quad = corners.map { MeshVertex(position: SIMD3($0.0, $0.1, 0.9999), normal: SIMD3(0, 0, 1), color: SIMD4(1, 1, 1, 1), uv: SIMD2($0.2, $0.3)) }
+        guard let buffer = device.makeBuffer(bytes: quad, length: MemoryLayout<MeshVertex>.stride * quad.count) else { return nil }
+        let item = DrawItem(vertices: buffer, indices: nil, count: quad.count, primitive: .triangle, tint: SIMD4(1, 1, 1, 1), lit: false, textured: false,
+                            wire: false, map: map)
+        backdrop = (ViewportRenderer.backgroundToken, aspect, item)
+        return item
+    }
+
     private func applyPost(_ effects: [ScreenEffect], buffer: MTLCommandBuffer, target: MTLTexture, viewProjection: simd_float4x4) {
         guard let postPipeline, !target.isFramebufferOnly else { return }
         if postSource?.width != target.width || postSource?.height != target.height {
@@ -520,7 +576,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 lines.append((handle.points[i - 1], color))
                 lines.append((handle.points[i], color))
             }
-            if handle.kind != 1, let tip = handle.points.last, handle.kind != 3 || true { tips.append(MeshVertex(position: tip, normal: .zero, color: color, uv: .zero)) }
+            if handle.kind != 1, handle.kind != 5, let tip = handle.points.last { tips.append(MeshVertex(position: tip, normal: .zero, color: color, uv: .zero)) }
         }
         var result: [DrawItem] = []
         if let item = lineItem(lines) { result.append(item) }
@@ -558,13 +614,18 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let forward = simd_normalize(camera.eye - camera.target)
         let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
         let up = simd_cross(forward, right)
-        let half = tan(Float(0.75) / 2)
+        let half = tan(camera.fov / 2)
         let x = (Float(point.x / size.width) * 2 - 1) * half * Float(size.width / size.height)
         let y = (Float(point.y / size.height) * 2 - 1) * half
-        let direction = simd_normalize(right * x + up * y - forward)
-        let state = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: up, z: forward), fovY: 0.75,
+        var origin = camera.eye
+        var direction = simd_normalize(right * x + up * y - forward)
+        if camera.ortho {
+            origin = camera.eye + (right * x + up * y) * camera.distance
+            direction = -forward
+        }
+        let state = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: up, z: forward), fovY: camera.fov,
                                 viewportHeight: Float(size.height))
-        if let particle = simulation.pick(origin: camera.eye, direction: direction, camera: state, filter: filter) {
+        if let particle = simulation.pick(origin: origin, direction: direction, camera: state, filter: filter) {
             let id = "avfx/Ptcl/\(particle)"
             if document.node(id) != nil { document.selectionID = id }
         } else {
@@ -582,7 +643,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
               let buffer = queue.makeCommandBuffer() else { return }
         let aspect = Float(view.drawableSize.width / max(view.drawableSize.height, 1))
         let near = max(camera.distance * 0.01, 0.01)
-        let projection = ViewportRenderer.perspective(fovY: 0.75, aspect: aspect, near: near, far: 2000)
+        let projection = camera.ortho
+            ? ViewportRenderer.orthographic(height: 2 * camera.distance * tan(camera.fov / 2), aspect: aspect, near: near, far: 2000)
+            : ViewportRenderer.perspective(fovY: camera.fov, aspect: aspect, near: near, far: 2000)
         var viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
         if quake.amount > 0 {
             let reach = min(quake.amount, 4) * camera.distance * 0.012
@@ -599,7 +662,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let forward = simd_normalize(camera.eye - camera.target)
         let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
         let cameraState = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: simd_cross(forward, right), z: forward),
-                                      fovY: 0.75, viewportHeight: Float(view.drawableSize.height))
+                                      fovY: camera.fov, viewportHeight: Float(view.drawableSize.height))
         let effect = effectDraws(elapsed: elapsed, camera: cameraState)
         let screen = effect != nil ? player?.simulation?.screenEffects(camera: camera.eye, filter: filter) : nil
         quake = (screen?.quake ?? 0, screen?.phase ?? 0)
@@ -641,6 +704,16 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                               tint: map == nil ? SIMD4(0.62, 0.62, 0.66, 1) : SIMD4(1, 1, 1, 1), lit: true, textured: false, wire: false, map: map))
                 }
             }
+        }
+        if showEffect, let item = backdropItem(aspect: aspect) {
+            var uniforms = Uniforms(viewProjection: matrix_identity_float4x4, model: matrix_identity_float4x4, tint: item.tint, options: SIMD4(0, 1, 1, 0))
+            encoder.setDepthStencilState(overlayDepthState)
+            encoder.setTriangleFillMode(.fill)
+            encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentTexture(item.map ?? white, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: item.count)
         }
         for (pass, list) in [ground, grid, items, reference].enumerated() {
             for item in list {
@@ -718,6 +791,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         encoder.endEncoding()
         if let effects = screen?.effects, !effects.isEmpty, let postPipeline { applyPost(Array(effects.prefix(4)), buffer: buffer, target: drawable.texture, viewProjection: viewProjection) }
+        if ViewportRenderer.bloom.on, showEffect { applyBloom(buffer: buffer, target: drawable.texture) }
         if let request = captureRequest, effect != nil {
             captureRequest = nil
             let texture = drawable.texture
@@ -743,6 +817,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let x = y / aspect
         let z = far / (near - far)
         return simd_float4x4(columns: (SIMD4(x, 0, 0, 0), SIMD4(0, y, 0, 0), SIMD4(0, 0, z, -1), SIMD4(0, 0, z * near, 0)))
+    }
+
+    static func orthographic(height: Float, aspect: Float, near: Float, far: Float) -> simd_float4x4 {
+        let y = 2 / max(height, 1e-5)
+        let x = y / aspect
+        let z = 1 / (near - far)
+        return simd_float4x4(columns: (SIMD4(x, 0, 0, 0), SIMD4(0, y, 0, 0), SIMD4(0, 0, z, 0), SIMD4(0, 0, z * near, 1)))
     }
 
     static func lookAt(eye: SIMD3<Float>, target: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
@@ -863,7 +944,11 @@ struct MetalViewport: NSViewRepresentable {
 
     func updateNSView(_ view: ViewportMTKView, context: Context) {
         let shade = AppModel.backgrounds[min(max(background, 0), AppModel.backgrounds.count - 1)].value
-        view.clearColor = MTLClearColor(red: shade, green: shade, blue: shade, alpha: 1)
+        if let custom = ViewportRenderer.backgroundColor {
+            view.clearColor = MTLClearColor(red: custom.x, green: custom.y, blue: custom.z, alpha: 1)
+        } else {
+            view.clearColor = MTLClearColor(red: shade, green: shade, blue: shade, alpha: 1)
+        }
         context.coordinator?.document = document
         context.coordinator?.app = app
         context.coordinator?.update(scene)

@@ -74,6 +74,7 @@ final class AppModel: ObservableObject {
         restoreGameFolder()
         restoreSkeleton()
         startAutosave()
+        loadPreviewSettings()
     }
 
     func chooseLibrary() {

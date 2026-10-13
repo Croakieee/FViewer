@@ -14,6 +14,7 @@ final class AvfxPlayer {
     private var appliedTriggers = 0
     private var statusTick = 0
     private var workTime: Double = 0
+    private var frameRate: Double = 0
     private let stepFrames: Float = 0.5
 
     init(document: EffectDocument) {
@@ -72,9 +73,12 @@ final class AvfxPlayer {
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1
         workTime = workTime * 0.9 + (CACurrentMediaTime() - began) * 100
+        if elapsed > 1e-4 { frameRate = frameRate == 0 ? 1 / elapsed : frameRate * 0.9 + 0.1 / elapsed }
         if statusTick % 12 == 0 {
             let shown = (workTime * 10).rounded() / 10
             if clock.frameMilliseconds != shown { DispatchQueue.main.async { clock.frameMilliseconds = shown } }
+            let rate = (frameRate).rounded()
+            if clock.framesPerSecond != rate { DispatchQueue.main.async { clock.framesPerSecond = rate } }
         }
         if simulation.clipLog.count != loggedClips {
             loggedClips = simulation.clipLog.count

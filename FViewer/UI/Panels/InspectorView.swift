@@ -376,25 +376,32 @@ struct InspectorView: View {
                 Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
             }
             if case .avfx(let block, _, let record) = node.payload, record == nil, !RecipeRows.recipes(for: block.tag).isEmpty {
-                Panel(title: "Recipes") {
+                Panel(title: "Recipes", memory: "recipes") {
                     RecipeRows(document: document, fields: sections.flatMap(\.fields), recipes: RecipeRows.recipes(for: block.tag))
                 }
             }
             ForEach(sections) { section in
-                Panel(title: section.title, trailing: "\(section.fields.count)") {
+                let edited = document.changes.contains(node.id) ? section.fields.filter { document.isChanged($0, in: node.id) }.count : 0
+                Panel(title: section.title, trailing: "\(section.fields.count)", badge: edited > 0 ? "\(edited) edited" : "",
+                      memory: ParameterClipboard.kind(of: node) + "/" + (section.title.rangeOfCharacter(from: .decimalDigits) == nil ? section.title : "main")) {
                     FieldRows(document: document, fields: section.fields, nodeID: node.id)
                 }
             }
             if !missingFields.isEmpty {
-                Panel(title: "Not Set", trailing: "\(missingFields.count)") { UnsetRows(items: missingFields) }
+                Panel(title: "Not Set", trailing: "\(missingFields.count)", memory: "notset") { UnsetRows(items: missingFields) }
             }
             if !curves.isEmpty || !missing.isEmpty {
-                Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missing.count)") {
-                    ForEach(curves) { group in
-                        curveRow(group)
-                        if ConstantCurveFields.applies(group) { ConstantCurveFields(document: document, group: group) }
+                let animated = curves.filter { curveChanged($0) }.count
+                Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missing.count)", badge: animated > 0 ? "\(animated) edited" : "",
+                      memory: "animation") {
+                    let paired = CurveValueRows.pairs(curves, missing)
+                    ForEach(paired.rows, id: \.group.id) { row in
+                        CurveValueRows(document: document, group: row.group, changed: curveChanged(row.group), random: row.random, addRandom: row.add) {
+                            document.activeCurveID = row.group.id
+                            app.bottomTab = 1
+                        }
                     }
-                    if !missing.isEmpty { UnsetRows(items: missing) }
+                    if !paired.rest.isEmpty { UnsetRows(items: paired.rest) }
                 }
             }
             if !node.children.isEmpty {
@@ -411,36 +418,6 @@ struct InspectorView: View {
     private func curveChanged(_ group: CurveGroup) -> Bool {
         guard let id = document.selectionID, document.changes.contains(id) else { return false }
         return group.channels.contains { channel in document.originalKeys(group: group.id, channel: channel.id, in: id) != channel.read() }
-    }
-
-    private func curveRow(_ group: CurveGroup) -> some View {
-        let active = document.activeCurveID == group.id
-        let keyCount = group.channels.map { $0.read().count }.max() ?? 0
-        return HStack(spacing: 6) {
-            HStack(spacing: 1) {
-                ForEach(group.channels.prefix(4)) { channel in
-                    Rectangle().fill(channel.color).frame(width: 3, height: 12)
-                }
-            }
-            .frame(width: 18, alignment: .leading)
-            Text(group.title).font(Theme.font).foregroundStyle(curveChanged(group) ? Theme.changed : Theme.text).lineLimit(1)
-            if curveChanged(group) { ChangeDot() }
-            Spacer(minLength: 4)
-            Text("\(keyCount) keys").font(Theme.small).foregroundStyle(Theme.dim)
-            if let remove = group.remove {
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
-                    .frame(width: 14, height: 20).contentShape(Rectangle())
-                    .onTapGesture(perform: remove).help("Remove this curve from the file")
-            }
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.selection : Theme.field.opacity(0.45)))
-        .contentShape(Rectangle())
-        .onTapGesture {
-            document.activeCurveID = group.id
-            app.bottomTab = 1
-        }
     }
 
     @ViewBuilder private var textures: some View {

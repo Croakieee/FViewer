@@ -121,7 +121,8 @@ struct TopBar: View {
                 Text(document.format == .avfx ? "AVFX" : "JSON").font(.system(size: 9, weight: .bold)).foregroundStyle(.black)
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(RoundedRectangle(cornerRadius: 3).fill(document.format == .avfx ? NodeTint.particle.color : NodeTint.emitter.color))
-                Text(document.title + (document.isDirty ? " •" : "")).font(Theme.font).foregroundStyle(Theme.text)
+                EffectLibraryButton(title: document.title + (document.isDirty ? " •" : ""))
+                StatusPill(document: document)
                 if document.roundTripExact == false {
                     HStack(spacing: 3) {
                         Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
@@ -156,6 +157,68 @@ struct TopBar: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+}
+
+struct EffectLibraryButton: View {
+    @EnvironmentObject var app: AppModel
+    let title: String
+    @State private var shown = false
+    @State private var filter = ""
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(title).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
+            Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.dim)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(shown ? Theme.gray(0.26) : Color.clear))
+        .contentShape(Rectangle())
+        .onTapGesture { shown.toggle() }
+        .help("Effects of the open folder: search and switch")
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            let needle = filter.lowercased()
+            let files = app.files.filter { needle.isEmpty || $0.name.lowercased().contains(needle) || $0.folder.lowercased().contains(needle) }
+            VStack(spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 9)).foregroundStyle(Theme.dim)
+                    TextField("Search effects…", text: $filter).textFieldStyle(.plain).font(Theme.font).foregroundStyle(Theme.text)
+                }
+                .padding(.horizontal, 6)
+                .frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
+                ScrollView {
+                    LazyVStack(spacing: 1) {
+                        ForEach(files.prefix(400)) { file in
+                            let current = app.document?.url == file.url
+                            HStack(spacing: 6) {
+                                Image(systemName: current ? "checkmark" : "sparkle").font(.system(size: 9))
+                                    .foregroundStyle(current ? Theme.text : (file.isAvfx ? NodeTint.particle.color : NodeTint.emitter.color)).frame(width: 12)
+                                Text(file.name).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                                if app.isDirty(file.url) { Circle().fill(Theme.text).frame(width: 5, height: 5) }
+                                Spacer(minLength: 4)
+                                Text(file.folder).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.head)
+                            }
+                            .padding(.horizontal, 6)
+                            .frame(height: 20)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(current ? Theme.selection : Color.clear))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                app.open(file.url)
+                                shown = false
+                            }
+                        }
+                    }
+                }
+                .frame(height: 320)
+                Text("\(files.count) of \(app.files.count) effects").font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(10)
+            .frame(width: 380)
+            .background(Theme.panel)
+            .preferredColorScheme(Theme.scheme)
+        }
     }
 }
 

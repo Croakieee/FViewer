@@ -3,6 +3,7 @@ import simd
 
 struct AxisGizmo: View {
     @ObservedObject var camera: ViewportCamera
+    @State private var dragged: CGPoint?
 
     var body: some View {
         Canvas { context, size in
@@ -39,7 +40,45 @@ struct AxisGizmo: View {
             }
         }
         .frame(width: 76, height: 76)
-        .allowsHitTesting(false)
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if hypot(value.translation.width, value.translation.height) > 3 {
+                    let last = dragged ?? value.startLocation
+                    camera.orbit(dx: Float(value.location.x - last.x) * 1.5, dy: Float(value.location.y - last.y) * 1.5)
+                    dragged = value.location
+                }
+            }
+            .onEnded { value in
+                if dragged == nil { tap(value.location) }
+                dragged = nil
+            })
+        .help("Click an axis to look along it, click the centre to switch between perspective and orthographic, drag to orbit")
+    }
+
+    private func tap(_ point: CGPoint) {
+        let center = CGPoint(x: 38, y: 38)
+        let radius: CGFloat = 38 - 9
+        let forward = simd_normalize(camera.target - camera.eye)
+        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = simd_cross(right, forward)
+        let views: [(SIMD3<Float>, Float, Float)] = [
+            (SIMD3(1, 0, 0), .pi / 2, 0), (SIMD3(-1, 0, 0), -.pi / 2, 0), (SIMD3(0, 1, 0), camera.yaw, 1.55), (SIMD3(0, -1, 0), camera.yaw, -1.55),
+            (SIMD3(0, 0, 1), 0, 0), (SIMD3(0, 0, -1), .pi, 0),
+        ]
+        var best: (distance: CGFloat, depth: Float, yaw: Float, pitch: Float)?
+        for view in views {
+            let ball = CGPoint(x: center.x + CGFloat(simd_dot(view.0, right)) * radius, y: center.y - CGFloat(simd_dot(view.0, up)) * radius)
+            let distance = hypot(ball.x - point.x, ball.y - point.y)
+            let depth = -simd_dot(view.0, forward)
+            let nearest = best?.depth ?? -2
+            if (distance < 9) && (depth > nearest) { best = (distance, depth, view.1, view.2) }
+        }
+        if let best {
+            camera.setView(yaw: best.yaw, pitch: best.pitch)
+        } else if hypot(point.x - center.x, point.y - center.y) < 14 {
+            camera.ortho.toggle()
+        }
     }
 }
 
@@ -61,19 +100,157 @@ struct SoloButton: View {
     }
 }
 
-struct ViewportStats: View {
-    @ObservedObject var clock: PlaybackClock
+struct ProjectionLabel: View {
+    @ObservedObject var camera: ViewportCamera
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text(clock.status.isEmpty ? "—" : clock.status)
-            Text("frame \(Int(clock.time.rounded()))")
-            Text(String(format: "%.2f s", clock.time / 30))
-            if clock.frameMilliseconds > 0 { Text(String(format: "%.1f ms", clock.frameMilliseconds)) }
+        Text(camera.ortho ? "User Orthographic" : "User Perspective").font(.system(size: 11, weight: .medium))
+    }
+}
+
+struct ViewportFooter: View {
+    @ObservedObject var clock: PlaybackClock
+    @ObservedObject var camera: ViewportCamera
+    let reset: () -> Void
+
+    private func readout(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label).foregroundStyle(Theme.dim)
+            Text(value).foregroundStyle(Theme.text)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            readout("effect", clock.status.isEmpty ? "—" : clock.status)
+            readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(clock.time.rounded())))
+            if clock.frameMilliseconds > 0 { readout("timing", String(format: "%.1f ms · %.0f fps", clock.frameMilliseconds, clock.framesPerSecond)) }
+            Spacer(minLength: 4)
+            HeaderButton(symbol: "arrow.counterclockwise", help: "Reset View: frame the whole effect") { reset() }
+            CheckBox(isOn: camera.ortho, label: "ortho") { camera.ortho = $0 }.fixedSize()
+            HStack(spacing: 4) {
+                Text("FOV").foregroundStyle(Theme.dim)
+                NumberField(label: nil, value: Double(camera.fov * 180 / .pi), suffix: "°", step: 0.5, digits: 0,
+                            onLive: { camera.fov = Float(min(max($0, 8), 90)) * .pi / 180 },
+                            onCommit: { _, next in camera.fov = Float(min(max(next, 8), 90)) * .pi / 180 })
+                    .frame(width: 56)
+            }
+            .opacity(camera.ortho ? 0.4 : 1)
+            .allowsHitTesting(!camera.ortho)
+            CheckBox(isOn: clock.lockSeed, label: "lock seed") { clock.lockSeed = $0 }.fixedSize()
+                .help("On: every replay uses the same random seed. Off: each restart and loop picks a new one, so replays vary")
         }
         .font(.system(size: 10, design: .monospaced))
-        .foregroundStyle(Color.white.opacity(0.75))
-        .shadow(color: .black, radius: 1)
+        .lineLimit(1)
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(Theme.header)
+    }
+}
+
+struct PreviewMenu: View {
+    @EnvironmentObject var app: AppModel
+    @State private var shown = false
+
+    private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).frame(width: 70, alignment: .trailing)
+            content()
+        }
+    }
+
+    var body: some View {
+        let bloom = ViewportRenderer.bloom
+        HStack(spacing: 4) {
+            Image(systemName: "sparkles.rectangle.stack").font(.system(size: 10))
+            Text(bloom.on ? "Preview · Bloom" : "Preview").font(Theme.font)
+        }
+        .foregroundStyle(Theme.text)
+        .padding(.horizontal, 7)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(shown || bloom.on ? Theme.accent : Theme.gray(0.22)))
+        .contentShape(Rectangle())
+        .onTapGesture { shown.toggle() }
+        .help("Preview background and bloom. Neither is saved into the effect")
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Background").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+                FlowLayout(spacing: 4) {
+                    ForEach(Array(AppModel.backgrounds.enumerated()), id: \.offset) { index, entry in
+                        SegmentButton(title: entry.name, active: ViewportRenderer.backgroundColor == nil && app.viewportBackground == index) {
+                            app.viewportBackground = index
+                            app.setPreviewColor(nil)
+                        }
+                    }
+                }
+                row("Color") {
+                    let shade = AppModel.backgrounds[min(max(app.viewportBackground, 0), AppModel.backgrounds.count - 1)].value
+                    let current = ViewportRenderer.backgroundColor ?? SIMD3(shade, shade, shade)
+                    ColorField(color: SIMD4(current.x, current.y, current.z, 1), alpha: false,
+                               onLive: { app.setPreviewColor(SIMD3($0.x, $0.y, $0.z)) },
+                               onCommit: { _, next in app.setPreviewColor(SIMD3(next.x, next.y, next.z)) })
+                }
+                row("Image") {
+                    SegmentButton(title: ViewportRenderer.backgroundImage == nil ? "Choose…" : "Replace…", active: false) { app.choosePreviewImage() }
+                    if ViewportRenderer.backgroundImage != nil { SegmentButton(title: "Remove", active: false) { app.clearPreviewImage() } }
+                    Spacer(minLength: 0)
+                }
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                CheckBox(isOn: bloom.on, label: "Bloom") { app.setBloom(on: $0) }
+                row("Threshold") {
+                    NumberField(label: nil, value: Double(bloom.threshold), step: 0.01, digits: 2, onLive: { app.setBloom(threshold: Float($0)) },
+                                onCommit: { _, next in app.setBloom(threshold: Float(next)) })
+                }
+                row("Intensity") {
+                    NumberField(label: nil, value: Double(bloom.intensity), step: 0.01, digits: 2, onLive: { app.setBloom(intensity: Float($0)) },
+                                onCommit: { _, next in app.setBloom(intensity: Float(next)) })
+                }
+                row("Scatter") {
+                    NumberField(label: nil, value: Double(bloom.radius * 100), step: 0.05, digits: 1, onLive: { app.setBloom(radius: Float($0) / 100) },
+                                onCommit: { _, next in app.setBloom(radius: Float(next) / 100) })
+                }
+                Text("Bloom is a preview aid: it shows how bright parts would glow, the game applies its own.").font(Theme.small).foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(width: 290)
+            .background(Theme.panel)
+            .preferredColorScheme(Theme.scheme)
+        }
+    }
+}
+
+struct GizmoMenu: View {
+    @EnvironmentObject var app: AppModel
+    @State private var shown = false
+
+    private var states: [Bool] { [app.showGizmo, app.highlightSelection, app.showEmitters, app.showBindPoints, app.showFloor] }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "eye").font(.system(size: 10))
+            Text("Gizmos").font(Theme.font)
+            Text("\(states.filter { $0 }.count)/\(states.count)").font(Theme.small).foregroundStyle(Theme.dim)
+        }
+        .foregroundStyle(Theme.text)
+        .padding(.horizontal, 7)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(shown ? Theme.accent : Theme.gray(0.22)))
+        .contentShape(Rectangle())
+        .onTapGesture { shown.toggle() }
+        .help("Choose which helpers are drawn in the viewport")
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 6) {
+                CheckBox(isOn: app.showGizmo, label: "Move, rotate, scale and shape handles") { app.showGizmo = $0 }
+                CheckBox(isOn: app.highlightSelection, label: "Wire of the selected emitter or particle") { app.highlightSelection = $0 }
+                CheckBox(isOn: app.showEmitters, label: "Emitter axes and shape points") { app.showEmitters = $0 }
+                CheckBox(isOn: app.showBindPoints, label: "Reference figure and bind points") { app.showBindPoints = $0 }
+                CheckBox(isOn: app.showFloor, label: "Floor") { app.showFloor = $0 }
+            }
+            .padding(12)
+            .background(Theme.panel)
+            .preferredColorScheme(Theme.scheme)
+        }
     }
 }
 
@@ -136,8 +313,6 @@ struct ViewportPanel: View {
 
     private var isolateButton: some View {
         HStack(spacing: 1) {
-            HeaderButton(symbol: "sparkle.magnifyingglass", active: app.highlightSelection,
-                         help: "Outline the selected emitter or particle in the playing effect") { app.highlightSelection.toggle() }
             HeaderButton(symbol: "scope", active: document.isolateSelection, help: "Isolate the selected timeline, emitter or particle") {
                 document.isolateSelection.toggle()
             }
@@ -179,11 +354,6 @@ struct ViewportPanel: View {
                             document.showOriginal.toggle()
                         }
                     }
-                    HeaderButton(symbol: "move.3d", active: app.showGizmo,
-                                 help: "Show move, rotate and radius handles on the selected emitter or particle") { app.showGizmo.toggle() }
-                    HeaderButton(symbol: "square.fill.on.square", active: app.showFloor, help: "Show a floor that effect lights and soft particles react to") {
-                        app.showFloor.toggle()
-                    }
                     PlaneButton(document: document, clock: document.clock)
                     isolateButton
                     shadingButtons
@@ -218,12 +388,8 @@ struct ViewportPanel: View {
                 Spacer()
                 if scene.showEffect {
                     HelpBadge(text: "Drag: orbit\n⇧ Drag or right drag: pan\nScroll: orbit on a trackpad, zoom with a mouse wheel\nPinch or ⌘ Scroll: zoom\n1 / 3 / 7: front, right, top\n. : frame all")
-                    HeaderButton(symbol: "dot.radiowaves.left.and.right", active: app.showEmitters, help: "Show emitter axes and shape points") {
-                        app.showEmitters.toggle()
-                    }
-                    HeaderButton(symbol: "figure.stand", active: app.showBindPoints, help: "Show the reference figure and bind points") {
-                        app.showBindPoints.toggle()
-                    }
+                    PreviewMenu()
+                    GizmoMenu()
                     isolateButton
                     shadingButtons
                 } else {
@@ -239,7 +405,7 @@ struct ViewportPanel: View {
             ZStack(alignment: .topLeading) {
                 MetalViewport(camera: camera, scene: scene, document: document, app: app, background: app.viewportBackground)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("User Perspective").font(.system(size: 11, weight: .medium))
+                    ProjectionLabel(camera: camera)
                     Text(document.selectedNode.map { "\(document.title) | \($0.title)" } ?? document.title).font(Theme.small)
                 }
                 .foregroundStyle(Color.white.opacity(0.8))
@@ -247,11 +413,8 @@ struct ViewportPanel: View {
                 .padding(10)
                 .allowsHitTesting(false)
                 AxisGizmo(camera: camera).frame(maxWidth: .infinity, alignment: .topTrailing).padding(8)
-                ViewportStats(clock: document.clock)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .padding(8)
-                    .allowsHitTesting(false)
             }
+            ViewportFooter(clock: document.clock, camera: camera) { frameAll() }
         }
         .onAppear { frameAll() }
         .onChange(of: document.selectionID) { _, _ in

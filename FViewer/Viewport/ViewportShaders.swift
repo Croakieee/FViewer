@@ -86,6 +86,24 @@ vertex PostOut postVertex(uint id [[vertex_id]]) {
     return out;
 }
 
+fragment float4 bloomFragment(PostOut in [[stage_in]], constant float4 &u [[buffer(0)]],
+                              texture2d<float> map [[texture(0)]], sampler mapSampler [[sampler(0)]]) {
+    float3 color = map.sample(mapSampler, in.uv).rgb;
+    float3 glow = float3(0.0);
+    float total = 0.0;
+    for (int k = 0; k < 40; k++) {
+        float turn = float(k) * 2.39996;
+        float ring = sqrt((float(k) + 0.5) / 40.0);
+        float2 offset = float2(cos(turn), sin(turn)) * ring * u.z * float2(1.0 / u.w, 1.0);
+        float3 tap = map.sample(mapSampler, in.uv + offset).rgb;
+        float bright = max(max(tap.r, tap.g), tap.b);
+        float weight = 1.0 - ring * 0.7;
+        glow += tap * smoothstep(u.x, u.x + 0.25, bright) * weight;
+        total += weight;
+    }
+    return float4(color + glow / total * u.y, 1.0);
+}
+
 fragment float4 postFragment(PostOut in [[stage_in]], constant PostUniforms &u [[buffer(0)]],
                              texture2d<float> map [[texture(0)]], sampler mapSampler [[sampler(0)]]) {
     float3 color = map.sample(mapSampler, in.uv).rgb;

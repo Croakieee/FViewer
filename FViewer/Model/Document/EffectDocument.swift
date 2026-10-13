@@ -81,6 +81,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published var activeCurveID: String?
     let clock = PlaybackClock()
     @Published var isDirty = false
+    @Published var savedOnce = false
     @Published var exportRequest: Set<String>?
     private(set) var roundTripExact: Bool?
     let undoManager: UndoManager = {
@@ -168,6 +169,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         url = destination
         cleanDepth = undoTitles.count
         isDirty = false
+        savedOnce = true
     }
 
     func node(_ id: String?) -> OutlineNode? {

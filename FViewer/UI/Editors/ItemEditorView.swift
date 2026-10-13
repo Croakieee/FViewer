@@ -409,11 +409,15 @@ private struct ItemPage: View {
                         }
                         if !curves.isEmpty || !missingCurves.isEmpty {
                             Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missingCurves.count)") {
-                                ForEach(curves) { group in
-                        curveRow(group)
-                        if ConstantCurveFields.applies(group) { ConstantCurveFields(document: document, group: group) }
-                    }
-                                if !missingCurves.isEmpty { UnsetRows(items: missingCurves) }
+                                let paired = CurveValueRows.pairs(curves, missingCurves)
+                                ForEach(paired.rows, id: \.group.id) { row in
+                                    CurveValueRows(document: document, group: row.group, changed: document.changes.contains(node.id)
+                                        && row.group.channels.contains { document.originalKeys(group: row.group.id, channel: $0.id, in: node.id) != $0.read() },
+                                                   random: row.random, addRandom: row.add) {
+                                        document.activeCurveID = row.group.id
+                                    }
+                                }
+                                if !paired.rest.isEmpty { UnsetRows(items: paired.rest) }
                             }
                         }
                         if !node.children.isEmpty {
@@ -436,33 +440,6 @@ private struct ItemPage: View {
         if case .avfx(let block, _, let record) = node.payload, record == nil, block.tag == "UvSt" {
             Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
         }
-    }
-
-    private func curveRow(_ group: CurveGroup) -> some View {
-        let active = document.activeCurveID == group.id
-        let keyCount = group.channels.map { $0.read().count }.max() ?? 0
-        let changed = document.changes.contains(node.id)
-            && group.channels.contains { document.originalKeys(group: group.id, channel: $0.id, in: node.id) != $0.read() }
-        return HStack(spacing: 6) {
-            HStack(spacing: 1) {
-                ForEach(group.channels.prefix(4)) { channel in Rectangle().fill(channel.color).frame(width: 3, height: 12) }
-            }
-            .frame(width: 18, alignment: .leading)
-            Text(group.title).font(Theme.font).foregroundStyle(changed ? Theme.changed : Theme.text).lineLimit(1)
-            if changed { ChangeDot() }
-            Spacer(minLength: 4)
-            Text("\(keyCount) keys").font(Theme.small).foregroundStyle(Theme.dim)
-            if let remove = group.remove {
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
-                    .frame(width: 14, height: 20).contentShape(Rectangle())
-                    .onTapGesture(perform: remove).help("Remove this curve from the file")
-            }
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.selection : Theme.field.opacity(0.45)))
-        .contentShape(Rectangle())
-        .onTapGesture { document.activeCurveID = group.id }
     }
 
     private func contentRow(_ child: OutlineNode) -> some View {

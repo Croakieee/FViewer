@@ -285,32 +285,274 @@ struct ClickCatcher: NSViewRepresentable {
     }
 }
 
-struct ConstantCurveFields: View {
-    @ObservedObject var document: EffectDocument
+struct CurveSparkline: View {
+    let keys: [CurveKeyPoint]
+    let color: Color
+
+    var body: some View {
+        Canvas { context, size in
+            guard let first = keys.first, let last = keys.last, last.time > first.time else { return }
+            let steps = 48
+            let values = (0...steps).map { CurveMath.sample(keys, at: first.time + (last.time - first.time) * Double($0) / Double(steps)) }
+            let low = values.min() ?? 0, high = values.max() ?? 1
+            let span = max(high - low, 1e-9)
+            var line = Path()
+            for (index, value) in values.enumerated() {
+                let point = CGPoint(x: size.width * CGFloat(index) / CGFloat(steps),
+                                    y: high - low < 1e-9 ? size.height / 2 : 2 + (size.height - 4) * CGFloat(1 - (value - low) / span))
+                if index == 0 { line.move(to: point) } else { line.addLine(to: point) }
+            }
+            var area = line
+            area.addLine(to: CGPoint(x: size.width, y: size.height))
+            area.addLine(to: CGPoint(x: 0, y: size.height))
+            area.closeSubpath()
+            context.fill(area, with: .color(color.opacity(0.18)))
+            context.stroke(line, with: .color(color), lineWidth: 1.2)
+            for key in keys {
+                let x = size.width * CGFloat((key.time - first.time) / (last.time - first.time))
+                context.fill(Path(CGRect(x: x - 0.5, y: size.height - 3, width: 1, height: 3)), with: .color(Color.white.opacity(0.55)))
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 3).fill(Theme.fieldDark.opacity(0.6)))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+struct CurveGradientStrip: View {
     let group: CurveGroup
 
-    static func applies(_ group: CurveGroup) -> Bool {
-        !group.channels.isEmpty && group.channels.allSatisfy { $0.colorComponent == nil && $0.read().count == 1 }
+    var body: some View {
+        Canvas { context, size in
+            let channels = (0..<3).map { c in group.channels.first { $0.colorComponent == c }?.read() ?? [] }
+            let times = channels.flatMap { $0.map(\.time) }
+            guard let first = times.min(), let last = times.max() else { return }
+            var x: CGFloat = 0
+            while x < size.width {
+                let t = last > first ? first + (last - first) * Double(x / size.width) : first
+                let color = Color(.sRGB, red: CurveMath.sample(channels[0], at: t), green: CurveMath.sample(channels[1], at: t),
+                                  blue: CurveMath.sample(channels[2], at: t))
+                context.fill(Path(CGRect(x: x, y: 0, width: 2, height: size.height)), with: .color(color))
+                x += 2
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.black.opacity(0.4), lineWidth: 1))
+    }
+}
+
+struct CurveValueRows: View {
+    @EnvironmentObject var app: AppModel
+    @ObservedObject var document: EffectDocument
+    let group: CurveGroup
+    let changed: Bool
+    var random: CurveGroup?
+    var addRandom: MissingCurve?
+    let open: () -> Void
+    @State private var floating = false
+
+    static func pairs(_ curves: [CurveGroup], _ missing: [MissingCurve]) -> (rows: [(group: CurveGroup, random: CurveGroup?, add: MissingCurve?)], rest: [MissingCurve]) {
+        let titles = Set(curves.map(\.title))
+        var used: Set<String> = []
+        var rows: [(group: CurveGroup, random: CurveGroup?, add: MissingCurve?)] = []
+        for group in curves {
+            if group.title.hasSuffix(" Random"), titles.contains(String(group.title.dropLast(7))) { continue }
+            let partner = group.title + " Random"
+            let add = missing.first { $0.title == partner }
+            if let add { used.insert(add.id) }
+            rows.append((group, curves.first { $0.title == partner }, add))
+        }
+        return (rows, missing.filter { !used.contains($0.id) })
+    }
+
+    private func float(_ target: CurveGroup) {
+        document.activeCurveID = target.id
+        floating = true
+    }
+
+    private var colorChannels: [CurveChannel] { group.channels.filter { $0.colorComponent != nil } }
+    private var valueChannels: [CurveChannel] { group.channels.filter { $0.colorComponent == nil } }
+
+    static func mode(_ group: CurveGroup) -> String {
+        let counts = group.channels.map { $0.read().count }
+        guard let most = counts.max(), most > 0 else { return "Empty" }
+        if group.channels.contains(where: { $0.colorComponent != nil }) { return most > 1 ? "Gradient" : "Constant" }
+        if most == 1 { return "Constant" }
+        return counts.allSatisfy { $0 > 1 } ? "Curve" : "Mixed"
+    }
+
+    private func label(_ channel: CurveChannel) -> String {
+        channel.name.replacingOccurrences(of: "Random ", with: "± ")
+    }
+
+    private func span() -> Double {
+        max(1, (document.clock.endFrame ?? document.sequencerRows.map(\.end).max() ?? 30).rounded())
+    }
+
+    private func makeConstant(_ channels: [CurveChannel]) {
+        let before = document.snapshot()
+        let time = document.clock.time
+        for channel in channels {
+            let keys = channel.read()
+            guard keys.count != 1 else { continue }
+            let value = keys.isEmpty ? (channel.clampUnit ? 1 : 0) : CurveMath.sample(keys, at: time)
+            channel.write([CurveKeyPoint(time: 0, value: value, interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0)])
+        }
+        document.registerUndo("Make " + group.title + " Constant", since: before)
+    }
+
+    private func makeCurve(_ channels: [CurveChannel]) {
+        let before = document.snapshot()
+        let end = span()
+        for channel in channels {
+            let keys = channel.read()
+            guard keys.count < 2 else { continue }
+            let value = keys.first?.value ?? (channel.clampUnit ? 1 : 0)
+            channel.write([CurveKeyPoint(time: 0, value: value, interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0),
+                           CurveKeyPoint(time: end, value: value, interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0)])
+        }
+        document.registerUndo("Make " + group.title + " Curve", since: before)
+        open()
+    }
+
+    private func modeChip(_ title: String, _ active: Bool, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Text(title).font(Theme.small).foregroundStyle(active ? Color.white : Theme.dim).lineLimit(1).fixedSize()
+            .padding(.horizontal, 6)
+            .frame(height: 16)
+            .background(RoundedRectangle(cornerRadius: 3).fill(active ? Theme.accent : Theme.gray(0.2)))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .help(help)
+    }
+
+    private func modeMenu(_ channels: [CurveChannel], _ current: String) -> some View {
+        let gradient = channels.contains { $0.colorComponent != nil }
+        return HStack(spacing: 1) {
+            modeChip("Constant", current == "Constant", "One value for the whole life. A curve becomes the value it has at the playhead") { makeConstant(channels) }
+            modeChip(gradient ? "Gradient" : "Curve", current == "Curve" || current == "Gradient" || current == "Mixed",
+                     "A value that changes over time. Opens the Graph Editor") {
+                if current == "Curve" || current == "Gradient" { open() } else { makeCurve(channels) }
+            }
+        }
+    }
+
+    private func constantField(_ channel: CurveChannel, _ title: String?, in owner: CurveGroup? = nil) -> some View {
+        let group = owner ?? self.group
+        return NumberField(label: title, value: channel.read().first?.value ?? 0, suffix: group.isAngle ? "°" : "", step: group.isAngle ? 1 : 0.01, onLive: { _ in },
+                    onCommit: { _, next in
+                        guard var point = channel.read().first, point.value != next else { return }
+                        let before = document.snapshot()
+                        point.value = channel.clampUnit ? min(max(next, 0), 1) : next
+                        channel.write([point])
+                        document.registerUndo("Set " + group.title + (channel.name == group.title ? "" : " " + channel.name), since: before)
+                    })
+    }
+
+    @ViewBuilder private func editor(_ channel: CurveChannel, title: String?, in owner: CurveGroup? = nil) -> some View {
+        let keys = channel.read()
+        if keys.isEmpty {
+            Text("no keys").font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
+        } else if keys.count == 1 {
+            constantField(channel, title, in: owner)
+        } else {
+            HStack(spacing: 4) {
+                if let title { Text(title).font(Theme.small).foregroundStyle(Theme.dim).frame(width: 30, alignment: .leading) }
+                CurveSparkline(keys: keys, color: channel.color).frame(height: 18).contentShape(Rectangle()).onTapGesture { float(owner ?? group) }
+                    .help("\(keys.count) keys, \(String(format: "%.3g", keys.map(\.value).min() ?? 0)) … \(String(format: "%.3g", keys.map(\.value).max() ?? 0)). Click to edit here; the Curve switch opens the Graph Editor")
+            }
+        }
+    }
+
+    @ViewBuilder private var randomLine: some View {
+        if let random, let channel = random.channels.first {
+            HStack(spacing: 4) {
+                if channel.read().count == 1 { constantField(channel, "± Random", in: random) } else { editor(channel, title: "±", in: random) }
+                if channel.read().count == 1 {
+                    Image(systemName: "waveform.path").font(.system(size: 9)).foregroundStyle(Theme.dim).frame(width: 14, height: 18).contentShape(Rectangle())
+                        .onTapGesture { makeCurve(random.channels) }.help("Turn the random range into a curve")
+                }
+                if let remove = random.remove {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 14, height: 18)
+                        .contentShape(Rectangle()).onTapGesture(perform: remove).help("Remove the random range from the file")
+                }
+            }
+            .padding(.leading, 24)
+            .padding(.trailing, 6)
+        } else if let addRandom {
+            HStack(spacing: 3) {
+                Image(systemName: "plus").font(.system(size: 8, weight: .bold))
+                Text("± Random").font(Theme.small)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.dim)
+            .padding(.leading, 30)
+            .frame(height: 14)
+            .contentShape(Rectangle())
+            .onTapGesture { addRandom.create() }
+            .help("Add a random range: each particle or emitter gets its own value within ± this amount")
+        }
+    }
+
+    private var header: some View {
+        let active = document.activeCurveID == group.id
+        return HStack(spacing: 6) {
+            HStack(spacing: 1) {
+                ForEach(group.channels.prefix(4)) { channel in Rectangle().fill(channel.color).frame(width: 3, height: 12) }
+            }
+            .frame(width: 18, alignment: .leading)
+            Text(group.title).font(Theme.font).foregroundStyle(changed ? Theme.changed : Theme.text).lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+            if changed { ChangeDot() }
+            modeMenu(group.channels, CurveValueRows.mode(group))
+            if let remove = group.remove {
+                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
+                    .frame(width: 14, height: 20).contentShape(Rectangle())
+                    .onTapGesture(perform: remove).help("Remove this curve from the file")
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+        .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.selection : Theme.field.opacity(0.45)))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: open)
     }
 
     var body: some View {
-        FlowLayout(spacing: 4) {
-            ForEach(group.channels) { channel in
-                let key = channel.read().first
-                NumberField(label: group.channels.count == 1 ? "Value" : channel.name.replacingOccurrences(of: "Random ", with: "± "),
-                            value: key?.value ?? 0, suffix: group.isAngle ? "°" : "", step: group.isAngle ? 1 : 0.01, onLive: { _ in },
-                            onCommit: { _, next in
-                                guard var point = channel.read().first, point.value != next else { return }
-                                let before = document.snapshot()
-                                point.value = channel.clampUnit ? min(max(next, 0), 1) : next
-                                channel.write([point])
-                                document.registerUndo("Set " + group.title + (channel.name == group.title ? "" : " " + channel.name), since: before)
-                            })
-                    .frame(width: 104)
+        VStack(spacing: 2) {
+            header
+            if group.channels.count == 1, let single = group.channels.first, !single.read().isEmpty {
+                Group {
+                    if single.read().count == 1 { constantField(single, "Value") } else { editor(single, title: nil) }
+                }
+                .padding(.leading, 24)
+                .padding(.trailing, 6)
             }
+            if group.channels.count > 1 {
+                VStack(spacing: 2) {
+                    if colorChannels.count == 3 {
+                        HStack(spacing: 4) {
+                            Text("RGB").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 30, alignment: .leading)
+                            CurveGradientStrip(group: group).frame(height: 16).contentShape(Rectangle()).onTapGesture { float(group) }
+                                .help("Colour over time. Click to edit here")
+                        }
+                    }
+                    ForEach(valueChannels) { channel in
+                        let keys = channel.read()
+                        if keys.count == 1 { constantField(channel, label(channel)) } else { editor(channel, title: label(channel)) }
+                    }
+                }
+                .padding(.leading, 24)
+                .padding(.trailing, 6)
+            }
+            randomLine
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 24)
+        .popover(isPresented: $floating, arrowEdge: .leading) {
+            CurveEditorView(document: document, clock: document.clock)
+                .environmentObject(app)
+                .frame(width: 760, height: 420)
+                .background(Theme.panel)
+                .preferredColorScheme(Theme.scheme)
+        }
     }
 }
 
@@ -428,6 +670,23 @@ struct TransportButtons: View {
     }
 }
 
+struct StatusPill: View {
+    @ObservedObject var document: EffectDocument
+
+    var body: some View {
+        let state = document.isDirty ? "edited" : document.savedOnce ? "saved" : "ready"
+        let tint = document.isDirty ? Color.orange : document.savedOnce ? Color.green : Theme.dim
+        HStack(spacing: 4) {
+            Circle().fill(tint).frame(width: 5, height: 5)
+            Text(state).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.text)
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 16)
+        .background(Capsule().stroke(Theme.dim.opacity(0.5), lineWidth: 1))
+        .help(document.isDirty ? "There are changes that are not saved yet" : document.savedOnce ? "Saved to a copy; the original file is untouched" : "Nothing changed since the file was opened")
+    }
+}
+
 struct HelpBadge: View {
     let text: String
     var symbol = "questionmark.circle"
@@ -469,8 +728,12 @@ struct SegmentButton: View {
 struct Panel<Content: View>: View {
     let title: String
     var trailing: String = ""
+    var badge: String = ""
+    var memory: String = ""
     @State private var open = true
     @ViewBuilder let content: () -> Content
+
+    private var key: String { "panel.closed." + memory }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -478,13 +741,22 @@ struct Panel<Content: View>: View {
                 Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 8, weight: .bold)).frame(width: 10)
                 Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1)
                 Spacer()
+                if !badge.isEmpty {
+                    Text(badge).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.changed)
+                        .padding(.horizontal, 5).frame(height: 14)
+                        .background(Capsule().stroke(Theme.changed.opacity(0.6), lineWidth: 1))
+                }
                 Text(trailing).font(Theme.small).foregroundStyle(Theme.dim)
             }
             .foregroundStyle(Theme.text)
             .padding(.horizontal, 8)
             .frame(height: 24)
             .contentShape(Rectangle())
-            .onTapGesture { open.toggle() }
+            .onTapGesture {
+                open.toggle()
+                if !memory.isEmpty { UserDefaults.standard.set(!open, forKey: key) }
+            }
+            .onAppear { if !memory.isEmpty { open = !UserDefaults.standard.bool(forKey: key) } }
             if open {
                 VStack(spacing: 3) { content() }
                     .padding(.horizontal, 8)

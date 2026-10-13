@@ -13,12 +13,15 @@ final class PlaybackClock: ObservableObject {
     @Published var seed = 1
     @Published var clipLog: [String] = []
     @Published var frameMilliseconds: Double = 0
+    @Published var framesPerSecond: Double = 0
+    @Published var lockSeed = true
     var releaseTime: Double?
     var triggers: [(time: Double, index: Int)] = []
     var restartToken = 0
     private var lastTick: Double = 0
 
     func rewind() {
+        if !lockSeed { seed = Int.random(in: 1...9999) }
         time = startFrame
         releaseTime = nil
         triggers = []
