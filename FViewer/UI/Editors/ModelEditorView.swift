@@ -1,4 +1,5 @@
 import SwiftUI
+import simd
 
 struct ModelEditorView: View {
     @EnvironmentObject var app: AppModel
@@ -6,286 +7,257 @@ struct ModelEditorView: View {
     var body: some View {
         Group {
             if let document = app.document, let id = app.modelEditorTarget, case .avfx(let block, _, _)? = document.node(id)?.payload, block.tag == "Modl" {
-                ModelEditorContent(document: document, model: block, title: document.node(id)?.title ?? "Model")
+                ModelEditorContent(document: document, session: ModelEditSession(document: document, nodeID: id, model: block), title: document.node(id)?.title ?? "Model")
+                    .id(document.id.uuidString + id)
             } else {
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 760, minHeight: 460)
+        .frame(minWidth: 980, minHeight: 560)
         .background(Theme.panel)
         .preferredColorScheme(Theme.scheme)
     }
 }
 
 private struct ModelEditorContent: View {
+    @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
-    let model: AvfxBlock
+    @StateObject var session: ModelEditSession
     let title: String
-    @State private var uvSet = 0
-    @State private var tab = 0
-    @State private var page = 0
+    @State private var spreadsheet = false
+    @State private var sidebar = true
+    @State private var pending: ModelCapture?
 
-    private let pageSize = 200
-
-    private var vertexCount: Int { (model.child("VDrw")?.data.count ?? 0) / 36 }
-    private var emitCount: Int { (model.child("VEmt")?.data.count ?? 0) / 28 }
-    private var orderCount: Int { (model.child("VNum")?.data.count ?? 0) / 2 }
-
-    private func addEmitPoint() {
-        document.performStructural("Add Emit Point") {
-            var point: [UInt8] = []
-            for value in [Float(0), 0, 0, 0, 1, 0] { point.appendU32(value.bitPattern) }
-            point.append(contentsOf: [255, 255, 255, 255])
-            let count = emitCount
-            if let block = model.child("VEmt") { block.data.append(contentsOf: point) } else { model.insert(AvfxBlock(tag: "VEmt", data: point), at: 0) }
-            var order: [UInt8] = []
-            order.appendU16(UInt16(truncatingIfNeeded: count))
-            if let block = model.child("VNum") { block.data.append(contentsOf: order) } else { model.insert(AvfxBlock(tag: "VNum", data: order), at: 0) }
-        }
-    }
-
-    private func removeEmitPoint(_ index: Int) {
-        document.performStructural("Remove Emit Point") {
-            if let block = model.child("VEmt"), (index + 1) * 28 <= block.data.count { block.data.removeSubrange(index * 28..<(index + 1) * 28) }
-            if let block = model.child("VNum"), block.data.count >= 2 { block.data.removeLast(2) }
-        }
-    }
+    private var name: String { title.replacingOccurrences(of: " ", with: "_") }
 
     var body: some View {
-        let mesh = Gltf.mesh(from: model)
+        let _ = document.revision
         VStack(spacing: 0) {
             EditorHeader(symbol: "cube", title: "Model Editor · " + title) {
-                Text("\(mesh.positions.count) vertices · \(mesh.indices.count / 3) triangles · \(emitCount) emit points").font(Theme.small).foregroundStyle(Theme.dim)
+                Text("\(session.vertexCount) vertices · \(session.triangleCount) triangles · \(session.emitCount) emit points")
+                    .font(Theme.small).foregroundStyle(Theme.dim)
+                Text(selectionText).font(Theme.small).foregroundStyle(Theme.text)
                 Spacer()
+                HeaderButton(symbol: "arrow.uturn.backward", help: "Undo") { document.undo() }
+                HeaderButton(symbol: "arrow.uturn.forward", help: "Redo") { document.redo() }
+                HeaderButton(symbol: "tablecells", active: spreadsheet, help: "Spreadsheet: every vertex, emit point and order entry as numbers") { spreadsheet.toggle() }
+                HeaderButton(symbol: "sidebar.right", active: sidebar, help: "Sidebar") { sidebar.toggle() }
             }
             HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    HStack(spacing: 2) {
-                        Text("UV Set").font(Theme.font).foregroundStyle(Theme.text)
-                        ForEach(0..<4, id: \.self) { index in SegmentButton(title: "\(index + 1)", active: uvSet == index) { uvSet = index } }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 8)
-                    .frame(height: 28)
-                    uvCanvas(mesh).padding(8)
+                if spreadsheet {
+                    ModelSpreadsheet(document: document, model: session.model).frame(minWidth: 420)
+                } else {
+                    ModelUvEditor(document: document, session: session).frame(minWidth: 300)
                 }
-                .frame(minWidth: 300)
                 Rectangle().fill(Theme.line).frame(width: 1)
-                VStack(spacing: 0) {
-                    HStack(spacing: 2) {
-                        SegmentButton(title: "Vertices", active: tab == 0) {
-                            tab = 0
-                            page = 0
+                ModelViewport3D(document: document, session: session).frame(minWidth: 320)
+                if sidebar {
+                    Rectangle().fill(Theme.line).frame(width: 1)
+                    ScrollView {
+                        VStack(spacing: 6) {
+                            itemPanel
+                            emitPanel
+                            meshPanel
                         }
-                        SegmentButton(title: "Emit Points", active: tab == 1) {
-                            tab = 1
-                            page = 0
-                        }
-                        SegmentButton(title: "Vertex Order", active: tab == 2) {
-                            tab = 2
-                            page = 0
-                        }
-                        if tab == 1 {
-                            HeaderButton(symbol: "plus", help: "Add an emit point") { addEmitPoint() }
-                        }
-                        Spacer()
-                        let total = tab == 0 ? vertexCount : tab == 1 ? emitCount : orderCount
-                        let pages = max(1, (total + pageSize - 1) / pageSize)
-                        if pages > 1 {
-                            HeaderButton(symbol: "chevron.left", help: "Previous page") { page = max(0, page - 1) }
-                            Text("\(page + 1) / \(pages)").font(Theme.small).foregroundStyle(Theme.dim).frame(minWidth: 44)
-                            HeaderButton(symbol: "chevron.right", help: "Next page") { page = min(pages - 1, page + 1) }
-                        }
+                        .padding(.vertical, 8)
                     }
-                    .padding(.horizontal, 8)
-                    .frame(height: 28)
-                    table.id(document.revision / 1_000_000)
+                    .frame(width: 250)
                 }
-                .frame(minWidth: 420)
             }
+            HStack(spacing: 8) {
+                Text(session.status.isEmpty ? "Click to select · G move · S scale · R rotate · A select all" : session.status)
+                    .font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 22)
+            .background(Theme.header)
+        }
+        .onChange(of: document.revision) { _, _ in session.clampSelection() }
+        .onAppear { ModelEditSession.active = session }
+    }
+
+    private var selectionText: String {
+        var parts: [String] = []
+        if !session.selection.isEmpty { parts.append("\(session.selection.count) selected") }
+        if !session.emitSelection.isEmpty { parts.append("\(session.emitSelection.count) emit selected") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).frame(width: 64, alignment: .trailing)
+            content()
         }
     }
 
-    private func uvCanvas(_ mesh: GltfMesh) -> some View {
-        Canvas { context, size in
-            let all = mesh.uvs[uvSet]
-            let low = min(0, all.map(\.x).min() ?? 0, all.map(\.y).min() ?? 0), high = max(1, all.map(\.x).max() ?? 1, all.map(\.y).max() ?? 1)
-            let extent = CGFloat(max(high - low, 1e-6))
-            let fitted = min(size.width, size.height)
-            let side = fitted / extent
-            let origin = CGPoint(x: (size.width - fitted) / 2 - CGFloat(low) * side, y: (size.height - fitted) / 2 - CGFloat(low) * side)
-            let frame = CGRect(x: origin.x, y: origin.y, width: side, height: side)
-            context.fill(Path(frame), with: .color(Theme.gray(0.12)))
-            for step in 1..<4 {
-                let offset = side * CGFloat(step) / 4
-                var line = Path()
-                line.move(to: CGPoint(x: origin.x + offset, y: origin.y))
-                line.addLine(to: CGPoint(x: origin.x + offset, y: origin.y + side))
-                line.move(to: CGPoint(x: origin.x, y: origin.y + offset))
-                line.addLine(to: CGPoint(x: origin.x + side, y: origin.y + offset))
-                context.stroke(line, with: .color(Color.white.opacity(0.06)), lineWidth: 1)
-            }
-            context.stroke(Path(frame), with: .color(Color.white.opacity(0.3)), lineWidth: 1)
-            let uvs = mesh.uvs[uvSet]
-            func point(_ index: Int) -> CGPoint? {
-                guard index < uvs.count else { return nil }
-                return CGPoint(x: origin.x + CGFloat(uvs[index].x) * side, y: origin.y + CGFloat(uvs[index].y) * side)
-            }
-            var wires = Path()
-            for t in stride(from: 0, to: mesh.indices.count - 2, by: 3) {
-                guard let a = point(Int(mesh.indices[t])), let b = point(Int(mesh.indices[t + 1])), let c = point(Int(mesh.indices[t + 2])) else { continue }
-                wires.move(to: a)
-                wires.addLine(to: b)
-                wires.addLine(to: c)
-                wires.closeSubpath()
-            }
-            context.clip(to: Path(CGRect(origin: .zero, size: size)))
-            context.fill(wires, with: .color(NodeTint.model.color.opacity(0.12)))
-            context.stroke(wires, with: .color(NodeTint.model.color.opacity(0.9)), lineWidth: 0.8)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func cell(_ title: String, _ value: Double, step: Double = 0.01, write: @escaping (Double) -> Void) -> some View {
-        NumberField(label: title, value: value, step: step, digits: 3,
+    private func axisField(_ label: String, _ value: Double, step: Double = 0.01, _ title: String, shift: @escaping (Double) -> Void) -> some View {
+        NumberField(label: label, value: value, step: step, digits: 4,
                     onLive: { next in
-                        write(next)
+                        shift(next - value)
                         document.liveDrag()
                     },
                     onCommit: { old, next in
-                        write(old)
-                        document.perform("Edit Model", { write(next) }, revert: { write(old) })
+                        let before = pending ?? session.capture()
+                        pending = nil
+                        session.restore(before)
+                        shift(next - old)
+                        session.commit(title, from: before)
                     })
-            .frame(minWidth: 62)
     }
 
-    private func header(_ titles: [String]) -> some View {
-        HStack(spacing: 4) {
-            Text("#").frame(width: 38, alignment: .trailing)
-            ForEach(titles, id: \.self) { Text($0).frame(maxWidth: .infinity) }
-        }
-        .font(Theme.small)
-        .foregroundStyle(Theme.dim)
-        .padding(.horizontal, 8)
-        .frame(height: 18)
-    }
-
-    @ViewBuilder private var table: some View {
-        if tab == 0 {
-            if vertexCount == 0 {
-                Color.clear
-            } else {
-                header(["Position", "UV 1", "Color"])
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(Array((page * pageSize)..<min(vertexCount, (page + 1) * pageSize)), id: \.self) { index in vertexRow(index) }
+    @ViewBuilder private var itemPanel: some View {
+        let picked = session.selection.sorted()
+        if let center = vertexCenter(picked) {
+            Panel(title: picked.count == 1 ? "Vertex \(picked[0])" : "Vertices", trailing: picked.count == 1 ? "" : "\(picked.count) · median") {
+                VStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { axis in
+                        row(axis == 0 ? "Position" : "") {
+                            axisField(["X", "Y", "Z"][axis], Double(center[axis]), "Move Vertices") { delta in
+                                var offset = SIMD3<Float>(0, 0, 0)
+                                offset[axis] = Float(delta)
+                                let all = session.positions
+                                for index in picked where index < all.count { session.setPosition(index, all[index] + offset) }
+                            }
+                        }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
                 }
-            }
-        } else if tab == 2 {
-            if orderCount == 0 {
-                Color.clear
-            } else {
-                header(["Emit Point Index"])
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(Array((page * pageSize)..<min(orderCount, (page + 1) * pageSize)), id: \.self) { index in orderRow(index) }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                }
-            }
-        } else {
-            if emitCount == 0 {
-                Color.clear
-            } else {
-                header(["Position", "Normal", "Color"])
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(Array((page * pageSize)..<min(emitCount, (page + 1) * pageSize)), id: \.self) { index in emitRow(index) }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 8)
-                }
-            }
-        }
-    }
-
-
-    private func half(_ block: AvfxBlock, _ at: Int) -> Double {
-        at + 1 < block.data.count ? Double(CurveMath.halfToFloat(block.data.u16(at))) : 0
-    }
-
-    private func setHalf(_ block: AvfxBlock, _ at: Int, _ value: Double) {
-        guard at + 1 < block.data.count else { return }
-        let bits = Gltf.floatToHalf(Float(value))
-        block.data[at] = UInt8(bits & 0xff)
-        block.data[at + 1] = UInt8(bits >> 8)
-    }
-
-    private func swatch(_ block: AvfxBlock, _ at: Int) -> some View {
-        let d = block.data
-        let ok = at + 3 < d.count
-        return RoundedRectangle(cornerRadius: 3)
-            .fill(Color(.sRGB, red: ok ? Double(d[at]) / 255 : 1, green: ok ? Double(d[at + 1]) / 255 : 1, blue: ok ? Double(d[at + 2]) / 255 : 1,
-                        opacity: 1))
-            .overlay(Text(ok ? "α \(d[at + 3])" : "").font(Theme.small)
-                .foregroundStyle(ok && Double(d[at]) * 0.3 + Double(d[at + 1]) * 0.59 + Double(d[at + 2]) * 0.11 > 140 ? Color.black : Color.white))
-            .frame(maxWidth: .infinity)
-            .frame(height: 20)
-    }
-
-    private func vertexRow(_ index: Int) -> some View {
-        let o = index * 36
-        return HStack(spacing: 4) {
-            Text("\(index)").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 38, alignment: .trailing)
-            if let block = model.child("VDrw") {
-                ForEach(0..<3, id: \.self) { axis in
-                    cell(["X", "Y", "Z"][axis], half(block, o + axis * 2)) { setHalf(block, o + axis * 2, $0) }
-                }
-                ForEach(0..<2, id: \.self) { axis in
-                    cell(["U", "V"][axis], half(block, o + 20 + axis * 2)) { setHalf(block, o + 20 + axis * 2, $0) }
-                }
-                swatch(block, o + 16)
-            }
-        }
-    }
-
-    private func orderRow(_ index: Int) -> some View {
-        HStack(spacing: 4) {
-            Text("\(index)").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 38, alignment: .trailing)
-            if let block = model.child("VNum") {
-                NumberField(label: nil, value: index * 2 + 1 < block.data.count ? Double(block.data.u16(index * 2)) : 0, isInteger: true,
-                            onLive: { _ in },
-                            onCommit: { old, next in
-                                func write(_ value: Double) {
-                                    guard index * 2 + 1 < block.data.count else { return }
-                                    let v = UInt16(max(0, min(65535, value)))
-                                    block.data[index * 2] = UInt8(v & 0xff)
-                                    block.data[index * 2 + 1] = UInt8(v >> 8)
+                if let uv = session.uvCenter {
+                    VStack(spacing: 2) {
+                        ForEach(0..<2, id: \.self) { axis in
+                            row(axis == 0 ? "UV \(session.uvSet + 1)" : "") {
+                                axisField(["U", "V"][axis], Double(uv[axis]), "Move UVs") { delta in
+                                    var offset = SIMD2<Float>(0, 0)
+                                    offset[axis] = Float(delta)
+                                    session.translateUV(offset)
                                 }
-                                document.perform("Edit Vertex Order", { write(next) }, revert: { write(old) })
-                            })
+                            }
+                        }
+                    }
+                }
+                row("Color") {
+                    ColorField(color: session.color(picked[0]), alpha: true,
+                               onLive: { color in
+                                   if pending == nil { pending = session.capture() }
+                                   for index in picked { session.setColor(index, color) }
+                                   document.liveDrag()
+                               },
+                               onCommit: { _, color in
+                                   let before = pending ?? session.capture()
+                                   pending = nil
+                                   for index in picked { session.setColor(index, color) }
+                                   session.commit("Vertex Color", from: before)
+                               })
+                }
+                if picked.count == 1 {
+                    let normal = session.normal(picked[0])
+                    VStack(spacing: 2) {
+                        ForEach(0..<3, id: \.self) { axis in
+                            row(axis == 0 ? "Normal" : "") {
+                                axisField(["X", "Y", "Z"][axis], Double(normal[axis]), "Vertex Normal") { delta in
+                                    var next = session.normal(picked[0])
+                                    next[axis] = min(max(next[axis] + Float(delta), -1), 1)
+                                    session.setNormal(picked[0], next)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    private func emitRow(_ index: Int) -> some View {
-        let o = index * 28
-        return HStack(spacing: 4) {
-            Text("\(index)").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 38, alignment: .trailing)
-            if let block = model.child("VEmt") {
-                ForEach(0..<6, id: \.self) { slot in
-                    cell(["X", "Y", "Z", "Nx", "Ny", "Nz"][slot], o + slot * 4 + 3 < block.data.count ? Double(block.data.f32(o + slot * 4)) : 0) { value in
-                        if o + slot * 4 + 3 < block.data.count { block.data.setU32(o + slot * 4, Float(value).bitPattern) }
+    private func vertexCenter(_ picked: [Int]) -> SIMD3<Float>? {
+        let all = session.positions
+        let points = picked.filter { $0 < all.count }.map { all[$0] }
+        guard !points.isEmpty else { return nil }
+        return points.reduce(SIMD3<Float>(0, 0, 0), +) / Float(points.count)
+    }
+
+    @ViewBuilder private var emitPanel: some View {
+        let picked = session.emitSelection.sorted()
+        let all = session.emitPositions
+        let points = picked.filter { $0 < all.count }.map { all[$0] }
+        if !points.isEmpty {
+            let center = points.reduce(SIMD3<Float>(0, 0, 0), +) / Float(points.count)
+            Panel(title: picked.count == 1 ? "Emit Point \(picked[0])" : "Emit Points", trailing: picked.count == 1 ? "" : "\(picked.count) · median") {
+                VStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { axis in
+                        row(axis == 0 ? "Position" : "") {
+                            axisField(["X", "Y", "Z"][axis], Double(center[axis]), "Move Emit Points") { delta in
+                                var offset = SIMD3<Float>(0, 0, 0)
+                                offset[axis] = Float(delta)
+                                let current = session.emitPositions
+                                for index in picked where index < current.count { session.setEmitPosition(index, current[index] + offset) }
+                            }
+                        }
                     }
                 }
-                swatch(block, o + 24)
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 16, height: 20)
-                    .contentShape(Rectangle()).onTapGesture { removeEmitPoint(index) }.help("Remove this emit point")
+                if picked.count == 1 {
+                    let normal = session.emitNormal(picked[0])
+                    VStack(spacing: 2) {
+                        ForEach(0..<3, id: \.self) { axis in
+                            row(axis == 0 ? "Normal" : "") {
+                                axisField(["X", "Y", "Z"][axis], Double(normal[axis]), "Emit Point Normal") { delta in
+                                    var next = session.emitNormal(picked[0])
+                                    next[axis] += Float(delta)
+                                    session.setEmitNormal(picked[0], next)
+                                }
+                            }
+                        }
+                    }
+                }
+                row("Color") {
+                    ColorField(color: session.emitColor(picked[0]), alpha: true,
+                               onLive: { color in
+                                   if pending == nil { pending = session.capture() }
+                                   for index in picked { session.setEmitColor(index, color) }
+                                   document.liveDrag()
+                               },
+                               onCommit: { _, color in
+                                   let before = pending ?? session.capture()
+                                   pending = nil
+                                   for index in picked { session.setEmitColor(index, color) }
+                                   session.commit("Emit Point Color", from: before)
+                               })
+                }
+                row("") {
+                    SegmentButton(title: "Remove", active: false) { session.removeSelectedEmitPoints() }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private var meshPanel: some View {
+        Group {
+            Panel(title: "Select") {
+                FlowLayout(spacing: 4) {
+                    SegmentButton(title: "All", active: false) { session.selectAll() }
+                    SegmentButton(title: "None", active: false) { session.selectNone() }
+                    SegmentButton(title: "Linked", active: false) { session.selectLinked() }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Panel(title: "Mesh") {
+                FlowLayout(spacing: 4) {
+                    SegmentButton(title: "Import glTF…", active: false) { app.importModel(session.model, emitPoints: false) }
+                    SegmentButton(title: "Export glTF…", active: false) { app.exportModel(session.model, name: name) }
+                    SegmentButton(title: "Flip Winding", active: false) { session.flipWinding() }
+                    SegmentButton(title: "Recompute Normals", active: false) { session.recomputeNormals() }
+                    HelpBadge(text: "Flip Winding reverses the facing of every triangle. Recompute Normals rebuilds vertex normals from the triangles around each vertex.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Panel(title: "Emit Points", trailing: "\(session.emitCount)") {
+                FlowLayout(spacing: 4) {
+                    SegmentButton(title: "Add at Origin", active: false) { session.addEmitPoints(fromSelection: false) }
+                    SegmentButton(title: "From Selected Vertices", active: false) { session.addEmitPoints(fromSelection: true) }
+                    SegmentButton(title: "Import glTF…", active: false) { app.importModel(session.model, emitPoints: true) }
+                    HelpBadge(text: "Emit points are where an emitter of type Model creates its particles. From Selected Vertices puts one on each selected vertex, with that vertex's normal.")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

@@ -47,7 +47,7 @@ struct FViewerApp: App {
         Window("Model Editor", id: "model") {
             ModelEditorView().id(app.themeToken).environmentObject(app)
         }
-        .defaultSize(width: 980, height: 620)
+        .defaultSize(width: 1280, height: 760)
         .defaultLaunchBehavior(.suppressed)
         .commands {
             CommandGroup(replacing: .newItem) {
