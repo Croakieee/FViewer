@@ -40,7 +40,9 @@ final class EffectDefs {
                 models[model] = m
             }
             if !p.forever && !(p.life.minValue > 0) { throw DefinitionError.invalid("particle \"\(p.id)\": life must be > 0 or -1") }
-            particles[p.id] = p
+            var resolved = p
+            if let material = p.material { resolved.material = material.resolved(shared: def.materials ?? [:]) }
+            particles[p.id] = resolved
         }
         for e in def.emitters {
             for it in e.items {

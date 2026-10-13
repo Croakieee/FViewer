@@ -7,15 +7,18 @@ public struct MaterialNode: Decodable {
     public var y: Double?
     public var texture: String?
     public var name: String?
+    public var graph: String?
     public var params: [String: Double]?
 
-    public init(id: String, type: String, x: Double? = nil, y: Double? = nil, texture: String? = nil, name: String? = nil, params: [String: Double]? = nil) {
+    public init(id: String, type: String, x: Double? = nil, y: Double? = nil, texture: String? = nil, name: String? = nil, graph: String? = nil,
+                params: [String: Double]? = nil) {
         self.id = id
         self.type = type
         self.x = x
         self.y = y
         self.texture = texture
         self.name = name
+        self.graph = graph
         self.params = params
     }
 }
@@ -50,13 +53,103 @@ public struct MaterialNodeKind {
     public let help: String
 }
 
+public enum MaterialOverride: Decodable {
+    case number(Double)
+    case color([Double])
+    case texture(String)
+
+    private enum Keys: String, CodingKey { case texture }
+
+    public init(from decoder: Decoder) throws {
+        if let keyed = try? decoder.container(keyedBy: Keys.self), let name = try? keyed.decode(String.self, forKey: .texture) {
+            self = .texture(name)
+            return
+        }
+        let single = try decoder.singleValueContainer()
+        if let value = try? single.decode(Double.self) {
+            self = .number(value)
+        } else {
+            self = .color(try single.decode([Double].self))
+        }
+    }
+}
+
 public struct MaterialGraph: Decodable {
     public var nodes: [MaterialNode]
     public var links: [MaterialLink]
+    public var use: String?
+    public var overrides: [String: MaterialOverride]?
 
-    public init(nodes: [MaterialNode], links: [MaterialLink]) {
+    private enum Keys: String, CodingKey { case nodes, links, use, overrides }
+
+    public init(nodes: [MaterialNode], links: [MaterialLink], use: String? = nil, overrides: [String: MaterialOverride]? = nil) {
         self.nodes = nodes
         self.links = links
+        self.use = use
+        self.overrides = overrides
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Keys.self)
+        nodes = try container.decodeIfPresent([MaterialNode].self, forKey: .nodes) ?? []
+        links = try container.decodeIfPresent([MaterialLink].self, forKey: .links) ?? []
+        use = try container.decodeIfPresent(String.self, forKey: .use)
+        overrides = try container.decodeIfPresent([String: MaterialOverride].self, forKey: .overrides)
+    }
+
+    public func applying(_ overrides: [String: MaterialOverride]) -> MaterialGraph {
+        var result = self
+        for index in result.nodes.indices {
+            guard let name = result.nodes[index].name, let value = overrides[name] else { continue }
+            switch value {
+            case .number(let number):
+                if result.nodes[index].type == "float" { result.nodes[index].params = (result.nodes[index].params ?? [:]).merging(["value": number]) { _, new in new } }
+            case .color(let parts):
+                if result.nodes[index].type == "color", parts.count >= 3 {
+                    let values = ["r": parts[0], "g": parts[1], "b": parts[2], "a": parts.count > 3 ? parts[3] : 1]
+                    result.nodes[index].params = (result.nodes[index].params ?? [:]).merging(values) { _, new in new }
+                }
+            case .texture(let texture):
+                if result.nodes[index].type == "texture" { result.nodes[index].texture = texture }
+            }
+        }
+        return result
+    }
+
+    public func expanded(_ shared: [String: MaterialGraph], depth: Int = 0) -> MaterialGraph {
+        var result = MaterialGraph(nodes: nodes, links: links)
+        for node in nodes where node.type == "subgraph" {
+            guard depth < 4, let name = node.graph, let source = shared[name] else { continue }
+            let inner = source.expanded(shared, depth: depth + 1)
+            let prefix = node.id + "/"
+            let output = inner.nodes.first { $0.type == "output" }
+            for var copy in inner.nodes where copy.type != "output" {
+                copy.id = prefix + copy.id
+                result.nodes.append(copy)
+            }
+            for link in inner.links where link.to != output?.id && link.from != output?.id {
+                result.links.append(MaterialLink(from: prefix + link.from, out: link.out, to: prefix + link.to, input: link.input))
+            }
+            func feed(_ input: String, _ fallback: String) -> (id: String, out: String) {
+                if let output, let link = inner.links.first(where: { $0.to == output.id && $0.input == input }) { return (prefix + link.from, link.out) }
+                if !result.nodes.contains(where: { $0.id == prefix + "layers" }) { result.nodes.append(MaterialNode(id: prefix + "layers", type: "layers")) }
+                return (prefix + "layers", fallback)
+            }
+            let color = feed("color", "rgb"), alpha = feed("alpha", "a")
+            for index in result.links.indices where result.links[index].from == node.id {
+                let target = result.links[index].out == "a" ? alpha : color
+                result.links[index].from = target.id
+                result.links[index].out = target.out
+            }
+            result.nodes.removeAll { $0.id == node.id }
+        }
+        return result
+    }
+
+    public func resolved(shared: [String: MaterialGraph]) -> MaterialGraph {
+        var base = self
+        if let use, let source = shared[use] { base = source }
+        return base.applying(overrides ?? [:]).expanded(shared)
     }
 
     public static let maxTextures = 3
@@ -116,6 +209,7 @@ public struct MaterialGraph: Decodable {
         kind("desaturate", "Desaturate", "Utility", ["rgb"], ["out"], [("amount", 1)], "Moves a colour toward grey"),
         kind("radial", "Radial Falloff", "Utility", ["uv"], ["out"], [("radius", 0.5), ("softness", 0.5)], "1 in the centre of the UVs, fading to 0 at the radius"),
         kind("noise", "Noise", "Utility", ["uv", "time"], ["out"], [("scale", 6), ("speed", 0.5)], "Smooth animated noise from 0 to 1"),
+        kind("subgraph", "Subgraph", "Utility", [], ["rgb", "a"], "The result of another material shared in this effect"),
         kind("split", "Split", "Utility", ["rgb"], ["r", "g", "b", "a"], "Takes a colour apart"),
         kind("combine", "Combine", "Utility", ["r", "g", "b", "a"], ["rgb"], [("r", 0), ("g", 0), ("b", 0), ("a", 1)], "Builds a colour from numbers"),
         kind("output", "Output", "Output", ["color", "alpha", "emissive", "opacityMask"], [], [("clip", 0.333)],
@@ -185,7 +279,7 @@ public struct MaterialGraph: Decodable {
             func p(_ name: String) -> String { literal(param(node, name)) }
 
             switch node.type {
-            case "layers":
+            case "layers", "subgraph":
                 set("rgb", "float4(c.rgb, c.a)")
                 set("a", "float4(c.a)")
             case "particleColor":
@@ -353,7 +447,7 @@ public struct MaterialGraph: Decodable {
                 }
             }
             switch node.type {
-            case "layers": return channel { $0.layers }
+            case "layers", "subgraph": return channel { $0.layers }
             case "particleColor": return channel { $0.particle }
             case "vertexColor": return constant(1)
             case "age": return { SIMD4(repeating: $0.age) }

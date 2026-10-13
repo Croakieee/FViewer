@@ -139,7 +139,7 @@ public final class MetalRenderer: ViewFactory {
 
     private func makePipelines(vertex: MTLFunction?, fragment: MTLFunction?) throws -> [BlendMode: MTLRenderPipelineState] {
         var result: [BlendMode: MTLRenderPipelineState] = [:]
-        for blend in [BlendMode.normal, .add, .screen] {
+        for blend in [BlendMode.normal, .add, .screen, .opaque] {
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = vertex
             d.fragmentFunction = fragment
@@ -164,6 +164,8 @@ public final class MetalRenderer: ViewFactory {
                 a.destinationRGBBlendFactor = .oneMinusSourceColor
                 a.sourceAlphaBlendFactor = .one
                 a.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            case .opaque:
+                a.isBlendingEnabled = false
             }
             result[blend] = try device.makeRenderPipelineState(descriptor: d)
         }

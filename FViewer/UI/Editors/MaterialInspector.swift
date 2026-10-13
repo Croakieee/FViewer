@@ -44,13 +44,39 @@ struct MaterialInspector: View {
         libraryToken += 1
     }
 
+    private func share() {
+        let alert = NSAlert()
+        alert.messageText = "Share Material"
+        alert.informativeText = "The graph becomes a material of this effect. Other particles can use it and keep their own parameter values."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 22))
+        var name = document.node(particle)?.title ?? "Material"
+        var index = 2
+        while document.sharedMaterialNames.contains(name) {
+            name = (document.node(particle)?.title ?? "Material") + " \(index)"
+            index += 1
+        }
+        field.stringValue = name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Share")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        document.shareMaterial(field.stringValue, in: particle)
+    }
+
+    private func resetButton(_ name: String) -> some View {
+        Image(systemName: "arrow.uturn.backward").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.changed).frame(width: 16, height: 18)
+            .contentShape(Rectangle()).onTapGesture { document.setMaterialOverride(name, nil, in: particle) }.help("Reset to the material's own value")
+    }
+
     @ViewBuilder private func preview(_ graph: MaterialGraph) -> some View {
         let chosen = selection.count == 1 ? graph.nodes.first { selection.contains($0.id) } : nil
         let target = chosen ?? graph.nodes.first { $0.type == "output" }
         if let target, let kind = MaterialGraph.kind(of: target.type) {
             let pin = kind.outputs.isEmpty ? nil : (previewPin.flatMap { kind.outputs.contains($0) ? $0 : nil } ?? kind.outputs[0])
             Panel(title: "Preview", trailing: target.type == "output" ? "final" : kind.title, memory: "material.preview") {
-                MaterialPreviewImage(graph: graph, node: target.id, pin: pin, base: document.materialBaseTexture(particle), side: 88)
+                let resolved = document.resolvedMaterial(particle)
+                MaterialPreviewImage(graph: resolved?.nodes.contains(where: { $0.id == target.id }) == true ? resolved ?? graph : graph, node: target.id, pin: pin,
+                                     base: document.materialBaseTexture(particle), layers: document.materialLayers(particle), side: 88)
                     .aspectRatio(1, contentMode: .fit)
                     .frame(maxWidth: 190)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -72,14 +98,18 @@ struct MaterialInspector: View {
     @ViewBuilder private func settings(_ graph: MaterialGraph) -> some View {
         let blend = document.materialBlend(particle)
         Panel(title: "Material", trailing: document.node(particle)?.title ?? "", memory: "material.settings") {
-            row("Blend") {
-                HStack(spacing: 1) {
-                    ForEach([("normal", "Normal"), ("add", "Add"), ("screen", "Screen")], id: \.0) { entry in
-                        SegmentButton(title: entry.1, active: blend == entry.0) { document.setMaterialBlend(entry.0, in: particle) }
-                    }
-                    Spacer(minLength: 0)
+            HStack(spacing: 1) {
+                Text("Blend").font(Theme.font).foregroundStyle(Theme.text).padding(.trailing, 5)
+                ForEach([("normal", "Normal"), ("add", "Add"), ("screen", "Screen"), ("opaque", "Opaque")], id: \.0) { entry in
+                    Text(entry.1).font(Theme.small).foregroundStyle(blend == entry.0 ? Color.white : Theme.text).lineLimit(1).fixedSize()
+                        .padding(.horizontal, 6).frame(height: 20)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(blend == entry.0 ? Theme.accent : Theme.gray(0.26)))
+                        .contentShape(Rectangle())
+                        .onTapGesture { document.setMaterialBlend(entry.0, in: particle) }
                 }
+                Spacer(minLength: 0)
             }
+            .help("How the particle is mixed with what is behind it. Opaque ignores alpha; combine it with an opacity mask for cut-outs")
             if let output = graph.nodes.first(where: { $0.type == "output" }) {
                 let masked = graph.links.contains { $0.to == output.id && $0.input == "opacityMask" }
                 row("Mask Clip") {
@@ -89,14 +119,26 @@ struct MaterialInspector: View {
                 .opacity(masked ? 1 : 0.4)
                 .help(masked ? "Pixels whose opacity mask is below this value are cut out" : "Wire the Output's opacityMask input to cut pixels out")
             }
+            if let shared = document.materialUse(particle) {
+                row("Shared") {
+                    Text(shared).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
+                    Text("× \(document.materialUsers(shared).count)").font(Theme.small).foregroundStyle(Theme.dim)
+                    Spacer(minLength: 0)
+                }
+            }
             FlowLayout(spacing: 4) {
-                SegmentButton(title: "Copy", active: false) { MaterialLibrary.copiedMaterial = graph }
+                if document.materialUse(particle) == nil {
+                    SegmentButton(title: "Share…", active: false) { share() }
+                } else {
+                    SegmentButton(title: "Make Unique", active: false) { document.makeMaterialUnique(in: particle) }
+                }
+                SegmentButton(title: "Copy", active: false) { MaterialLibrary.copiedMaterial = document.resolvedMaterial(particle) ?? graph }
                 SegmentButton(title: "Save…", active: false) { saveToLibrary(graph) }
                 SegmentButton(title: "Remove", active: false) {
                     document.removeMaterial(in: particle)
                     selection = []
                 }
-                HelpBadge(text: "Copy keeps the whole graph so it can be pasted onto another particle. Save… stores it in the material library. Remove returns the particle to its plain texture and layers.")
+                HelpBadge(text: "Share… turns the graph into a material of this effect that several particles can use; each keeps its own parameter values. Make Unique gives this particle its own copy again. Copy keeps the graph for pasting onto another particle, Save… stores it in the library, Remove returns the particle to its plain texture and layers.")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -121,26 +163,58 @@ struct MaterialInspector: View {
 
     @ViewBuilder private func parameters(_ graph: MaterialGraph) -> some View {
         let named = graph.nodes.filter { $0.name?.isEmpty == false && ["float", "color", "texture"].contains($0.type) }
-        Panel(title: "Parameters", trailing: "\(named.count)", memory: "material.parameters") {
+        let instance = document.materialUse(particle) != nil
+        let overrides = instance ? document.materialOverrides(particle) : [:]
+        let live = graph.applying(overrides)
+        Panel(title: "Parameters", trailing: instance && !overrides.isEmpty ? "\(overrides.count) of \(named.count) overridden" : "\(named.count)", memory: "material.parameters") {
             if named.isEmpty {
                 Text("Give a Constant, Color or Texture Sample node a name to list it here for quick tuning.")
                     .font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            } else if instance {
+                Text("Values set here belong to this particle only.").font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
             }
-            ForEach(named, id: \.id) { node in
-                row(node.name ?? "") {
+            ForEach(named, id: \.id) { original in
+                let node = live.nodes.first { $0.id == original.id } ?? original
+                let name = node.name ?? ""
+                row(name) {
                     if node.type == "float" {
                         NumberField(label: nil, value: value(node, "value"), step: 0.01, onLive: { _ in },
-                                    onCommit: { _, next in setParams(node, ["value": next], "Set " + (node.name ?? "Parameter")) })
+                                    onCommit: { _, next in
+                                        if instance {
+                                            document.setMaterialOverride(name, JSONNode(.number(next)), in: particle)
+                                        } else {
+                                            setParams(node, ["value": next], "Set " + name)
+                                        }
+                                    })
                     } else if node.type == "color" {
                         ColorField(color: SIMD4(value(node, "r"), value(node, "g"), value(node, "b"), value(node, "a")), alpha: true, onLive: { _ in },
-                                   onCommit: { _, next in setParams(node, ["r": next.x, "g": next.y, "b": next.z, "a": next.w], "Set " + (node.name ?? "Parameter")) })
+                                   onCommit: { _, next in
+                                       if instance {
+                                           document.setMaterialOverride(name, JSONNode(.array([next.x, next.y, next.z, next.w].map { JSONNode(.number($0)) })), in: particle)
+                                       } else {
+                                           setParams(node, ["r": next.x, "g": next.y, "b": next.z, "a": next.w], "Set " + name)
+                                       }
+                                   })
                     } else {
-                        Text(node.texture ?? "—").font(Theme.small).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 0)
+                        Menu {
+                            ForEach(document.textureSlots.map(\.name), id: \.self) { texture in
+                                Button(texture) {
+                                    if instance {
+                                        document.setMaterialOverride(name, JSONNode(.object([JSONMember(key: "texture", node: JSONNode(.string(texture)))])), in: particle)
+                                    } else {
+                                        document.editMaterial("Set " + name, in: particle) { graph in
+                                            if let index = graph.nodes.firstIndex(where: { $0.id == node.id }) { graph.nodes[index].texture = texture }
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Text(node.texture ?? "—").font(Theme.small).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                        }
+                        .menuStyle(.borderlessButton)
                     }
+                    if instance, overrides[name] != nil { resetButton(name) }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { selection = [node.id] }
             }
         }
     }
@@ -155,6 +229,29 @@ struct MaterialInspector: View {
                     selection = []
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            let shared = document.sharedMaterialNames
+            if !shared.isEmpty {
+                Text("IN THIS EFFECT").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(shared, id: \.self) { name in
+                    let current = document.materialUse(particle) == name
+                    HStack(spacing: 6) {
+                        Image(systemName: current ? "checkmark" : "link").font(.system(size: 9)).foregroundStyle(current ? Theme.text : Theme.dim)
+                        Text(name).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text("× \(document.materialUsers(name).count)").font(Theme.small).foregroundStyle(Theme.dim)
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(height: 20)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(current ? Theme.selection : Theme.field.opacity(0.45)))
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        document.useSharedMaterial(name, in: particle)
+                        selection = []
+                    }
+                    .help("Use this shared material on the selected particle")
+                }
+                Text("SAVED").font(.system(size: 9, weight: .medium)).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
             }
             if saved.isEmpty {
                 Text("Saved materials appear here and can be applied to any particle.").font(Theme.small).foregroundStyle(Theme.dim)

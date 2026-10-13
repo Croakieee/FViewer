@@ -13,15 +13,14 @@ extension EffectDocument {
         return nil
     }
 
-    func materialGraph(_ particleID: String) -> MaterialGraph? {
-        guard let material = materialParticle(particleID)?["material"], material.members != nil else { return nil }
+    static func parseMaterial(_ material: JSONNode) -> MaterialGraph {
         var nodes: [MaterialNode] = []
         for entry in material["nodes"]?.elements ?? [] {
             guard let id = entry["id"]?.string, let type = entry["type"]?.string else { continue }
             var params: [String: Double] = [:]
             for member in entry["params"]?.members ?? [] { if let value = member.node.number { params[member.key] = value } }
             nodes.append(MaterialNode(id: id, type: type, x: entry["x"]?.number, y: entry["y"]?.number, texture: entry["texture"]?.string,
-                                      name: entry["name"]?.string, params: params.isEmpty ? nil : params))
+                                      name: entry["name"]?.string, graph: entry["graph"]?.string, params: params.isEmpty ? nil : params))
         }
         var links: [MaterialLink] = []
         for entry in material["links"]?.elements ?? [] {
@@ -31,11 +30,51 @@ extension EffectDocument {
         return MaterialGraph(nodes: nodes, links: links)
     }
 
+    func materialUse(_ particleID: String) -> String? { materialParticle(particleID)?["material"]?["use"]?.string }
+
+    var sharedMaterialNames: [String] { (jsonRoot?["materials"]?.members ?? []).map(\.key) }
+
+    var sharedMaterials: [String: MaterialGraph] {
+        var result: [String: MaterialGraph] = [:]
+        for member in jsonRoot?["materials"]?.members ?? [] { result[member.key] = EffectDocument.parseMaterial(member.node) }
+        return result
+    }
+
+    func materialUsers(_ name: String) -> [String] {
+        (0..<(jsonRoot?["particles"]?.elements?.count ?? 0)).map { "json/particles/\($0)" }.filter { materialUse($0) == name }
+    }
+
+    func materialGraph(_ particleID: String) -> MaterialGraph? {
+        guard let material = materialParticle(particleID)?["material"], material.members != nil else { return nil }
+        if let name = material["use"]?.string { return jsonRoot?["materials"]?[name].map(EffectDocument.parseMaterial) }
+        return EffectDocument.parseMaterial(material)
+    }
+
+    func materialOverrides(_ particleID: String) -> [String: MaterialOverride] {
+        var result: [String: MaterialOverride] = [:]
+        for member in materialParticle(particleID)?["material"]?["overrides"]?.members ?? [] {
+            if let number = member.node.number {
+                result[member.key] = .number(number)
+            } else if let parts = member.node.elements?.compactMap(\.number), parts.count >= 3 {
+                result[member.key] = .color(parts)
+            } else if let texture = member.node["texture"]?.string {
+                result[member.key] = .texture(texture)
+            }
+        }
+        return result
+    }
+
+    func resolvedMaterial(_ particleID: String) -> MaterialGraph? {
+        guard let graph = materialGraph(particleID) else { return nil }
+        return graph.applying(materialUse(particleID) == nil ? [:] : materialOverrides(particleID)).expanded(sharedMaterials)
+    }
+
     private func nodeJSON(_ node: MaterialNode) -> JSONNode {
         var members = [JSONMember(key: "id", node: JSONNode(.string(node.id))), JSONMember(key: "type", node: JSONNode(.string(node.type))),
                        JSONMember(key: "x", node: JSONNode(.number((node.x ?? 0).rounded()))), JSONMember(key: "y", node: JSONNode(.number((node.y ?? 0).rounded())))]
         if let texture = node.texture { members.append(JSONMember(key: "texture", node: JSONNode(.string(texture)))) }
         if let name = node.name, !name.isEmpty { members.append(JSONMember(key: "name", node: JSONNode(.string(name)))) }
+        if let graph = node.graph, !graph.isEmpty { members.append(JSONMember(key: "graph", node: JSONNode(.string(graph)))) }
         if let params = node.params, !params.isEmpty {
             let order = MaterialGraph.kind(of: node.type)?.params.map(\.name) ?? params.keys.sorted()
             let list = order.compactMap { name in params[name].map { JSONMember(key: name, node: JSONNode(.number($0))) } }
@@ -44,14 +83,73 @@ extension EffectDocument {
         return JSONNode(.object(members))
     }
 
-    func writeMaterial(_ graph: MaterialGraph, to particleID: String) {
-        guard let particle = materialParticle(particleID) else { return }
+    private func graphJSON(_ graph: MaterialGraph) -> JSONNode {
         let links = graph.links.map { link in
             JSONNode(.object([JSONMember(key: "from", node: JSONNode(.string(link.from))), JSONMember(key: "out", node: JSONNode(.string(link.out))),
                               JSONMember(key: "to", node: JSONNode(.string(link.to))), JSONMember(key: "in", node: JSONNode(.string(link.input)))]))
         }
-        particle.set("material", JSONNode(.object([JSONMember(key: "nodes", node: JSONNode(.array(graph.nodes.map(nodeJSON)))),
-                                                   JSONMember(key: "links", node: JSONNode(.array(links)))])))
+        return JSONNode(.object([JSONMember(key: "nodes", node: JSONNode(.array(graph.nodes.map(nodeJSON)))), JSONMember(key: "links", node: JSONNode(.array(links)))]))
+    }
+
+    private func setSharedMaterial(_ name: String, _ graph: MaterialGraph?) {
+        guard let root = jsonRoot else { return }
+        var members = root["materials"]?.members ?? []
+        members.removeAll { $0.key == name }
+        if let graph { members.append(JSONMember(key: name, node: graphJSON(graph))) }
+        if members.isEmpty {
+            if var all = root.members {
+                all.removeAll { $0.key == "materials" }
+                root.value = .object(all)
+            }
+        } else {
+            root.set("materials", JSONNode(.object(members)))
+        }
+    }
+
+    func writeMaterial(_ graph: MaterialGraph, to particleID: String) {
+        guard let particle = materialParticle(particleID) else { return }
+        if let name = materialUse(particleID) {
+            setSharedMaterial(name, graph)
+        } else {
+            particle.set("material", graphJSON(graph))
+        }
+    }
+
+    func setMaterialOverride(_ name: String, _ value: JSONNode?, in particleID: String) {
+        guard let particle = materialParticle(particleID), let use = materialUse(particleID) else { return }
+        let before = snapshot()
+        var members = particle["material"]?["overrides"]?.members ?? []
+        members.removeAll { $0.key == name }
+        if let value { members.append(JSONMember(key: name, node: value)) }
+        var material = [JSONMember(key: "use", node: JSONNode(.string(use)))]
+        if !members.isEmpty { material.append(JSONMember(key: "overrides", node: JSONNode(.object(members)))) }
+        particle.set("material", JSONNode(.object(material)))
+        registerUndo(value == nil ? "Reset " + name : "Set " + name, since: before)
+    }
+
+    func shareMaterial(_ rawName: String, in particleID: String) {
+        let name = rawName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, materialUse(particleID) == nil, let graph = materialGraph(particleID), let particle = materialParticle(particleID),
+              !sharedMaterialNames.contains(name) else { return }
+        let before = snapshot()
+        setSharedMaterial(name, graph)
+        particle.set("material", JSONNode(.object([JSONMember(key: "use", node: JSONNode(.string(name)))])))
+        registerUndo("Share Material", since: before)
+    }
+
+    func useSharedMaterial(_ name: String, in particleID: String) {
+        guard let particle = materialParticle(particleID), sharedMaterialNames.contains(name), materialUse(particleID) != name else { return }
+        let before = snapshot()
+        particle.set("material", JSONNode(.object([JSONMember(key: "use", node: JSONNode(.string(name)))])))
+        registerUndo("Use Material " + name, since: before)
+    }
+
+    func makeMaterialUnique(in particleID: String) {
+        guard let particle = materialParticle(particleID), let name = materialUse(particleID), let graph = materialGraph(particleID) else { return }
+        let before = snapshot()
+        particle.set("material", graphJSON(graph.applying(materialOverrides(particleID))))
+        if materialUsers(name).isEmpty { setSharedMaterial(name, nil) }
+        registerUndo("Make Material Unique", since: before)
     }
 
     func editMaterial(_ title: String, in particleID: String, _ edit: (inout MaterialGraph) -> Void) {
@@ -63,7 +161,7 @@ extension EffectDocument {
     }
 
     func createMaterial(in particleID: String) {
-        guard materialParticle(particleID) != nil, materialGraph(particleID) == nil else { return }
+        guard let particle = materialParticle(particleID), particle["material"] == nil else { return }
         let before = snapshot()
         let graph = MaterialGraph(nodes: [MaterialNode(id: "layers", type: "layers", x: 60, y: 80), MaterialNode(id: "output", type: "output", x: 420, y: 80)],
                                   links: [MaterialLink(from: "layers", out: "rgb", to: "output", input: "color"),
@@ -173,10 +271,17 @@ extension EffectDocument {
 
     func materialBaseTexture(_ particleID: String) -> String? { materialParticle(particleID)?["texture"]?.string }
 
+    func materialLayers(_ particleID: String) -> [(texture: String, combine: String, keepAlpha: Bool)] {
+        (materialParticle(particleID)?["layers"]?.elements ?? []).compactMap { layer in
+            guard let texture = layer["texture"]?.string else { return nil }
+            return (texture, layer["combine"]?.string ?? "multiply", layer["alpha"]?.string == "keep")
+        }
+    }
+
     func setMaterial(_ graph: MaterialGraph, title: String, in particleID: String) {
-        guard materialParticle(particleID) != nil else { return }
+        guard let particle = materialParticle(particleID) else { return }
         let before = snapshot()
-        writeMaterial(graph, to: particleID)
+        particle.set("material", graphJSON(graph))
         registerUndo(title, since: before)
     }
 }

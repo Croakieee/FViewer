@@ -62,9 +62,11 @@ final class MaterialPixels {
                        intent: .defaultIntent)
     }
 
-    func render(_ graph: MaterialGraph, node: String, pin: String?, side: Int, time: Float, base: String?, app: AppModel) -> CGImage? {
+    func render(_ graph: MaterialGraph, node: String, pin: String?, side: Int, time: Float, base: String?,
+                layers stack: [(texture: String, combine: String, keepAlpha: Bool)] = [], app: AppModel) -> CGImage? {
         var names = graph.textures
         if let base, !names.contains(base) { names.append(base) }
+        for layer in stack where !names.contains(layer.texture) { names.append(layer.texture) }
         let sample = sampler(app, names: names)
         let evaluate = graph.evaluator(node: node, output: pin, texture: sample)
         let scalar = pin.map { !["rgb", "uv"].contains($0) } ?? false
@@ -74,7 +76,18 @@ final class MaterialPixels {
         for y in 0..<side {
             for x in 0..<side {
                 let uv = SIMD2((Float(x) + 0.5) / Float(side), (Float(y) + 0.5) / Float(side))
-                let layers = base.map { sample($0, uv) } ?? SIMD4(repeating: 1)
+                var layers = base.map { sample($0, uv) } ?? SIMD4(repeating: 1)
+                for layer in stack {
+                    let l = sample(layer.texture, uv)
+                    switch layer.combine {
+                    case "add": layers = SIMD4(layers.x + l.x, layers.y + l.y, layers.z + l.z, layers.w)
+                    case "max": layers = SIMD4(max(layers.x, l.x), max(layers.y, l.y), max(layers.z, l.z), layers.w)
+                    case "min": layers = SIMD4(min(layers.x, l.x), min(layers.y, l.y), min(layers.z, l.z), layers.w)
+                    case "none": break
+                    default: layers = SIMD4(layers.x * l.x, layers.y * l.y, layers.z * l.z, layers.w)
+                    }
+                    if !layer.keepAlpha { layers.w *= l.w }
+                }
                 var value = evaluate(MaterialGraph.Sample(uv: uv, age: time, life: life, random: 0.37, layers: layers, particle: SIMD4(1, 1, 1, 1)))
                 if scalar { value = SIMD4(value.x, value.x, value.x, 1) }
                 if pin == "uv" { value = SIMD4(value.x - value.x.rounded(.down), value.y - value.y.rounded(.down), 0, 1) }
@@ -96,6 +109,7 @@ struct MaterialPreviewImage: View {
     let node: String
     let pin: String?
     let base: String?
+    var layers: [(texture: String, combine: String, keepAlpha: Bool)] = []
     var side = 72
     var animated = true
 
@@ -104,7 +118,7 @@ struct MaterialPreviewImage: View {
             let time = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 600))
             ZStack {
                 CheckerBackground()
-                if let image = MaterialPixels.shared.render(graph, node: node, pin: pin, side: side, time: time, base: base, app: app) {
+                if let image = MaterialPixels.shared.render(graph, node: node, pin: pin, side: side, time: time, base: base, layers: layers, app: app) {
                     Image(decorative: image, scale: 1).resizable().interpolation(.medium)
                 }
             }

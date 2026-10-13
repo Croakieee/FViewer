@@ -210,6 +210,7 @@ public struct EffectDef: Decodable {
     public var timelines: [TimelineDef]
     public var emitters: [EmitterDef]
     public var particles: [ParticleDef]
+    public var materials: [String: MaterialGraph]?
 
     public static func decode(_ data: Data, table: ParamTable) throws -> EffectDef {
         let decoder = JSONDecoder()
@@ -345,7 +346,7 @@ public struct EmitterItem: Decodable {
     }
 }
 
-public enum BlendMode: String, Decodable { case normal, add, screen }
+public enum BlendMode: String, Decodable { case normal, add, screen, opaque }
 
 public struct UvParam: Decodable {
     public var scale: Axes2Param?

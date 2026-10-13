@@ -41,6 +41,7 @@ enum MaterialLook {
         case "texture": return row + 58
         case "color": return 26
         case "gradient": return 18 + 3 * 24
+        case "subgraph": return row
         default: return 0
         }
     }
@@ -266,6 +267,28 @@ struct MaterialEditorView: View {
             }
             if kind.type == "color" {
                 colorRow(particle, node, kind, ["r", "g", "b"], alpha: "a", title: "Set Color").frame(height: 26)
+            }
+            if kind.type == "subgraph" {
+                let own = document.materialUse(particle)
+                Menu {
+                    ForEach(document.sharedMaterialNames.filter { $0 != own }, id: \.self) { name in
+                        Button(name) {
+                            document.editMaterial("Set Subgraph", in: particle) { graph in
+                                if let index = graph.nodes.firstIndex(where: { $0.id == node.id }) { graph.nodes[index].graph = name }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "circle.hexagongrid").font(.system(size: 9))
+                        Text(node.graph ?? (document.sharedMaterialNames.isEmpty ? "No shared materials" : "Choose material")).font(Theme.small).lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Theme.text)
+                }
+                .menuStyle(.borderlessButton)
+                .padding(.horizontal, 8)
+                .frame(height: MaterialLook.row)
             }
             if kind.type == "gradient" {
                 let stops = [("ar", "ag", "ab"), ("br", "bg", "bb"), ("cr", "cg", "cb")]
@@ -585,9 +608,9 @@ struct MaterialEditorView: View {
         .background(Theme.panel)
     }
 
-    private func status(_ graph: MaterialGraph?) -> some View {
-        let compiled = graph?.compile()
-        let shader = graph.flatMap { graph in MTLCreateSystemDefaultDevice().flatMap { MetalRenderer.shaderProblem(graph, device: $0) } }
+    private func status(_ graph: MaterialGraph?, _ resolved: MaterialGraph?) -> some View {
+        let compiled = resolved?.compile()
+        let shader = resolved.flatMap { graph in MTLCreateSystemDefaultDevice().flatMap { MetalRenderer.shaderProblem(graph, device: $0) } }
         let problem = compiled?.problems.first ?? shader.map { "Shader: " + $0 }
         return HStack(spacing: 14) {
             if let graph, let compiled {
@@ -625,7 +648,23 @@ struct MaterialEditorView: View {
                     palette(particle, graph)
                     Rectangle().fill(Theme.line).frame(width: 1)
                     if let graph {
-                        canvas(graph, particle)
+                        VStack(spacing: 0) {
+                            if let shared = document.materialUse(particle) {
+                                let users = document.materialUsers(shared).count
+                                HStack(spacing: 8) {
+                                    Image(systemName: "link").font(.system(size: 10))
+                                    Text("Shared “\(shared)” · \(users) particle\(users == 1 ? "" : "s") · graph edits change all of them")
+                                        .font(Theme.small).lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    SegmentButton(title: "Make Unique", active: false) { document.makeMaterialUnique(in: particle) }
+                                }
+                                .foregroundStyle(Theme.text)
+                                .padding(.horizontal, 10)
+                                .frame(height: 26)
+                                .background(Theme.accent.opacity(0.35))
+                            }
+                            canvas(graph, particle)
+                        }
                     } else {
                         VStack(spacing: 8) {
                             Image(systemName: "circle.hexagongrid").font(.system(size: 26)).foregroundStyle(Theme.dim)
@@ -640,9 +679,12 @@ struct MaterialEditorView: View {
                     Rectangle().fill(Theme.line).frame(width: 1)
                     MaterialInspector(document: document, particle: particle, graph: graph, selection: $selection, previewPin: $previewPin)
                 }
-                status(graph)
+                status(graph, document.resolvedMaterial(particle))
             }
-            .onChange(of: particle) { _, _ in selection = [] }
+            .onChange(of: particle) { _, _ in
+                selection = []
+                if let next = document.materialParticleID.flatMap({ document.materialGraph($0) }) { frameAll(next) }
+            }
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "circle.hexagongrid").font(.system(size: 26)).foregroundStyle(Theme.dim)
