@@ -19,6 +19,7 @@ enum PreviewRules {
         ("softDepthOffset", "Soft fade after depth offset", "The soft particle fade is measured from the depth the particle is drawn at."),
         ("directionalLights", "Directional lights", "Directional light effectors light the floor and the models from their direction."),
         ("modelSkin", "Model Skin on the loaded model", "Model Skin particles are drawn over the model loaded with File → Game → Load Model."),
+        ("dissolve", "Dissolve on the loaded model", "A Dissolve particle cuts the model loaded with File → Game → Load Model where the red of its first texture is below Erosion, and the edge glows in the particle colour. Derived from the field names, not checked in the game."),
         ("textureFilter", "Texture filter level", "Texture Filter set to High and above samples the texture with anisotropic filtering."),
         ("uvRotationRandom", "Random UV rotation", "UV Set Rotation Random turns each particle's texture by its own amount."),
         ("rotationVelocityRandom", "Random rotation velocity", "Rotation Velocity Random gives each particle its own spin."),

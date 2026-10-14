@@ -17,14 +17,27 @@ enum GameCatalog {
         return result
     }
 
+    private static var lowered: [String: [String]] = [:]
+    private static var lastSearch: (key: String, query: String, limit: Int, result: (rows: [(group: String, path: String)], total: Int))?
+
     static func search(_ key: String, _ query: String, limit: Int = 300) -> (rows: [(group: String, path: String)], total: Int) {
+        if let last = lastSearch, last.key == key, last.query == query, last.limit == limit { return last.result }
+        let result = scan(key, query, limit: limit)
+        lastSearch = (key, query, limit, result)
+        return result
+    }
+
+    private static func scan(_ key: String, _ query: String, limit: Int) -> (rows: [(group: String, path: String)], total: Int) {
         let words = query.lowercased().split(separator: " ").map(String.init)
         var rows: [(String, String)] = []
         var total = 0
-        for line in lines(key) {
+        let all = lines(key)
+        if !words.isEmpty, lowered[key]?.count != all.count { lowered[key] = all.map { $0.lowercased() } }
+        let small = lowered[key] ?? []
+        for (index, line) in all.enumerated() {
             if !words.isEmpty {
-                let lowered = line.lowercased()
-                if !words.allSatisfy({ lowered.contains($0) }) { continue }
+                let text = index < small.count ? small[index] : line.lowercased()
+                if !words.allSatisfy({ text.contains($0) }) { continue }
             }
             total += 1
             if rows.count < limit {

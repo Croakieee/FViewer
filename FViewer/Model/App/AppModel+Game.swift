@@ -452,7 +452,14 @@ extension AppModel {
             return
         }
         open(url)
-        if let document, document.url == url, document.gamePath.isEmpty { document.gamePath = PenumbraExport.normalized(gamePath) }
+        guard let document, document.url == url else { return }
+        if document.gamePath.isEmpty { document.gamePath = PenumbraExport.normalized(gamePath) }
+        guard game != nil, document.avfxRoot != nil else { return }
+        rememberGamePath(PenumbraExport.normalized(gamePath))
+        let result = fetchTextures(for: document)
+        if result.fetched > 0 || !result.missing.isEmpty {
+            notice = "\(result.fetched) texture\(result.fetched == 1 ? "" : "s") fetched" + (result.missing.isEmpty ? "" : ", \(result.missing.count) not found")
+        }
     }
 
     @discardableResult func loadSkeleton(_ url: URL) throws -> (bones: Int, points: Int) {

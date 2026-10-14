@@ -25,6 +25,16 @@ struct LightDraw {
     var decay: Float
 }
 
+struct DissolveState {
+    var texture: Int
+    var amount: Float
+    var edge: Float
+    var reverse: Bool
+    var color = Vec3(1, 1, 1)
+    var uvMatrix = Vec4(1, 0, 0, 1)
+    var uvOffset = SIMD2<Float>(0, 0)
+}
+
 struct ParticleDraw {
     var particle: Int
     var geometry: RenderGeometry
@@ -729,6 +739,29 @@ final class AvfxSimulation {
         side = simd_normalize(side) * width * across
         let normal = simd_length_squared(along) > 1e-12 ? simd_normalize(simd_cross(along, side)) : Vec3(0, 1, 0)
         return Math3D.basis(side, normal, along, origin: origin)
+    }
+
+    func dissolve(filter: VisibilityFilter) -> DissolveState? {
+        for p in particles {
+            let s = p.schema
+            guard let d = s.dissolve, d.target & 1 != 0, visible(p, filter), let tc1 = s.tc1, tc1.enabled, let texture = tc1.textures.first else { continue }
+            let t = p.curveTime
+            var state = DissolveState(texture: texture, amount: Eval.curve(d.erosion, t, 0), edge: max(0.001, Eval.curve(d.endWidth, t, 0.1)), reverse: d.reverse)
+            let color = Eval.color(s.color, t, p.seed)
+            let strength = Eval.curve(d.intensity, t, 1)
+            state.color = Vec3(color.x, color.y, color.z) * strength
+            if tc1.uvSet >= 0, tc1.uvSet < s.uvSets.count {
+                let uv = s.uvSets[tc1.uvSet]
+                let scale = Eval.axes(uv.scale, t, 1, p.seed, 11)
+                let scroll = Eval.axes(uv.scroll, t, 0, p.seed, 13)
+                let rotation = (PreviewRules.isOn("uvRotationReversed") ? -1 : 1) * Eval.curve(uv.rotation, t)
+                let c = cos(rotation), sn = sin(rotation)
+                state.uvMatrix = Vec4(scale.x * c, scale.x * sn, -scale.y * sn, scale.y * c)
+                state.uvOffset = SIMD2(scroll.x, scroll.y)
+            }
+            return state
+        }
+        return nil
     }
 
     private func visible(_ p: ParticleInstance, _ filter: VisibilityFilter) -> Bool {

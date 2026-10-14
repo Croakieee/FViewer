@@ -206,8 +206,10 @@ extension EffectDocument {
                     }
                 },
                 write: { points in
+                    let kept = (keys.elements ?? []).compactMap { $0["time"]?.number }
                     keys.value = .array(points.sorted { $0.time < $1.time }.map { point in
-                        var members = [JSONMember(key: "time", node: JSONNode(.number(point.time.rounded()))),
+                        let time = kept.contains { abs($0 - point.time) < 1e-9 } ? point.time : point.time.rounded()
+                        var members = [JSONMember(key: "time", node: JSONNode(.number(time))),
                                        JSONMember(key: "value", node: JSONNode(.number((point.value * 10000).rounded() / 10000)))]
                         if point.interpolation == CurveKeyPoint.spline {
                             members.append(JSONMember(key: "spline", node: JSONNode(.object([

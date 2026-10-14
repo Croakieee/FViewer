@@ -69,6 +69,10 @@ private struct Uniforms {
     var options: SIMD4<Float>
     var lightPosition: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
     var lightColor: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
+    var dissolve = SIMD4<Float>(0, 0, 0, 0)
+    var dissolveColor = SIMD4<Float>(0, 0, 0, 0)
+    var dissolveUv = SIMD4<Float>(1, 0, 0, 1)
+    var dissolveOffset = SIMD4<Float>(0, 0, 0, 0)
 }
 
 private struct DrawItem {
@@ -728,6 +732,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         guard var encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
+        encoder.setFragmentTexture(white, index: 1)
         encoder.setCullMode(.none)
         func lit(_ uniforms: inout Uniforms) {
             var positions = [SIMD4<Float>](repeating: .zero, count: 4), colors = [SIMD4<Float>](repeating: .zero, count: 4)
@@ -765,11 +770,20 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentTexture(item.map ?? white, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: item.count)
         }
+        let dissolving = effect != nil && PreviewRules.isOn("dissolve") ? player?.simulation?.dissolve(filter: filter) : nil
+        let dissolveMap = dissolving.flatMap { particleRenderer?.textureProvider($0.texture)?.texture }
         for (pass, list) in [ground, grid, items, reference].enumerated() {
             for item in list {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
                                         options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured || item.map != nil ? 1 : 0, item.pointSize, 0))
                 if item.lit { lit(&uniforms) }
+                if pass == 3, let dissolving, dissolveMap != nil {
+                    uniforms.dissolve = SIMD4(dissolving.amount, dissolving.edge, dissolving.reverse ? 1 : 0, 1)
+                    uniforms.dissolveColor = SIMD4(dissolving.color.x, dissolving.color.y, dissolving.color.z, 0)
+                    uniforms.dissolveUv = dissolving.uvMatrix
+                    uniforms.dissolveOffset = SIMD4(dissolving.uvOffset.x, dissolving.uvOffset.y, 0, 0)
+                }
+                encoder.setFragmentTexture(dissolveMap ?? white, index: 1)
                 encoder.setDepthStencilState(pass == 1 || item.wire || item.textured ? overlayDepthState : depthState)
                 encoder.setTriangleFillMode(item.wire ? .lines : .fill)
                 encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
@@ -818,6 +832,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             }
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentSamplerState(sampler, index: 0)
+            encoder.setFragmentTexture(white, index: 1)
             encoder.setCullMode(.none)
             let capturing = captureRequest != nil
             for item in capturing ? [] : overlayItems() {

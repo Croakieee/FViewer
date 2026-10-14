@@ -867,6 +867,7 @@ struct HeaderButton: View {
 final class ScrollMonitorView: NSView {
     var onScroll: ((CGSize, NSEvent.ModifierFlags, CGPoint) -> Void)?
     var onMagnify: ((CGFloat, CGPoint) -> Void)?
+    var passVertical = false
     private var monitor: Any?
 
     override func viewDidMoveToWindow() {
@@ -884,6 +885,7 @@ final class ScrollMonitorView: NSView {
             } else {
                 let precise = event.hasPreciseScrollingDeltas
                 let delta = CGSize(width: event.scrollingDeltaX * (precise ? 1 : 8), height: event.scrollingDeltaY * (precise ? 1 : 8))
+                if self.passVertical, !event.modifierFlags.contains(.command), abs(delta.height) >= abs(delta.width) { return event }
                 self.onScroll?(delta, event.modifierFlags, point)
             }
             return nil
@@ -896,16 +898,19 @@ final class ScrollMonitorView: NSView {
 struct ScrollMonitor: NSViewRepresentable {
     let onScroll: (CGSize, NSEvent.ModifierFlags, CGPoint) -> Void
     let onMagnify: (CGFloat, CGPoint) -> Void
+    var passVertical = false
 
     func makeNSView(context: Context) -> ScrollMonitorView {
         let view = ScrollMonitorView()
         view.onScroll = onScroll
         view.onMagnify = onMagnify
+        view.passVertical = passVertical
         return view
     }
 
     func updateNSView(_ view: ScrollMonitorView, context: Context) {
         view.onScroll = onScroll
         view.onMagnify = onMagnify
+        view.passVertical = passVertical
     }
 }

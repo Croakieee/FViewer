@@ -26,6 +26,10 @@ struct Uniforms {
     float4 options;
     float4 lightPosition[4];
     float4 lightColor[4];
+    float4 dissolve;
+    float4 dissolveColor;
+    float4 dissolveUv;
+    float4 dissolveOffset;
 };
 
 vertex VertexOut viewportVertex(VertexIn in [[stage_in]], constant Uniforms &u [[buffer(1)]]) {
@@ -41,8 +45,17 @@ vertex VertexOut viewportVertex(VertexIn in [[stage_in]], constant Uniforms &u [
 }
 
 fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],
-                                 texture2d<float> map [[texture(0)]], sampler mapSampler [[sampler(0)]]) {
+                                 texture2d<float> map [[texture(0)]], texture2d<float> dissolveMap [[texture(1)]], sampler mapSampler [[sampler(0)]]) {
     float4 color = in.color;
+    float glow = -1.0;
+    if (u.dissolve.w > 0.5) {
+        float2 centred = in.uv - 0.5;
+        float2 where = float2(u.dissolveUv.x * centred.x + u.dissolveUv.y * centred.y, u.dissolveUv.z * centred.x + u.dissolveUv.w * centred.y) + u.dissolveOffset.xy + 0.5;
+        float n = dissolveMap.sample(mapSampler, where).r;
+        if (u.dissolve.z > 0.5) n = 1.0 - n;
+        if (n < u.dissolve.x) discard_fragment();
+        glow = 1.0 - smoothstep(0.0, u.dissolve.y, n - u.dissolve.x);
+    }
     if (u.options.y > 0.5) {
         color *= map.sample(mapSampler, in.uv);
     }
@@ -64,6 +77,7 @@ fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u
         }
         color.rgb += in.color.rgb * added * 1.27;
     }
+    if (glow > 0.0) color.rgb += u.dissolveColor.rgb * glow;
     return color;
 }
 

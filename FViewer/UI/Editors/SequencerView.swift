@@ -370,7 +370,7 @@ struct SequencerView: View {
                                     viewStart = max(0, viewStart - Double(delta.width / max(geometry.size.width, 1)) * span / viewZoom)
                                 }
                             },
-                            onMagnify: { amount, point in zoomTimeline(1 + Double(amount), at: point.x, width: geometry.size.width, span: span) }))
+                            onMagnify: { amount, point in zoomTimeline(1 + Double(amount), at: point.x, width: geometry.size.width, span: span) }, passVertical: true))
                         .contentShape(Rectangle())
                         .gesture(DragGesture(minimumDistance: 0)
                             .updating($pressing) { _, state, _ in state = true }

@@ -31,6 +31,14 @@ struct RColor {
     var ranBri: RCurve?
 }
 
+struct RDissolve {
+    var target: Int
+    var reverse: Bool
+    var erosion: RCurve?
+    var endWidth: RCurve?
+    var intensity: RCurve?
+}
+
 struct RLife {
     var value: Float = -1
     var random: Float = 0
@@ -262,6 +270,7 @@ struct RParticle {
     var disc: RDisc?
     var polyline: RPolyline?
     var softParticle = false
+    var dissolve: RDissolve?
     var coordOrder = 0
     var rotVelRandom: [RCurve?] = [nil, nil, nil]
     var clipNear: (start: Float, end: Float)? = nil
@@ -523,6 +532,11 @@ enum AvfxSchemaReader {
         result.emitterEffectors = root.childrenNamed("Emit").map { $0.int("EfNo", -1) }
         for (index, block) in root.childrenNamed("Emit").enumerated() where index < result.emitters.count { result.emitters[index].coordOrder = block.int("CCOT") }
         for (index, block) in root.childrenNamed("Ptcl").enumerated() where index < result.particles.count { result.particles[index].coordOrder = block.int("CCOT") }
+        for (index, block) in root.childrenNamed("Ptcl").enumerated() where index < result.particles.count && block.int("PrVT") == 15 {
+            guard let data = block.child("Data") else { continue }
+            result.particles[index].dissolve = RDissolve(target: data.int("DTT"), reverse: data.bool("bRev"), erosion: curve(data.child("EroR")),
+                                                         endWidth: curve(data.child("EdW")), intensity: curve(data.child("Int")))
+        }
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
         return result
     }
