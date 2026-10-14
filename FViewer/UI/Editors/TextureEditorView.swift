@@ -239,7 +239,16 @@ final class TextureEditorModel: ObservableObject {
         contrast = 0
     }
 
+    private var shown: (revision: Int, channels: [Bool], size: Int, image: CGImage?)?
+
     func display() -> CGImage? {
+        if let shown, shown.revision == revision, shown.channels == channels, shown.size == image.rgba.count { return shown.image }
+        let fresh = makeDisplay()
+        shown = (revision, channels, image.rgba.count, fresh)
+        return fresh
+    }
+
+    private func makeDisplay() -> CGImage? {
         var pixels = image.rgba
         let onlyAlpha = !channels[0] && !channels[1] && !channels[2] && channels[3]
         for i in stride(from: 0, to: pixels.count, by: 4) {

@@ -36,7 +36,9 @@ enum ParameterClipboard {
 
     private static func matchAssignment(_ node: OutlineNode, in document: EffectDocument) -> Bool {
         var changed = false
-        for item in document.missingFields(for: current(node, in: document)) where setFields.contains(item.title) {
+        func plain(_ label: String) -> String { label.hasSuffix(" Index") ? String(label.dropLast(6)) : label }
+        let wanted = Set(setFields.map(plain))
+        for item in document.missingFields(for: current(node, in: document)) where wanted.contains(plain(item.title)) {
             item.create()
             changed = true
         }

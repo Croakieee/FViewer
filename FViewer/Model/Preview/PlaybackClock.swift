@@ -11,6 +11,7 @@ final class PlaybackClock: ObservableObject {
     @Published var endFrame: Double?
     @Published var startFrame: Double = 0
     @Published var speed: Double = 1
+    var rate: Double = 30
     @Published var seed = 1
     @Published var clipLog: [String] = []
     @Published var frameMilliseconds: Double = 0
@@ -44,7 +45,7 @@ final class PlaybackClock: ObservableObject {
         guard playing else { return }
         let fresh = resumed
         resumed = false
-        let next = time + min(seconds, sinceLast, 0.1) * 30 * speed
+        let next = time + min(seconds, sinceLast, 0.1) * rate * speed
         let ended = endFrame == nil && finished && next > 2 && !held
         let overrun = next >= (endFrame ?? max(duration, 1))
         if ended || overrun {

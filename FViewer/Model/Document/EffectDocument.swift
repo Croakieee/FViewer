@@ -169,7 +169,8 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published var paramOverrides: [String: Double] = [:]
     @Published private(set) var undoTitles: [String] = []
     @Published private(set) var redoTitles: [String] = []
-    var originalFields: [String: [String: FieldValue]] = [:]
+    var originalFields: [String: [String: FieldValue]] = [:] { didSet { if originalFields.isEmpty { originalKeyCache = [:] } } }
+    var originalKeyCache: [String: [CurveKeyPoint]?] = [:]
     var origins: [String: [Int]] = [:]
 
     func originalID(_ id: String) -> String? {

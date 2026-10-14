@@ -655,9 +655,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             origin = camera.eye + (right * x + up * y) * camera.distance
             direction = -forward
         }
-        let state = CameraState(position: camera.eye, rotation: Math3D.quaternion(x: right, y: up, z: forward), fovY: camera.fov,
-                                viewportHeight: Float(size.height))
-        if let particle = simulation.pick(origin: origin, direction: direction, camera: state, filter: filter) {
+        if let particle = simulation.pick(origin: origin, direction: direction, draws: lastDraws) {
             let id = "avfx/Ptcl/\(particle)"
             if document.node(id) != nil { document.selectionID = id }
         } else {

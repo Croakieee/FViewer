@@ -208,7 +208,47 @@ enum Gltf {
         }
         var mesh = GltfMesh()
         var missingNormals = false, missingTangents = false, skipped = 0
-        for item in root["meshes"]?.elements ?? [] {
+        let sceneNodes = root["nodes"]?.elements ?? [], sceneMeshes = root["meshes"]?.elements ?? []
+        func localMatrix(_ node: JSONNode) -> simd_float4x4 {
+            if let raw = node["matrix"]?.elements?.compactMap({ $0.number }), raw.count == 16 {
+                let v = raw.map { Float($0) }
+                return simd_float4x4(columns: (SIMD4(v[0], v[1], v[2], v[3]), SIMD4(v[4], v[5], v[6], v[7]), SIMD4(v[8], v[9], v[10], v[11]), SIMD4(v[12], v[13], v[14], v[15])))
+            }
+            func numbers(_ key: String, _ count: Int) -> [Float]? {
+                guard let raw = node[key]?.elements?.compactMap({ $0.number }), raw.count == count else { return nil }
+                return raw.map { Float($0) }
+            }
+            var out = matrix_identity_float4x4
+            if let t = numbers("translation", 3) { out.columns.3 = SIMD4(t[0], t[1], t[2], 1) }
+            if let r = numbers("rotation", 4) { out = out * simd_float4x4(simd_quatf(ix: r[0], iy: r[1], iz: r[2], r: r[3])) }
+            if let k = numbers("scale", 3) { out = out * simd_float4x4(diagonal: SIMD4(k[0], k[1], k[2], 1)) }
+            return out
+        }
+        var placed: [(item: JSONNode, matrix: simd_float4x4)] = []
+        var visited = 0
+        func visit(_ index: Int, _ parent: simd_float4x4, _ depth: Int) {
+            guard index >= 0, index < sceneNodes.count, depth < 64, visited < 20000 else { return }
+            visited += 1
+            let node = sceneNodes[index]
+            let world = parent * localMatrix(node)
+            if let which = node["mesh"]?.number.map({ Int(safe: $0) }), which >= 0, which < sceneMeshes.count { placed.append((sceneMeshes[which], world)) }
+            for child in node["children"]?.elements ?? [] { if let next = child.number { visit(Int(safe: next), world, depth + 1) } }
+        }
+        let scenes = root["scenes"]?.elements ?? []
+        let chosen = Int(safe: root["scene"]?.number ?? 0)
+        if chosen >= 0, chosen < scenes.count {
+            for entry in scenes[chosen]["nodes"]?.elements ?? [] { if let index = entry.number { visit(Int(safe: index), matrix_identity_float4x4, 0) } }
+        }
+        if placed.isEmpty { placed = sceneMeshes.map { ($0, matrix_identity_float4x4) } }
+        for (item, world) in placed {
+            let turn = simd_float3x3(SIMD3(world.columns.0.x, world.columns.0.y, world.columns.0.z), SIMD3(world.columns.1.x, world.columns.1.y, world.columns.1.z),
+                                     SIMD3(world.columns.2.x, world.columns.2.y, world.columns.2.z))
+            let normalTurn = abs(turn.determinant) > 1e-8 ? turn.inverse.transpose : turn
+            func direction(_ m: simd_float3x3, _ v: SIMD3<Float>) -> SIMD3<Float> {
+                let out = m * v
+                let length = simd_length(out)
+                return length > 1e-6 && length.isFinite ? out / length : v
+            }
             for primitive in item["primitives"]?.elements ?? [] {
                 if let mode = primitive["mode"]?.number, Int(safe: mode) != 4, Int(safe: mode) != 0 {
                     skipped += 1
@@ -218,14 +258,17 @@ enum Gltf {
                 let base = UInt32(mesh.positions.count)
                 let positions = try read(positionIndex).values
                 let count = positions.count / 3
-                for i in 0..<count { mesh.positions.append(SIMD3(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2])) }
+                for i in 0..<count {
+                    let moved = world * SIMD4(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2], 1)
+                    mesh.positions.append(SIMD3(moved.x, moved.y, moved.z))
+                }
                 func vectors(_ key: String) throws -> (values: [Float], components: Int)? {
                     guard let index = attributes[key]?.number.map({ Int(safe: $0) }) else { return nil }
                     let data = try read(index)
                     return data.values.count / max(data.components, 1) == count ? data : nil
                 }
                 if let n = try vectors("NORMAL"), n.components >= 3 {
-                    for i in 0..<count { mesh.normals.append(SIMD3(n.values[i * 3], n.values[i * 3 + 1], n.values[i * 3 + 2])) }
+                    for i in 0..<count { mesh.normals.append(direction(normalTurn, SIMD3(n.values[i * 3], n.values[i * 3 + 1], n.values[i * 3 + 2]))) }
                 } else {
                     missingNormals = true
                     mesh.normals.append(contentsOf: [SIMD3<Float>](repeating: .zero, count: count))
@@ -233,7 +276,8 @@ enum Gltf {
                 if let t = try vectors("TANGENT"), t.components >= 3 {
                     for i in 0..<count {
                         let o = i * t.components
-                        mesh.tangents.append(SIMD4(t.values[o], t.values[o + 1], t.values[o + 2], t.components > 3 ? t.values[o + 3] : 1))
+                        let turned = direction(turn, SIMD3(t.values[o], t.values[o + 1], t.values[o + 2]))
+                        mesh.tangents.append(SIMD4(turned.x, turned.y, turned.z, t.components > 3 ? t.values[o + 3] : 1))
                     }
                 } else {
                     missingTangents = true

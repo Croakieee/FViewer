@@ -115,7 +115,12 @@ struct ExportModSheet: View {
                         ForEach(candidates) { effect in
                             HStack(spacing: 6) {
                                 CheckBox(isOn: effects.contains(effect.id), label: effect.title) { on in
-                                    if on { effects.insert(effect.id) } else { effects.remove(effect.id) }
+                                    if on {
+                                        effects.insert(effect.id)
+                                        included.formUnion(effect.textureSlots.map(\.path).filter { app.isCustomTexture($0) })
+                                    } else {
+                                        effects.remove(effect.id)
+                                    }
                                 }
                                 .frame(width: 180)
                                 TextValueField(value: paths[effect.id] ?? "") { paths[effect.id] = $0 }

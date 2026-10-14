@@ -70,6 +70,16 @@ final class AvfxPlayer {
             }
             simulation.advance(step)
         }
+        if !clock.playing {
+            if let release = clock.releaseTime, !appliedRelease, Double(simulation.time) >= release {
+                appliedRelease = true
+                simulation.release()
+            }
+            while appliedTriggers < clock.triggers.count, Double(simulation.time) >= clock.triggers[appliedTriggers].time {
+                simulation.trigger(clock.triggers[appliedTriggers].index)
+                appliedTriggers += 1
+            }
+        }
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1
         workTime = workTime * 0.9 + (CACurrentMediaTime() - began) * 100

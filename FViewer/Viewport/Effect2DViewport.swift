@@ -173,6 +173,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
                     for (name, value) in document.paramOverrides where appliedParams[name] != value { _ = core.setParam(name, value) }
                     appliedParams = document.paramOverrides
                 }
+                if core.fps > 0, clock.rate != core.fps { clock.rate = core.fps }
                 clock.advance(elapsed, duration: duration, finished: core.finished, held: hasLoops && !core.released && !core.killing)
                 if clock.time < core.time - 0.01 { rewind() }
                 var steps = 0

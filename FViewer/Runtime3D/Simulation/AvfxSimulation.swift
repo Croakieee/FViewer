@@ -54,6 +54,21 @@ struct ParticleDraw {
     var sequence = 0
 }
 
+extension ParticleDraw {
+    var worldBounds: (centre: Vec3, radius: Float)? {
+        guard model == matrix_identity_float4x4, geometry.vertexCount > 0 else { return nil }
+        var low = Vec3(repeating: .greatestFiniteMagnitude), high = Vec3(repeating: -.greatestFiniteMagnitude)
+        let step = max(1, geometry.vertexCount / 64)
+        for index in stride(from: 0, to: geometry.vertexCount, by: step) {
+            let o = index * RenderGeometry.stride
+            let point = Vec3(geometry.vertices[o], geometry.vertices[o + 1], geometry.vertices[o + 2])
+            low = simd_min(low, point)
+            high = simd_max(high, point)
+        }
+        return ((low + high) / 2, max(0.08, simd_length(high - low) * 0.5))
+    }
+}
+
 private enum ParticleKind {
     static let powder = 1, windmill = 2, line = 3, laser = 4, model = 5, polyline = 6, quad = 8, decal = 10, decalRing = 11, disc = 12, lightModel = 13
 }
@@ -880,12 +895,16 @@ final class AvfxSimulation {
         }
     }
 
-    func pick(origin: Vec3, direction: Vec3, camera: CameraState, filter: VisibilityFilter) -> Int? {
+    func pick(origin: Vec3, direction: Vec3, draws: [ParticleDraw]) -> Int? {
         var best: (particle: Int, distance: Float)?
-        for draw in render(camera: camera, filter: filter) {
-            let centre = Math3D.position(draw.model)
+        for draw in draws {
+            var centre = Math3D.position(draw.model)
             let scale = Math3D.decompose(draw.model).scale
-            let radius = max(0.08, max(abs(scale.x), abs(scale.y), abs(scale.z)) * 0.5)
+            var radius = max(0.08, max(abs(scale.x), abs(scale.y), abs(scale.z)) * 0.5)
+            if let bounds = draw.worldBounds {
+                centre = bounds.centre
+                radius = bounds.radius
+            }
             let along = simd_dot(centre - origin, direction)
             guard along > 0 else { continue }
             let miss = simd_length(centre - (origin + direction * along))

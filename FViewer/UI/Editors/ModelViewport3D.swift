@@ -566,7 +566,7 @@ struct ModelViewport3D: View {
                 .onContinuousHover { phase in
                     if case .active(let point) = phase {
                         mouse = point
-                        if !focused { focused = true }
+                        if !focused, !(NSApp.keyWindow?.firstResponder is NSTextView) { focused = true }
                         if modal != nil { applyModal() }
                     }
                 }

@@ -28,6 +28,7 @@ struct NumberField: View {
     @State private var hovering = false
     @State private var editing = false
     @State private var text = ""
+    @State private var editBase = 0.0
     @State private var dragStart: Double?
     @State private var moved = false
     @State private var live: Double?
@@ -52,7 +53,7 @@ struct NumberField: View {
                     .foregroundStyle(Theme.text)
                     .focused($focused)
                     .padding(.horizontal, 6)
-                    .onSubmit { finishEditing() }
+                    .onSubmit { finishEditing(submitted: true) }
                     .onExitCommand { editing = false }
                     .onAppear { DispatchQueue.main.async { focused = true } }
                     .onChange(of: focused) { old, isFocused in if old && !isFocused && editing { finishEditing() } }
@@ -113,6 +114,7 @@ struct NumberField: View {
             onCommit(origin, live ?? value)
         } else if !cancelled {
             text = formatted
+            editBase = value
             editing = true
         }
         dragStart = nil
@@ -120,8 +122,9 @@ struct NumberField: View {
         moved = false
     }
 
-    private func finishEditing() {
+    private func finishEditing(submitted: Bool = false) {
         editing = false
+        guard submitted || value == editBase || (value.isNaN && editBase.isNaN) else { return }
         let cleaned = text.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
         guard let parsed = Double(cleaned), parsed.isFinite else { return }
         let next = isInteger ? min(max(parsed.rounded(), -2_000_000_000), 2_000_000_000) : min(max(parsed, -1e9), 1e9)
@@ -193,6 +196,16 @@ struct TextValueField: View {
     let action: (String) -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
+    @State private var base = ""
+
+    private func commit() {
+        guard value == base else {
+            text = value
+            base = value
+            return
+        }
+        if text != value { action(text) }
+    }
 
     var body: some View {
         TextField("", text: $text)
@@ -204,10 +217,19 @@ struct TextValueField: View {
             .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(focused ? Theme.accent : Theme.gray(0.24), lineWidth: 1))
             .focused($focused)
-            .onAppear { text = value }
+            .onAppear {
+                text = value
+                base = value
+            }
             .onChange(of: value) { _, next in if !focused { text = next } }
             .onSubmit { if text != value { action(text) } }
-            .onChange(of: focused) { _, isFocused in if !isFocused && text != value { action(text) } }
+            .onChange(of: focused) { _, isFocused in
+                if isFocused {
+                    base = value
+                } else {
+                    commit()
+                }
+            }
     }
 }
 

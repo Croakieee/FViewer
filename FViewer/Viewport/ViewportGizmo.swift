@@ -103,7 +103,7 @@ extension ViewportRenderer {
                 basis = parent.rotation
                 unit = parent.scale
                 if let draw = lastDraws.first(where: { $0.particle == index && !$0.isSprite }) ?? lastDraws.first(where: { $0.particle == index }) {
-                    origin = Math3D.position(draw.model)
+                    origin = draw.worldBounds?.centre ?? Math3D.position(draw.model)
                     let type = particle.schema.type
                     if type == 12 || type == 11, !draw.isSprite {
                         gizmo.radiusModel = draw.model

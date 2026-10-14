@@ -93,9 +93,16 @@ extension EffectDocument {
     }
 
     func originalKeys(group: String, channel: String, in nodeID: String) -> [CurveKeyPoint]? {
-        guard let original, let source = originalID(nodeID), let node = original.node(source) else { return nil }
+        let key = nodeID + "|" + group + "|" + channel
+        if let known = originalKeyCache[key] { return known }
+        guard let original, let source = originalID(nodeID), let node = original.node(source) else {
+            originalKeyCache[key] = .some(nil)
+            return nil
+        }
         func mapped(_ id: String) -> String { id.hasPrefix(nodeID) ? source + id.dropFirst(nodeID.count) : id }
-        return original.curveGroups(for: node).first { $0.id == mapped(group) }?.channels.first { $0.id == mapped(channel) }?.read()
+        let found = original.curveGroups(for: node).first { $0.id == mapped(group) }?.channels.first { $0.id == mapped(channel) }?.read()
+        originalKeyCache[key] = .some(found)
+        return found
     }
 
     func describe(_ value: FieldValue) -> String {
