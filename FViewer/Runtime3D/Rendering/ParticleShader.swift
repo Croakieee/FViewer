@@ -35,6 +35,8 @@ struct U {
     float4 debugColor;
     float4 scene;
     float4 scene2;
+    float4 flags3;
+    float4 flags4;
 };
 
 struct VOut {
@@ -81,9 +83,10 @@ vertex VOut particleVertex(VIn in [[stage_in]], constant U &u [[buffer(1)]]) {
     out.worldNormal = (u.normalMatrix * float4(in.normal, 0.0)).xyz;
     out.position = u.projection * mv;
     float depthOffset = u.misc.w;
-    out.viewDistance = -mv.z - (u.scene2.z > 0.5 ? depthOffset : 0.0);
+    float pull = u.flags4.y > 0.5 ? depthOffset * length(mv.xyz) : depthOffset;
+    out.viewDistance = u.scene2.z > 0.5 ? -(mv.xyz + normalize(-mv.xyz) * pull).z : -mv.z;
     if (depthOffset != 0.0) {
-        float4 pulled = u.projection * float4(mv.xyz + normalize(-mv.xyz) * depthOffset, 1.0);
+        float4 pulled = u.projection * float4(mv.xyz + normalize(-mv.xyz) * pull, 1.0);
         out.position.z = pulled.z / pulled.w * out.position.w;
     }
     return out;
@@ -127,8 +130,10 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     float2 uv2 = in.uv2;
     float2 uv4 = in.uv4;
     float2 uv5 = in.uv5;
+    float2 d = float2(0.0);
     if (u.flags2.y > 0.5) {
-        float2 d = (map3.sample(s3, in.uv3).rg * 2.0 - 1.0) * u.misc.y;
+        float2 raw = map3.sample(s3, in.uv3).rg;
+        d = (u.flags3.x > 0.5 ? raw - 0.5 : raw * 2.0 - 1.0) * u.misc.y;
         if (u.distortLayers.x > 0.5) uv1 += d;
         if (u.distortLayers.y > 0.5) uv2 += d;
         if (u.distortLayers.z > 0.5) uv4 += d;
@@ -138,19 +143,32 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     bool hasT = false;
     if (u.scene.y > 0.5) {
         float2 suv = in.position.xy / u.scene.zw;
-        if (u.scene.y > 1.5 && u.flags2.y > 0.5) suv += (map3.sample(s3, in.uv3).rg * 2.0 - 1.0) * u.misc.y;
+        if (u.scene.y > 1.5 && u.flags2.y > 0.5) suv += d;
         t = float4(sceneColor.sample(s6, clamp(suv, float2(0.0), float2(1.0))).rgb, 1.0);
         hasT = true;
     }
+    if (u.flags3.w > 0.5) {
+        hasT = true;
+        if (u.flags3.w > 1.5) t.a = 0.0;
+    }
     if (u.layer[0].x > 0.5) {
         t = sampleLayer(map1, s1, uv1, u.layer[0]);
-        if (u.flags2.w > 0.5 && u.layer[0].y < 0.5) t.rgb = float3(dot(t.rgb, float3(0.299, 0.587, 0.114)));
+        if (u.layer[0].y < 0.5) {
+            if (u.flags4.x > 0.5) t.rgb = float3(1.0);
+            else if (u.flags2.w > 0.5) t.rgb = float3(dot(t.rgb, float3(0.299, 0.587, 0.114)));
+        }
+        if (u.flags3.y > 0.5) {
+            float4 pv = t + u.misc.z;
+            t = float4(map6.sample(s6, float2(pv.r, 0.5)).r, map6.sample(s6, float2(pv.g, 0.5)).g,
+                       map6.sample(s6, float2(pv.b, 0.5)).b, map6.sample(s6, float2(pv.a, 0.5)).a);
+        }
         hasT = true;
     }
     float tc1Alpha = t.a;
     if (u.layer[1].x > 0.5) {
         float4 l = sampleLayer(map2, s2, uv2, u.layer[1]);
         t = hasT ? combine(t, l, u.layer[1]) : l;
+        if (u.flags3.w > 1.5 && u.layer[1].z < 0.5) t.a = l.a;
         hasT = true;
     }
     if (u.layer[2].x > 0.5) {
@@ -178,7 +196,9 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
         if (d < 1.0) {
             float zc = u.scene2.y / (u.scene2.x - u.scene2.y);
             float sceneDistance = u.scene2.w > 0.5 ? mix(u.scene2.x, u.scene2.y, d) : zc * u.scene2.x / (d + zc);
-            c.a *= clamp((sceneDistance - in.viewDistance) / u.scene.x, 0.0, 1.0);
+            float soft = clamp((sceneDistance - in.viewDistance) / u.scene.x, 0.0, 1.0);
+            if (u.flags3.z > 0.5) soft *= soft;
+            c.a *= soft;
         }
     }
     if (c.a <= 0.002) discard_fragment();

@@ -23,6 +23,8 @@ private struct ParticleUniforms {
     var debugColor = Vec4.zero
     var scene = Vec4.zero
     var scene2 = Vec4.zero
+    var flags3 = Vec4.zero
+    var flags4 = Vec4.zero
 }
 
 struct LoadedTexture {
@@ -119,6 +121,7 @@ final class ParticleRenderer {
             (.oneMinusDestinationColor, .one, .zero, .one),
             (.one, .one, .zero, .one),
             (.one, .one, .zero, .one),
+            (.one, .oneMinusSourceAlpha, .one, .oneMinusSourceAlpha),
         ]
         for (slot, factor) in factors.enumerated() {
             let d = MTLRenderPipelineDescriptor()
@@ -178,15 +181,15 @@ final class ParticleRenderer {
         return texture
     }
 
-    private func sampler(_ u: Int, _ v: Int, filter: Int = 1) -> MTLSamplerState? {
+    private func sampler(_ u: Int, _ v: Int, filter: Int = 1, mipmaps: Bool = true) -> MTLSamplerState? {
         let level = PreviewRules.isOn("textureFilter") ? min(max(filter, 0), 4) : 1
-        let key = u * 3 + v + level * 16
+        let key = u * 3 + v + level * 16 + (mipmaps ? 0 : 128)
         if let cached = samplers[key] { return cached }
         func mode(_ border: Int) -> MTLSamplerAddressMode { border == 1 ? .clampToEdge : border == 2 ? .mirrorRepeat : .repeat }
         let d = MTLSamplerDescriptor()
         d.minFilter = .linear
         d.magFilter = .linear
-        d.mipFilter = .linear
+        d.mipFilter = mipmaps ? .linear : .notMipmapped
         d.maxAnisotropy = level >= 2 ? [4, 8, 16][level - 2] : 1
         d.sAddressMode = mode(u)
         d.tAddressMode = mode(v)
@@ -199,6 +202,7 @@ final class ParticleRenderer {
         var m = PreparedMaterial()
         let plainUv = PreviewRules.isOn("plainUv") && (ps.type == 2 || (ps.type == 1 && ps.simple == nil))
         let isModel = ps.type == 5 || ps.type == 13 || ps.type == 14
+        let mipmaps = !((ps.type == 10 || ps.type == 11) && PreviewRules.isOn("decalNoMipmaps"))
         let layers: [RTextureLayer?] = [ps.tc1, plainUv ? nil : ps.tc2, plainUv ? nil : ps.tc3, plainUv ? nil : ps.tc4]
         let slots = [0, 1, 3, 4]
         var loaded: [LoadedTexture?] = [nil, nil, nil, nil]
@@ -212,7 +216,7 @@ final class ParticleRenderer {
             if i > 0, (calcColor == 1 && texture.alphaOnly && PreviewRules.isOn("addAlphaOnly")) || (calcColor == 5 && PreviewRules.isOn("calcColorFive")) { calcColor = 9 }
             flags[i] = Vec4(1, Float(calcColor), Float(layer.calcAlpha), layer.colorToAlpha ? 1 : 0)
             m.textures[slots[i]] = texture.texture
-            m.samplers[slots[i]] = sampler(layer.borderU, layer.borderV, filter: layer.filter)
+            m.samplers[slots[i]] = sampler(layer.borderU, layer.borderV, filter: layer.filter, mipmaps: mipmaps)
         }
         m.uniforms.layer = (flags[0], flags[1], flags[2], flags[3])
         if let tc1 = ps.tc1, loaded[0] != nil { m.frames = tc1.textures.map { textureProvider($0)?.texture } }
@@ -220,7 +224,7 @@ final class ParticleRenderer {
         if PreviewRules.isOn("distortion"), let td = ps.distortion, td.enabled, let first = td.textures.first, let texture = textureProvider(first) {
             distortion = td
             m.textures[2] = texture.texture
-            m.samplers[2] = sampler(td.borderU, td.borderV, filter: td.filter)
+            m.samplers[2] = sampler(td.borderU, td.borderV, filter: td.filter, mipmaps: mipmaps)
         }
         func distorted(_ layer: RTextureLayer?, _ present: Bool) -> Float {
             guard let distortion, let layer, present, layer.uvSet >= 0, layer.uvSet < 4 else { return 0 }
@@ -229,7 +233,8 @@ final class ParticleRenderer {
         m.uniforms.distortLayers = Vec4(distorted(layers[0], loaded[0] != nil), distorted(layers[1], loaded[1] != nil),
                                         distorted(layers[2], loaded[2] != nil), distorted(layers[3], loaded[3] != nil))
         var palette = false
-        if PreviewRules.isOn("paletteAlpha"), let tp = ps.palette, tp.enabled, tp.texture >= 0, let texture = textureProvider(tp.texture) {
+        let channels = PreviewRules.isOn("paletteChannels")
+        if channels || PreviewRules.isOn("paletteAlpha"), let tp = ps.palette, tp.enabled, tp.texture >= 0, let texture = textureProvider(tp.texture) {
             palette = true
             m.textures[5] = texture.texture
             m.samplers[5] = sampler(tp.border, tp.border)
@@ -247,13 +252,22 @@ final class ParticleRenderer {
         case 7: m.blend = 6
         default: m.blend = 0
         }
-        let premultiply: Float = mode == 4 || mode == 3 || mode == 7 ? 1 : mode == 1 || mode == 6 ? 2 : 0
+        let blendBeforeClamp = (mode == 0 || mode == 8) && PreviewRules.isOn("blendBeforeClamp")
+        if blendBeforeClamp { m.blend = 7 }
+        let premultiply: Float = mode == 4 || mode == 3 || mode == 7 || blendBeforeClamp ? 1 : mode == 1 || mode == 6 ? 2 : 0
         let fresnel = isModel && ps.fresnelType != 0 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("modelFresnel")
         let lineGradient = ps.type == 3 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("lineGradient")
         let sprites = ps.simple != nil && (ps.type == 1 || ps.type == 3)
         let vertexColors = isModel || ps.type == 12 || ps.type == 6
         m.uniforms.flags = Vec4(vertexColors ? 1 : 0, fresnel ? 1 : 0, sprites ? 1 : 0, lineGradient ? 1 : 0)
-        m.uniforms.flags2 = Vec4(premultiply, distortion != nil ? 1 : 0, palette ? 1 : 0, PreviewRules.isOn("tc1Luminance") ? 1 : 0)
+        let paletteChannels = palette && channels && loaded[0] != nil
+        m.uniforms.flags2 = Vec4(premultiply, distortion != nil ? 1 : 0, palette && !paletteChannels ? 1 : 0, PreviewRules.isOn("tc1Luminance") ? 1 : 0)
+        let tc1White = PreviewRules.isOn("textureLessTc1White") && (ps.tc1 == nil || ps.tc1?.enabled == false || ps.tc1?.textures.isEmpty == true)
+            && loaded[0] == nil && !copiesScene
+        let tc1NoAlpha = tc1White && ps.tc1?.enabled != true && PreviewRules.isOn("tc1OffNoAlpha") && (loaded[1] != nil || loaded[2] != nil || loaded[3] != nil)
+        m.uniforms.flags3 = Vec4(PreviewRules.isOn("distortionHalfRange") ? 1 : 0, paletteChannels ? 1 : 0, PreviewRules.isOn("softQuadratic") ? 1 : 0,
+                                 tc1NoAlpha ? 2 : tc1White ? 1 : 0)
+        m.uniforms.flags4 = Vec4(PreviewRules.isOn("tc1Luminance") && PreviewRules.isOn("tc1MultiplyWhite") ? 1 : 0, PreviewRules.isOn("depthOffsetView") ? 1 : 0, 0, 0)
         m.hasColorEnds = fresnel || lineGradient
         m.soft = ps.softParticle && PreviewRules.isOn("softParticles")
         if copiesScene {

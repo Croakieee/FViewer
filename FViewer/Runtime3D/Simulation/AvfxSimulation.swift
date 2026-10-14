@@ -215,7 +215,8 @@ final class EmitterInstance {
                 let perItem = item.createTime == 1 ? max(0, item.createCount) : 1
                 let base = Eval.curve(schema.createCount, at, 1)
                     + Eval.randomOffset(schema.createCountRandom, type: schema.createCount?.random ?? schema.createCountRandom?.random ?? 0, at, random.next())
-                let count = min(Int(safe: base.rounded(), in: 0...4000) * perItem, 4000)
+                let once = item.createTime == 1 && PreviewRules.isOn("createOnceOwnCount")
+                let count = once ? min(perItem, 4000) : min(Int(safe: base.rounded(), in: 0...4000) * perItem, 4000)
                 if count > 0 { out.append((item, count)) }
                 let interval = Eval.curve(schema.createInterval, at, 0)
                     + Eval.randomOffset(schema.createIntervalRandom, type: schema.createInterval?.random ?? schema.createIntervalRandom?.random ?? 0, at, random.next())
@@ -816,7 +817,7 @@ final class AvfxSimulation {
         if let point {
             p.offset = point.position
             p.spawnMatrix = p.spawnMatrix * Math3D.translation(point.position)
-            let speed = injectionSpeed(e)
+            let speed = e.schema.type == 4 && PreviewRules.isOn("cylinderNoInjection") ? 0 : injectionSpeed(e)
             if p.localFlight {
                 if speed != 0 { p.localVelocity = point.normal * speed }
             } else if speed != 0 {
@@ -1151,16 +1152,19 @@ final class AvfxSimulation {
 
             if let trail = p.trail, let line = s.polyline {
                 if line.createType == 1 {
-                    trail.historyFrames = Float(line.pointCount) / 2
+                    trail.historyFrames = p.lifetime.isFinite && PreviewRules.isOn("trailWholePath") ? .infinity : Float(line.pointCount) / 2
                     if recording { trail.record(p.totalAge, Math3D.position(m)) }
                 } else {
                     let length = Eval.curve(line.length, t, 1)
                     let count = max(2, line.pointCount)
-                    trail.setPoints((0..<count).map { Math3D.point(m, Vec3(0, length * Float($0) / Float(count - 1), 0)) })
+                    let base = PreviewRules.isOn("polylineAxisFromBase") ? s.rotationBase : 1
+                    let axis = base == 0 ? Vec3(1, 0, 0) : base == 2 ? Vec3(0, 0, 1) : Vec3(0, 1, 0)
+                    trail.setPoints((0..<count).map { Math3D.point(m, axis * (length * Float($0) / Float(count - 1))) })
                 }
                 guard trail.drawable else { continue }
                 func tint(_ c: RColor?) -> Vec4 { c.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1) }
-                trail.build(camera: camera.position, width: Eval.curve(line.width, t, 1), begin: Eval.curve(line.widthBegin, t, 1),
+                let widthScale = PreviewRules.isOn("polylineWidthRevised") ? (schema.revisedScale.x + schema.revisedScale.y) / 2 : 1
+                trail.build(camera: camera.position, width: Eval.curve(line.width, t, 1) * widthScale, begin: Eval.curve(line.widthBegin, t, 1),
                             center: Eval.curve(line.widthCenter, t, 1), end: Eval.curve(line.widthEnd, t, 1),
                             colors: PolylineColors(begin: tint(line.colorBegin), center: tint(line.colorCenter), end: tint(line.colorEnd),
                                                    edgeBegin: tint(line.colorEdgeBegin), edgeCenter: tint(line.colorEdgeCenter),

@@ -57,7 +57,7 @@ final class PlaybackClock: ObservableObject {
         eventsRevision += 1
         if !loadingEvents { onEventsEdited?() }
     } }
-    @Published var holding = false { didSet {
+    @Published var holding = true { didSet {
         guard holding != oldValue else { return }
         eventsRevision += 1
         if !loadingEvents { onEventsEdited?() }
@@ -69,7 +69,13 @@ final class PlaybackClock: ObservableObject {
 
     func isEnding(_ kind: PreviewEvent.Kind) -> Bool { endingTest?(kind) ?? { if case .trigger = kind { return false }; return true }() }
 
-    func isPlayed(_ event: PreviewEvent) -> Bool { !event.muted && !(holding && isEnding(event.kind)) }
+    var startsByTrigger = false
+
+    func isPlayed(_ event: PreviewEvent) -> Bool {
+        guard !event.muted else { return false }
+        guard holding, isEnding(event.kind) else { return true }
+        return startsByTrigger && events.first(where: { !$0.muted && { if case .trigger = $0.kind { return true }; return false }($0) })?.id == event.id
+    }
 
     var playedEvents: [PreviewEvent] { events.filter(isPlayed) }
     @Published var timelineStates: [Int: String] = [:]

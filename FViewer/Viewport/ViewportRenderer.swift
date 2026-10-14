@@ -256,10 +256,20 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private func effectTexture(_ index: Int) -> LoadedTexture? {
         guard index >= 0, index < texturePaths.count else { return nil }
         let path = texturePaths[index]
-        if let cached = effectTextures[path] { return cached }
-        guard let decoded = app?.decodedTexture(for: path), let texture = ParticleRenderer.makeTexture(device, decoded) else { return nil }
+        let black = PreviewRules.isOn("a8BlackRgb")
+        let key = black ? path + "#a8" : path
+        if let cached = effectTextures[key] { return cached }
+        guard var decoded = app?.decodedTexture(for: path) else { return nil }
+        if black, decoded.alphaOnly {
+            for i in stride(from: 0, to: decoded.rgba.count - 3, by: 4) {
+                decoded.rgba[i] = 0
+                decoded.rgba[i + 1] = 0
+                decoded.rgba[i + 2] = 0
+            }
+        }
+        guard let texture = ParticleRenderer.makeTexture(device, decoded) else { return nil }
         let loaded = LoadedTexture(texture: texture, alphaOnly: decoded.alphaOnly)
-        effectTextures[path] = loaded
+        effectTextures[key] = loaded
         return loaded
     }
 

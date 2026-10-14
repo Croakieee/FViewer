@@ -62,11 +62,12 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
         metaLoaded = true
         clock.endingTest = { [weak self] in self?.isEnding($0) ?? false }
-        clock.loadEvents(savedEvents ?? defaultEvents, holding: savedHolding ?? false)
+        clock.startsByTrigger = avfxRoot != nil && !schedulerSlots.contains { $0.enabled && $0.timeline >= 0 }
+        clock.loadEvents(savedEvents ?? defaultEvents, holding: savedHolding ?? true)
         clock.onEventsEdited = { [weak self] in
             guard let self else { return }
             self.savedEvents = self.clock.events
-            self.savedHolding = self.clock.holding ? true : nil
+            self.savedHolding = self.clock.holding ? nil : false
             self.saveMeta()
         }
     }
