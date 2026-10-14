@@ -8,6 +8,7 @@ enum ZipReader {
         let compressedSize: Int
         let size: Int
         let offset: Int
+        var crc: UInt32 = 0
     }
 
     static func entries(_ bytes: [UInt8]) throws -> [Entry] {
@@ -24,7 +25,7 @@ enum ZipReader {
             guard at + 46 + nameLength <= bytes.count else { break }
             let name = String(decoding: bytes[at + 46..<at + 46 + nameLength], as: UTF8.self)
             result.append(Entry(path: name.replacingOccurrences(of: "\\", with: "/"), method: Int(bytes.u16(at + 10)), compressedSize: Int(bytes.u32(at + 20)),
-                                size: Int(bytes.u32(at + 24)), offset: Int(bytes.u32(at + 42))))
+                                size: Int(bytes.u32(at + 24)), offset: Int(bytes.u32(at + 42)), crc: bytes.u32(at + 16)))
             at += 46 + nameLength + extra + comment
         }
         return result
@@ -36,13 +37,17 @@ enum ZipReader {
         let start = at + 30 + Int(bytes.u16(at + 26)) + Int(bytes.u16(at + 28))
         guard start + entry.compressedSize <= bytes.count else { throw AvfxError.malformed("\(entry.path): truncated") }
         let raw = Array(bytes[start..<start + entry.compressedSize])
-        if entry.method == 0 { return raw }
+        if entry.method == 0 {
+            guard entry.crc == 0 || ZipWriter.crc32(raw) == entry.crc else { throw AvfxError.malformed("\(entry.path): checksum does not match") }
+            return raw
+        }
         guard entry.method == 8 else { throw AvfxError.malformed("\(entry.path): unsupported compression method \(entry.method)") }
         guard entry.size > 0 else { return [] }
         guard entry.size <= 1 << 30, entry.size <= max(raw.count, 1) * 2000 else { throw AvfxError.malformed("\(entry.path): declared size is not plausible") }
         var out = [UInt8](repeating: 0, count: entry.size)
         let written = compression_decode_buffer(&out, entry.size, raw, raw.count, nil, COMPRESSION_ZLIB)
         guard written == entry.size else { throw AvfxError.malformed("\(entry.path): could not be decompressed") }
+        guard entry.crc == 0 || ZipWriter.crc32(out) == entry.crc else { throw AvfxError.malformed("\(entry.path): checksum does not match") }
         return out
     }
 }

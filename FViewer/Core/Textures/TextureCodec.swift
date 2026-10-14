@@ -256,7 +256,8 @@ enum TextureCodec {
     static func atex(fromDDS bytes: [UInt8]) throws -> [UInt8] {
         guard bytes.count >= 128, bytes.u32(0) == 0x2053_4444 else { throw TexError.invalid("Not a DDS file") }
         let height = Int(bytes.u32(12)), width = Int(bytes.u32(16))
-        let mipCount = max(Int(bytes.u32(28)), 1)
+        let mipCount = min(max(Int(bytes.u32(28)), 1), 16)
+        guard width >= 1, height >= 1, width <= 16384, height <= 16384 else { throw TexError.invalid("DDS size \(width)×\(height) is not supported") }
         let flags = bytes.u32(80), fourCC = bytes.u32(84), bitCount = bytes.u32(88), redMask = bytes.u32(92), alphaMask = bytes.u32(104)
         var start = 128
         var format: TexFormat?

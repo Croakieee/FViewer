@@ -439,7 +439,8 @@ extension EffectDocument {
         if block.tag == "Smpl" {
             sections.append(PropSection(id: node.id + "/colors", title: "Sprite Colors", fields: simpleColorFields(block, id: node.id)))
         }
-        if record == nil {
+        let livesByBlock = block.tag == "Emit" || block.tag == "Ptcl" || block.tag == "Efct"
+        if record == nil, livesByBlock {
             for child in block.children ?? [] where child.tag == "Life" {
                 if let fields = child.children {
                     sections.append(PropSection(id: node.id + "/life", title: "Life",
@@ -451,7 +452,7 @@ extension EffectDocument {
                 }
             }
         }
-        for i in sections.indices where sections[i].id.hasSuffix("/main") { sections[i].fields.removeAll { $0.tag == "Life" } }
+        if livesByBlock { for i in sections.indices where sections[i].id.hasSuffix("/main") { sections[i].fields.removeAll { $0.tag == "Life" } } }
         return sections.filter { !$0.fields.isEmpty }
     }
 
@@ -551,12 +552,22 @@ extension EffectDocument {
                     old.map { CurveKeyPoint(time: Double($0.time), value: Double([$0.x, $0.y, $0.z][c]), interpolation: 1, tangentOut: 0, tangentIn: 0) }
                 }
                 let others = (0..<3).map(channelPoints)
-                block.curveKeys = sorted.enumerated().map { i, point in
+                var sources: [AvfxKey?]
+                var ordered = points
+                if points.count == old.count {
+                    let paired = zip(points, old).sorted { $0.0.time < $1.0.time }
+                    ordered = paired.map(\.0)
+                    sources = paired.map { Optional($0.1) }
+                } else {
+                    ordered = sorted
+                    sources = sorted.map { point in old.first { $0.time == Int(safe: point.time.rounded()) } }
+                }
+                block.curveKeys = ordered.enumerated().map { i, point in
                     var values = (0..<3).map { c in
-                        old.count == sorted.count ? Double([old[i].x, old[i].y, old[i].z][c]) : CurveMath.sample(others[c], at: point.time)
+                        sources[i].map { Double([$0.x, $0.y, $0.z][c]) } ?? CurveMath.sample(others[c], at: point.time)
                     }
                     values[component] = min(max(point.value, 0), 1)
-                    return AvfxKey(time: Int(safe: point.time.rounded()), type: old.count == sorted.count ? old[i].type : 1,
+                    return AvfxKey(time: Int(safe: point.time.rounded()), type: sources[i]?.type ?? 1,
                                    x: Float(values[0]), y: Float(values[1]), z: Float(values[2]))
                 }
             },
@@ -674,7 +685,7 @@ extension EffectDocument {
                 if emitter >= 0 {
                     label = names["avfx/Emit/\(emitter)"] ?? "Emitter \(emitter)"
                 } else if clip >= 0 {
-                    label = names["\(id)/Clip/\(clip)"] ?? "Clip \(clip)"
+                    label = names["\(id)/Clip\(clip)"] ?? "Clip \(clip)"
                 } else if effector >= 0, effector < effectorCount {
                     label = names["avfx/Efct/\(effector)"] ?? "Effector \(effector)"
                 }

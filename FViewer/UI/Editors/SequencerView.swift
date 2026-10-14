@@ -46,13 +46,14 @@ struct SequencerView: View {
             marks.append(other.start)
             if !other.openEnded { marks.append(other.end) }
         }
-        var best = frame
+        let absolute = frame + row.base
+        var best = absolute
         var nearest = reach
-        for mark in marks where abs(mark - frame) < nearest {
-            nearest = abs(mark - frame)
+        for mark in marks where abs(mark - absolute) < nearest {
+            nearest = abs(mark - absolute)
             best = mark
         }
-        return best
+        return best - row.base
     }
 
     private func duplicateAtPlayhead(_ row: SequencerRow) {
@@ -205,8 +206,8 @@ struct SequencerView: View {
                                 onCommit: { _, next in clock.startFrame = min(max(0, next.rounded()), end - 1) })
                         .frame(width: 96)
                         .help("First frame of playback. Drag the edges of the range on the ruler to set it by hand")
-                    NumberField(label: "End", value: end, isInteger: true, onLive: { clock.endFrame = max(1, $0.rounded()) },
-                                onCommit: { _, next in clock.endFrame = max(1, next.rounded()) })
+                    NumberField(label: "End", value: end, isInteger: true, onLive: { clock.endFrame = max(clock.startFrame + 1, $0.rounded()) },
+                                onCommit: { _, next in clock.endFrame = max(clock.startFrame + 1, next.rounded()) })
                         .frame(width: 92)
                         .help("Last frame of playback. The timeline scale stays fixed to this range")
                     HeaderButton(symbol: "arrow.uturn.backward", active: clock.endFrame != nil || clock.startFrame > 0,
@@ -234,6 +235,9 @@ struct SequencerView: View {
                     HeaderButton(symbol: "dot.squareshape.split.2x2", active: snapping,
                                  help: "Snap: a dragged strip sticks to the playhead, the playback range and the edges of other strips") { snapping.toggle() }
                     Slider(value: $viewZoom, in: 1...40).controlSize(.mini).frame(width: 70).help("Timeline zoom")
+                        .onChange(of: viewZoom) { _, next in if next <= 1.001 { viewStart = 0 } }
+                        .onChange(of: document.id) { _, _ in locked = [] }
+                        .onChange(of: document.sequencerRows.count) { _, _ in locked = [] }
                     HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
                         viewZoom = 1
                         viewStart = 0
@@ -416,7 +420,7 @@ struct SequencerView: View {
                     dragRow = row
                     dragStart = row.startField?.read().number ?? 0
                     dragEnd = row.endField?.read().number ?? 0
-                    let resizable = row.endField != nil && !row.openEnded
+                    let resizable = row.endField != nil && !row.openEnded && dragEnd > dragStart
                     let wide = right - left > 16
                     if resizable, drag.startLocation.x > right - 7 {
                         dragMode = 3
@@ -447,12 +451,12 @@ struct SequencerView: View {
             let byStart = snapped(dragStart + shift, row, width, span)
             if byStart != dragStart + shift {
                 shift = byStart - dragStart
-            } else if !row.openEnded, dragEnd > 0 {
+            } else if !row.openEnded, dragEnd > dragStart {
                 shift = snapped(dragEnd + shift, row, width, span) - dragEnd
             }
             shift = max(shift, -dragStart)
             if let start = row.startField { start.write?(value(start, dragStart + shift)) }
-            if let end = row.endField, !row.openEnded, dragEnd > 0 { end.write?(value(end, dragEnd + shift)) }
+            if let end = row.endField, !row.openEnded, dragEnd > dragStart { end.write?(value(end, dragEnd + shift)) }
         } else if dragMode == 3, let end = row.endField {
             end.write?(value(end, max(dragStart + 1, snapped(dragEnd + delta, row, width, span))))
         } else if dragMode == 4, let start = row.startField {

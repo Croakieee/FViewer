@@ -24,8 +24,8 @@ extension EffectDocument {
     static func nodeReferences(_ node: AvfxBlock) -> [NodeReference] {
         var result: [NodeReference] = []
         func add(_ target: String, _ field: AvfxBlock?) {
-            guard let field, field.children == nil, field.data.count >= 4 else { return }
-            result.append(NodeReference(target: target, get: { field.intValue }, set: { field.intValue = $0 }))
+            guard let field, field.children == nil, !field.data.isEmpty else { return }
+            result.append(NodeReference(target: target, get: { field.referenceValue }, set: { field.referenceValue = $0 }))
         }
         for (target, entries) in referenceTable {
             for entry in entries where entry.owner == node.tag {
@@ -233,8 +233,10 @@ extension EffectDocument {
         let timelines = Set(other.exportableNodes.filter { $0.tag == "TmLn" }.map(\.id))
         guard !timelines.isEmpty else { throw AvfxError.malformed("\(other.title) has no timelines to merge") }
         let before = root.childrenNamed("TmLn").count
-        undoManager.beginUndoGrouping()
-        defer { undoManager.endUndoGrouping() }
+        return try batch("Merge Effect") { try mergeBody(other, timelines, root, before) }
+    }
+
+    private func mergeBody(_ other: EffectDocument, _ timelines: Set<String>, _ root: AvfxBlock, _ before: Int) throws -> (nodes: Int, timelines: Int) {
         let count = try importNodes(other.exportNodes(timelines, withDependencies: true), legacy: false)
         let after = root.childrenNamed("TmLn").count
         if let scheduler = root.child("Schd"), after > before {

@@ -68,7 +68,7 @@ enum MsAdpcm {
                     var total = 0
                     for index in 2..<samplesPerBlock { total += abs(s[index] - ((s[index - 1] * c.0 + s[index - 2] * c.1) >> 8)) }
                     let mean = total / (samplesPerBlock - 2)
-                    for delta in [max(16, mean / 4), max(16, mean / 2), max(16, mean)] {
+                    for delta in [max(16, mean / 4), max(16, mean / 2), max(16, mean)].map({ min($0, 32767) }) {
                         let result = encodeChannel(s, predictor: predictor, delta: delta)
                         if best == nil || result.error < best!.error { best = (predictor, delta, result.nibbles, result.error) }
                     }
@@ -115,7 +115,7 @@ enum MsAdpcm {
                     let made = clamp16(((s1[channel] * c.0 + s2[channel] * c.1) >> 8) + nibble * delta[channel])
                     s2[channel] = s1[channel]
                     s1[channel] = made
-                    delta[channel] = max(16, (adaptation[raw] * delta[channel]) >> 8)
+                    delta[channel] = min(max(16, (adaptation[raw] * delta[channel]) >> 8), 1 << 24)
                     out.append(Int16(made))
                     channel = (channel + 1) % channels
                 }
@@ -140,7 +140,7 @@ extension GameFiles {
         let mode = Int(b.u16(at)), key = b[at + 2]
         let tableSize = i32(b, at + 16), headerSize = i32(b, at + 20)
         let start = at + 0x20 + tableSize
-        guard tableSize >= 0, headerSize >= 0, start + headerSize + audio.dataLength <= b.count, mode != 0x2003 else { return nil }
+        guard tableSize >= 0, headerSize >= 0, audio.dataLength >= 0, start + headerSize + audio.dataLength <= b.count, mode != 0x2003 else { return nil }
         var header = Array(b[start..<start + headerSize])
         if mode == 0x2002, key != 0 { for index in header.indices { header[index] ^= key } }
         return header + Array(b[(start + headerSize)..<(start + headerSize + audio.dataLength)])
@@ -200,14 +200,14 @@ extension GameFiles {
         var out = Array(b[0..<target.offset]) + fresh + Array(b[end...])
         for slot in 0..<table.count {
             let value = i32(out, table.at + slot * 4)
-            if value > target.offset { put32(&out, table.at + slot * 4, UInt32(value + delta)) }
+            if value > target.offset { put32(&out, table.at + slot * 4, UInt32(max(0, value + delta))) }
         }
         var padding = 0
         for audio in scdAudio(out) where audio.dataLength > 0 {
             let used = 0x20 + audio.headerSize + audio.dataLength
             padding += (16 - used % 16) % 16
         }
-        put32(&out, 0x10, UInt32(out.count - (padding - padding % 16)))
+        put32(&out, 0x10, UInt32(max(0, out.count - (padding - padding % 16))))
         return out
     }
 

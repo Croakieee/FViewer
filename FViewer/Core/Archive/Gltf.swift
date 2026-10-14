@@ -87,10 +87,11 @@ enum Gltf {
             if bounds, !floats.isEmpty {
                 var low = [Float](repeating: .infinity, count: components), high = [Float](repeating: -.infinity, count: components)
                 for i in floats.indices {
+                    guard floats[i].isFinite else { continue }
                     low[i % components] = min(low[i % components], floats[i])
                     high[i % components] = max(high[i % components], floats[i])
                 }
-                extra = ",\"min\":[\(low.map { "\($0)" }.joined(separator: ","))],\"max\":[\(high.map { "\($0)" }.joined(separator: ","))]"
+                extra = ",\"min\":[\(low.map { "\($0.isFinite ? $0 : 0)" }.joined(separator: ","))],\"max\":[\(high.map { "\($0.isFinite ? $0 : 0)" }.joined(separator: ","))]"
             }
             accessors.append("{\"bufferView\":\(views.count - 1),\"componentType\":5126,\"count\":\(floats.count / components),\"type\":\"\(type)\"\(extra)}")
             return accessors.count - 1
@@ -209,7 +210,7 @@ enum Gltf {
         var missingNormals = false, missingTangents = false, skipped = 0
         for item in root["meshes"]?.elements ?? [] {
             for primitive in item["primitives"]?.elements ?? [] {
-                if let mode = primitive["mode"]?.number, Int(mode) != 4, Int(mode) != 0 {
+                if let mode = primitive["mode"]?.number, Int(safe: mode) != 4, Int(safe: mode) != 0 {
                     skipped += 1
                     continue
                 }
@@ -261,10 +262,15 @@ enum Gltf {
                     }
                 }
                 if Int(safe: primitive["mode"]?.number ?? 4) == 4 {
+                    var own: [UInt32] = []
                     if let indexAccessor = primitive["indices"]?.number.map({ Int(safe: $0) }) {
-                        mesh.indices.append(contentsOf: try read(indexAccessor).values.map { base + UInt32(Int(safe: $0, in: 0...4_000_000)) })
+                        own = try read(indexAccessor).values.map { UInt32(Int(safe: $0, in: 0...4_000_000)) }
                     } else {
-                        mesh.indices.append(contentsOf: (0..<UInt32(count)).map { base + $0 })
+                        own = Array(0..<UInt32(count))
+                    }
+                    own.removeLast(own.count % 3)
+                    for t in stride(from: 0, to: own.count, by: 3) where own[t] < count && own[t + 1] < count && own[t + 2] < count {
+                        mesh.indices.append(contentsOf: [base + own[t], base + own[t + 1], base + own[t + 2]])
                     }
                 }
             }

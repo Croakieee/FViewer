@@ -928,7 +928,7 @@ final class ViewportMTKView: MTKView {
     override func scrollWheel(with event: NSEvent) {
         let dx = Float(event.scrollingDeltaX), dy = Float(event.scrollingDeltaY)
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control) || !event.hasPreciseScrollingDeltas {
-            camera?.zoom(1 - dy * (event.hasPreciseScrollingDeltas ? 0.005 : 0.08))
+            camera?.zoom(exp(-dy * (event.hasPreciseScrollingDeltas ? 0.005 : 0.08)))
         } else if event.modifierFlags.contains(.shift) {
             camera?.pan(dx: dx * 2, dy: dy * 2)
         } else {

@@ -201,6 +201,10 @@ struct LibraryView: View {
                 HeaderButton(symbol: "folder.badge.plus", help: "Open Folder (⇧⌘O)") { app.chooseLibrary() }
                 HeaderButton(symbol: "doc.badge.plus", help: "Open File (⌘O)") { app.openFilePanel() }
             }
+            .onChange(of: app.libraryRoot) { _, _ in
+                filter = ""
+                category = ""
+            }
             if app.files.count > 12 {
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").font(.system(size: 9)).foregroundStyle(Theme.dim)

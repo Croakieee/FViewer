@@ -61,6 +61,10 @@ enum ParameterClipboard {
 
     static func paste(into target: OutlineNode, in document: EffectDocument) {
         guard !fields.isEmpty || !curves.isEmpty else { return }
+        guard kind == kind(of: target) else {
+            AppDelegate.model?.notice = "The copied parameters belong to a different kind of node"
+            return
+        }
         document.batch("Paste Parameters") {
             _ = matchAssignment(target, in: document)
             let node = current(target, in: document)

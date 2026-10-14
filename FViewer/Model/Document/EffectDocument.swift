@@ -50,16 +50,19 @@ final class EffectDocument: ObservableObject, Identifiable {
     func loadNames() {
         if let data = try? Data(contentsOf: metaURL), let decoded = try? JSONDecoder().decode(Meta.self, from: data) {
             names = decoded.names
+            savedNames = decoded.names
             gamePath = decoded.gamePath
             sourcePath = decoded.sourcePath ?? ""
         }
         metaLoaded = true
     }
 
+    private var savedNames: [String: String] = [:]
+
     func saveMeta() {
-        if names.isEmpty && gamePath.isEmpty && sourcePath.isEmpty {
+        if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty {
             try? FileManager.default.removeItem(at: metaURL)
-        } else if let data = try? JSONEncoder().encode(Meta(names: names, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath)) {
+        } else if let data = try? JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath)) {
             try? data.write(to: metaURL, options: .atomic)
         }
     }
@@ -92,10 +95,12 @@ final class EffectDocument: ObservableObject, Identifiable {
             if !redoTitles.isEmpty { redoTitles.removeLast() }
             undoTitles.append("Rename")
         } else {
+            if let clean = cleanDepth, undoTitles.count < clean { cleanDepth = nil }
             undoTitles.append("Rename")
             redoTitles = []
             trimUndoTitles()
         }
+        isDirty = cleanDepth != undoTitles.count
         if grouped { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { document in
             document.applyName(old, nodeID)
@@ -191,7 +196,7 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     static func isOwned(_ url: URL) -> Bool { getxattr(url.path, ownedMark, nil, 0, 0, 0) >= 0 }
 
-    private static func markOwned(_ url: URL) {
+    static func markOwned(_ url: URL) {
         let value: [UInt8] = [1]
         setxattr(url.path, ownedMark, value, value.count, 0, 0)
     }
@@ -218,6 +223,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         try serializedData().write(to: destination, options: .atomic)
         EffectDocument.markOwned(destination)
         url = destination
+        savedNames = names
         saveMeta()
         cleanDepth = undoTitles.count
         isDirty = false
@@ -325,13 +331,16 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     private var undoSuspended = false
 
-    func batch(_ title: String, _ body: () -> Void) {
+    @discardableResult func batch<T>(_ title: String, _ body: () throws -> T) rethrows -> T {
+        if undoSuspended { return try body() }
         let before = snapshot()
         let data = serializedData()
         undoSuspended = true
-        body()
-        undoSuspended = false
-        if serializedData() != data { registerUndo(title, since: before) }
+        defer {
+            undoSuspended = false
+            if serializedData() != data { registerUndo(title, since: before) }
+        }
+        return try body()
     }
 
     static let undoLimit = 200

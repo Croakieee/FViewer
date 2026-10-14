@@ -4,7 +4,8 @@ import QuartzCore
 
 final class PlaybackClock: ObservableObject {
     @Published var time: Double = 0
-    @Published var playing = true
+    @Published var playing = true { didSet { if playing, !oldValue { resumed = true } } }
+    private var resumed = false
     @Published var loop = true
     @Published var status = ""
     @Published var endFrame: Double?
@@ -41,11 +42,13 @@ final class PlaybackClock: ObservableObject {
         let sinceLast = lastTick == 0 ? seconds : now - lastTick
         lastTick = now
         guard playing else { return }
+        let fresh = resumed
+        resumed = false
         let next = time + min(seconds, sinceLast, 0.1) * 30 * speed
         let ended = endFrame == nil && finished && next > 2 && !held
         let overrun = next >= (endFrame ?? max(duration, 1))
         if ended || overrun {
-            if loop {
+            if loop || fresh {
                 rewind()
             } else {
                 playing = false

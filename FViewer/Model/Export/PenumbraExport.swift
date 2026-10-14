@@ -55,8 +55,6 @@ enum PenumbraExport {
     }
 
     static func archive(_ mod: ModDescription, files: [(gamePath: String, data: [UInt8], option: Int)], group: ModGroup? = nil) -> [UInt8] {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         var entries: [(path: String, data: [UInt8])] = []
         func text(_ value: String) -> JSONNode { JSONNode(.string(value)) }
         func redirects(_ option: Int, folder: String) -> [JSONMember] {
@@ -73,43 +71,44 @@ enum PenumbraExport {
                 JSONMember(key: "Manipulations", node: JSONNode(.array([]))),
             ]
         }
-        let container = JSONNode(.object(redirects(0, folder: "")))
-        var groups: [JSONNode] = []
+        let container = JSONNode(.object([
+            JSONMember(key: "Name", node: text("")),
+            JSONMember(key: "Description", node: text("")),
+        ] + redirects(0, folder: "")))
+        var groupFiles: [(path: String, data: [UInt8])] = []
         if let group {
             let options = group.options.enumerated().map { index, name in
                 JSONNode(.object([
-                    JSONMember(key: "Id", node: text(UUID().uuidString.lowercased())),
                     JSONMember(key: "Name", node: text(name)),
                     JSONMember(key: "Description", node: text("")),
                     JSONMember(key: "Priority", node: JSONNode(.number(0))),
-                    JSONMember(key: "Layout", node: JSONNode(.array([]))),
                 ] + redirects(index + 1, folder: "\(PenumbraExport.folderName(group.name))/\(PenumbraExport.folderName(name))".lowercased())))
             }
-            groups.append(JSONNode(.object([
-                JSONMember(key: "Id", node: text(UUID().uuidString.lowercased())),
+            let body = JSONNode(.object([
+                JSONMember(key: "Version", node: JSONNode(.number(0))),
                 JSONMember(key: "Name", node: text(group.name)),
                 JSONMember(key: "Description", node: text("")),
+                JSONMember(key: "Image", node: text("")),
+                JSONMember(key: "Page", node: JSONNode(.number(0))),
                 JSONMember(key: "Priority", node: JSONNode(.number(0))),
                 JSONMember(key: "Type", node: text(group.multi ? "Multi" : "Single")),
                 JSONMember(key: "DefaultSettings", node: JSONNode(.number(group.multi ? 1 : 0))),
-                JSONMember(key: "Layout", node: JSONNode(.array([]))),
                 JSONMember(key: "Options", node: JSONNode(.array(options))),
-            ])))
+            ]))
+            let slug = String(PenumbraExport.folderName(group.name).lowercased().map { $0.isLetter || $0.isNumber ? $0 : "_" })
+            groupFiles.append(("group_001_\(slug).json", Array(body.serialized().utf8)))
         }
         let meta = JSONNode(.object([
-            JSONMember(key: "FileVersion", node: JSONNode(.number(4))),
-            JSONMember(key: "Identifier", node: text(UUID().uuidString.lowercased())),
-            JSONMember(key: "LastWrite", node: text(formatter.string(from: Date()))),
+            JSONMember(key: "FileVersion", node: JSONNode(.number(3))),
             JSONMember(key: "Name", node: text(mod.name)),
             JSONMember(key: "Author", node: text(mod.author)),
             JSONMember(key: "Description", node: text(mod.description)),
+            JSONMember(key: "Image", node: text("")),
             JSONMember(key: "Version", node: text(mod.version)),
             JSONMember(key: "Website", node: text(mod.website)),
             JSONMember(key: "ModTags", node: JSONNode(.array([]))),
-            JSONMember(key: "DefaultData", node: container),
-            JSONMember(key: "Groups", node: JSONNode(.array(groups))),
         ]))
-        entries.insert(("meta.json", Array(meta.serialized().utf8)), at: 0)
+        entries.insert(contentsOf: [("meta.json", Array(meta.serialized().utf8)), ("default_mod.json", Array(container.serialized().utf8))] + groupFiles, at: 0)
         return ZipWriter.archive(entries)
     }
 }

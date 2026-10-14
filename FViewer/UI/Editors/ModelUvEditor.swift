@@ -354,6 +354,7 @@ struct ModelUvEditor: View {
         .focusEffectDisabled()
         .focused($focused)
         .onKeyPress { key($0) }
+        .onDisappear { cancel() }
     }
 
     private func reframeIfNeeded() {

@@ -163,7 +163,7 @@ enum TexToolsExport {
             JSONMember(key: "Name", node: text(mod.name)),
             JSONMember(key: "Author", node: text(mod.author)),
             JSONMember(key: "Version", node: text(mod.version)),
-            JSONMember(key: "Description", node: JSONNode(.null)),
+            JSONMember(key: "Description", node: text(mod.description)),
             JSONMember(key: "ModPackPages", node: JSONNode(.null)),
             JSONMember(key: "SimpleModsList", node: JSONNode(.array(list))),
         ]))

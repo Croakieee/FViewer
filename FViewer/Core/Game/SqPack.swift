@@ -120,7 +120,7 @@ final class GameArchive {
         let tableOffset = Int(try data.sqLE(header + 0x08, as: UInt32.self))
         let count = Int(try data.sqLE(header + 0x0C, as: UInt32.self)) / 16
         var table: [UInt64: SqPackEntry] = [:]
-        table.reserveCapacity(count)
+        table.reserveCapacity(min(count, 4_000_000))
         for i in 0..<count {
             let at = tableOffset + i * 16
             table[try data.sqLE(at, as: UInt64.self)] = SqPackEntry(raw: try data.sqLE(at + 8, as: UInt32.self))
@@ -140,7 +140,7 @@ final class GameArchive {
         let tableOffset = Int(try data.sqLE(header + 0x08, as: UInt32.self))
         let count = Int(try data.sqLE(header + 0x0C, as: UInt32.self)) / 8
         var table: [UInt32: SqPackEntry] = [:]
-        table.reserveCapacity(count)
+        table.reserveCapacity(min(count, 4_000_000))
         for i in 0..<count {
             let at = tableOffset + i * 8
             table[try data.sqLE(at, as: UInt32.self)] = SqPackEntry(raw: try data.sqLE(at + 4, as: UInt32.self))
@@ -190,7 +190,7 @@ enum SqPackDat {
         let type = try d.sqLE(off + 4, as: UInt32.self)
         let rawSize = Int(try d.sqLE(off + 8, as: UInt32.self))
         var out = Data()
-        out.reserveCapacity(rawSize)
+        out.reserveCapacity(min(rawSize, 256 << 20))
         switch type {
         case 1: return Data()
         case 2: try readStandard(d, off, headerSize, &out)

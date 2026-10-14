@@ -287,7 +287,7 @@ extension GameRecords {
     static func imcRemove(_ b: [UInt8], variant: Int) -> [UInt8]? {
         guard b.count >= 4 else { return nil }
         let parts = imcParts(b), count = Int(b.u16(0)), size = parts * 6
-        guard variant >= 1, variant <= count, 4 + (count + 1) * size <= b.count else { return nil }
+        guard variant >= 1, variant == count, 4 + (count + 1) * size <= b.count else { return nil }
         var out = b
         out.removeSubrange((4 + variant * size)..<(4 + (variant + 1) * size))
         GameFiles.put16(&out, 0, count - 1)
@@ -339,7 +339,7 @@ struct MtrlModel {
         var out: [UInt8] = []
         out.appendU32(version)
         out.append(contentsOf: [0, 0, 0, 0, 0, 0, 0, 0])
-        out.append(contentsOf: [UInt8(textures.count), UInt8(uvSets.count), UInt8(colorSets.count), UInt8(extra.count)])
+        out.append(contentsOf: [UInt8(min(textures.count, 255)), UInt8(min(uvSets.count, 255)), UInt8(min(colorSets.count, 255)), UInt8(min(extra.count, 255))])
         var names: [(at: Int, text: String)] = []
         for item in textures {
             names.append((out.count, item.path))
@@ -611,6 +611,7 @@ struct KdbModel {
         guard bodies.first == first || bodies.first == raw else { return nil }
         var model = KdbModel(prefix: Array(b[0..<start]), operations: operations, tableB: tableB, tableE: tableE, tableF: tableF, nodes: [], itemsB: [], itemsE: [], itemsF: [])
         model.aligned = bodies.first == first
+        guard let opening = bodies.first, opening >= raw, opening <= b.count, raw <= b.count else { return nil }
         model.gap = Array(b[raw..<(bodies.first ?? raw)])
         for index in 0..<count {
             let from = bodies[index], to = index + 1 < count ? bodies[index + 1] : bodiesEnd

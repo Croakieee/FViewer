@@ -513,8 +513,10 @@ extension EffectDocument {
                 }
                 return one("Use Model \(model)") { [weak self] in
                     self?.performStructural("Link Model") {
-                        if let list = data.child("MdNo"), list.data.count < 4 { list.data = [UInt8(truncatingIfNeeded: model)] }
-                        data.child("MNO")?.intValue = model
+                        if let list = data.child("MdNo") {
+                            if list.data.isEmpty { list.data = [UInt8(truncatingIfNeeded: model)] } else { list.data[0] = UInt8(truncatingIfNeeded: model) }
+                        }
+                        data.child("MNO")?.referenceValue = model
                     }
                 }
             }

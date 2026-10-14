@@ -286,8 +286,10 @@ struct LayerStackPanel: View {
     private func dropImage(_ urls: [URL], on layer: (node: OutlineNode, tag: String, fields: [PropField])) -> Bool {
         guard let url = urls.first(where: { AppModel.imageSourceTypes.contains($0.pathExtension.lowercased()) }), let root = document.avfxRoot,
               let index = field(layer.fields, "TxNo") else { return false }
-        document.undoManager.beginUndoGrouping()
-        defer { document.undoManager.endUndoGrouping() }
+        return document.batch("Add Texture") { dropBody(url, root, index, layer) }
+    }
+
+    private func dropBody(_ url: URL, _ root: AvfxBlock, _ index: PropField, _ layer: (node: OutlineNode, tag: String, fields: [PropField])) -> Bool {
         let selection = document.selectionID
         document.addTexture(path: app.customPrefix + url.deletingPathExtension().lastPathComponent.lowercased() + ".atex")
         let textures = root.childrenNamed("Tex")

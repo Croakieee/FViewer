@@ -278,7 +278,13 @@ struct CurveEditorView: View {
                                 .foregroundStyle(Theme.dim).frame(width: 14)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    if hidden.contains(channel.id) { hidden.remove(channel.id) } else { hidden.insert(channel.id) }
+                                    if hidden.contains(channel.id) {
+                                        hidden.remove(channel.id)
+                                    } else {
+                                        hidden.insert(channel.id)
+                                        selection = selection.filter { $0.channel != channel.id }
+                                        if activeKey?.channel == channel.id { activeKey = nil }
+                                    }
                                 }
                             RoundedRectangle(cornerRadius: 2).fill(channel.color).frame(width: 10, height: 10)
                             Text(channel.name).font(Theme.font).foregroundStyle(active ? .white : Theme.text).lineLimit(1)
@@ -874,7 +880,7 @@ struct CurveEditorView: View {
             if dragActive {
                 let after = restore.keys.compactMap { id in channel(id).map { $0.snapshot() } }
                 let before = Array(restore.values)
-                document.registerUndo("Move Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+                document.registerUndo("Move Keyframes", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
             } else if bodyGrab {
                 selection = []
                 activeKey = nil
@@ -883,7 +889,7 @@ struct CurveEditorView: View {
             if dragActive {
                 let after = restore.keys.compactMap { id in channel(id).map { $0.snapshot() } }
                 let before = Array(restore.values)
-                document.registerUndo("Scale Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+                document.registerUndo("Scale Keyframes", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
             }
         case .handle(let ref, _, let restore):
             if let channel = channel(ref.channel) {
@@ -928,18 +934,41 @@ struct CurveEditorView: View {
     }
 
     private func changeSelected(_ title: String, _ edit: (inout [CurveKeyPoint], Set<Int>) -> Void) {
-        let byChannel = Dictionary(grouping: selection, by: \.channel)
-        var before: [() -> Void] = []
-        var after: [() -> Void] = []
-        for (id, refs) in byChannel {
-            guard let channel = channel(id) else { continue }
-            before.append(channel.snapshot())
-            var keys = channel.read()
-            edit(&keys, Set(refs.map(\.index)))
-            channel.write(keys)
-            after.append(channel.snapshot())
+        let byChannel = Dictionary(grouping: selection.filter { !hidden.contains($0.channel) }, by: \.channel)
+        let picked = byChannel.compactMap { id, refs in channel(id).map { (channel: $0, indices: Set(refs.map(\.index))) } }
+        guard !picked.isEmpty else { return }
+        let before = picked.map { $0.channel.snapshot() }
+        let shared = picked.filter { $0.channel.colorComponent != nil }.sorted { ($0.channel.colorComponent ?? 0) < ($1.channel.colorComponent ?? 0) }
+        for entry in picked where entry.channel.colorComponent == nil {
+            var keys = entry.channel.read()
+            edit(&keys, entry.indices)
+            entry.channel.write(keys)
         }
-        guard !before.isEmpty else { return }
+        if let first = shared.first {
+            let bases = shared.map { $0.channel.read() }
+            var trials = bases
+            for at in shared.indices { edit(&trials[at], shared[at].indices) }
+            if zip(trials, bases).contains(where: { $0.count != $1.count }) {
+                var keys = bases[0]
+                edit(&keys, shared.reduce(into: Set<Int>()) { $0.formUnion($1.indices) })
+                first.channel.write(keys)
+            } else {
+                let count = bases[0].count
+                var times = bases[0].map(\.time)
+                for index in 0..<count {
+                    for at in shared.indices where index < trials[at].count && trials[at][index].time != bases[at][index].time {
+                        times[index] = trials[at][index].time
+                        break
+                    }
+                }
+                for at in shared.indices { for index in 0..<min(count, trials[at].count) { trials[at][index].time = times[index] } }
+                let order = (0..<count).sorted { times[$0] != times[$1] ? times[$0] < times[$1] : $0 < $1 }
+                for at in shared.indices {
+                    shared[at].channel.write(at == 0 ? trials[at] : order.filter { $0 < trials[at].count }.map { trials[at][$0] })
+                }
+            }
+        }
+        let after = picked.map { $0.channel.snapshot() }
         document.registerUndo(title, undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
     }
 
@@ -998,7 +1027,7 @@ struct CurveEditorView: View {
             after.append(channel.snapshot())
         }
         guard !before.isEmpty else { return }
-        document.registerUndo("Reset Curve", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        document.registerUndo("Reset Curve", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
         selection = []
         activeKey = nil
     }
@@ -1133,7 +1162,7 @@ struct CurveEditorView: View {
             after.append(channel.snapshot())
         }
         guard !before.isEmpty else { return }
-        document.registerUndo("Optimize Curve", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        document.registerUndo("Optimize Curve", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
         selection = []
         activeKey = nil
     }
@@ -1148,7 +1177,7 @@ struct CurveEditorView: View {
             after.append(channel.snapshot())
         }
         guard !before.isEmpty else { return }
-        document.registerUndo("Clear Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        document.registerUndo("Clear Keyframes", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
         selection = []
         activeKey = nil
     }
@@ -1235,7 +1264,7 @@ struct CurveEditorView: View {
             for (index, key) in target.read().enumerated() where times.contains(key.time) { pasted.insert(KeyRef(channel: target.id, index: index)) }
         }
         guard !before.isEmpty else { return }
-        document.registerUndo("Paste Keyframes", undo: { before.forEach { $0() } }, redo: { after.forEach { $0() } })
+        document.registerUndo("Paste Keyframes", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
         selection = pasted
         activeKey = pasted.first
     }
@@ -1262,6 +1291,14 @@ struct CurveEditorView: View {
         setInterpolation((keys[active.index].interpolation + 1) % 3)
     }
 
+    static func holdOrder(_ keys: inout [CurveKeyPoint], _ index: Int) {
+        guard index < keys.count else { return }
+        let low = index > 0 ? keys[index - 1].time + 1 : -Double.infinity
+        let high = index + 1 < keys.count ? keys[index + 1].time - 1 : Double.infinity
+        guard low <= high else { return }
+        keys[index].time = min(max(keys[index].time, low), high)
+    }
+
     private func keyField(_ label: String, _ channel: CurveChannel, _ index: Int, step: Double, integer: Bool = false,
                           get: @escaping (CurveKeyPoint) -> Double, set: @escaping (inout CurveKeyPoint, Double) -> Void) -> some View {
         let keys = channel.read()
@@ -1273,6 +1310,7 @@ struct CurveEditorView: View {
                             var live = channel.read()
                             guard index < live.count else { return }
                             set(&live[index], next)
+                            CurveEditorView.holdOrder(&live, index)
                             channel.write(live)
                             document.liveDrag()
                         },
@@ -1280,8 +1318,13 @@ struct CurveEditorView: View {
                             var restored = channel.read()
                             guard index < restored.count else { return }
                             set(&restored[index], old)
+                            CurveEditorView.holdOrder(&restored, index)
                             channel.write(restored)
-                            change(channel, label) { keys in if index < keys.count { set(&keys[index], next) } }
+                            change(channel, label) { keys in
+                                guard index < keys.count else { return }
+                                set(&keys[index], next)
+                                CurveEditorView.holdOrder(&keys, index)
+                            }
                         })
         }
     }

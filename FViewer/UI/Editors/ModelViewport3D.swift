@@ -561,6 +561,7 @@ struct ModelViewport3D: View {
         .focusEffectDisabled()
         .focused($focused)
         .onKeyPress { key($0) }
+        .onDisappear { cancel() }
         .onAppear {
             if !session.framed3D {
                 session.framed3D = true

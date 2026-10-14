@@ -44,6 +44,13 @@ extension EffectDocument {
         (0..<(jsonRoot?["particles"]?.elements?.count ?? 0)).map { "json/particles/\($0)" }.filter { materialUse($0) == name }
     }
 
+    func materialIsReferenced(_ name: String) -> Bool {
+        if !materialUsers(name).isEmpty { return true }
+        func uses(_ node: JSONNode?) -> Bool { (node?["nodes"]?.elements ?? []).contains { $0["graph"]?.string == name } }
+        if (jsonRoot?["materials"]?.members ?? []).contains(where: { $0.key != name && uses($0.node) }) { return true }
+        return (jsonRoot?["particles"]?.elements ?? []).contains { uses($0["material"]) }
+    }
+
     func materialGraph(_ particleID: String) -> MaterialGraph? {
         guard let material = materialParticle(particleID)?["material"], material.members != nil else { return nil }
         if let name = material["use"]?.string { return jsonRoot?["materials"]?[name].map(EffectDocument.parseMaterial) }
@@ -96,8 +103,12 @@ extension EffectDocument {
     private func setSharedMaterial(_ name: String, _ graph: MaterialGraph?) {
         guard let root = jsonRoot else { return }
         var members = root["materials"]?.members ?? []
-        members.removeAll { $0.key == name }
-        if let graph { members.append(JSONMember(key: name, node: graphJSON(graph))) }
+        if let graph {
+            let fresh = JSONMember(key: name, node: graphJSON(graph))
+            if let at = members.firstIndex(where: { $0.key == name }) { members[at] = fresh } else { members.append(fresh) }
+        } else {
+            members.removeAll { $0.key == name }
+        }
         if members.isEmpty {
             if var all = root.members {
                 all.removeAll { $0.key == "materials" }
@@ -150,7 +161,7 @@ extension EffectDocument {
         guard let particle = materialParticle(particleID), let name = materialUse(particleID), let graph = materialGraph(particleID) else { return }
         let before = snapshot()
         particle.set("material", graphJSON(graph.applying(materialOverrides(particleID))))
-        if materialUsers(name).isEmpty { setSharedMaterial(name, nil) }
+        if !materialIsReferenced(name) { setSharedMaterial(name, nil) }
         registerUndo("Make Material Unique", since: before)
     }
 

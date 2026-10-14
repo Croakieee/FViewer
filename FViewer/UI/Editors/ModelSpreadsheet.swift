@@ -13,10 +13,7 @@ struct ModelSpreadsheet: View {
     private var orderCount: Int { (model.child("VNum")?.data.count ?? 0) / 2 }
 
     private func removeEmitPoint(_ index: Int) {
-        document.performStructural("Remove Emit Point") {
-            if let block = model.child("VEmt"), (index + 1) * 28 <= block.data.count { block.data.removeSubrange(index * 28..<(index + 1) * 28) }
-            if let block = model.child("VNum"), block.data.count >= 2 { block.data.removeLast(2) }
-        }
+        document.performStructural("Remove Emit Point") { ModelEditSession.removeEmitPoint(index, in: model) }
     }
 
     var body: some View {

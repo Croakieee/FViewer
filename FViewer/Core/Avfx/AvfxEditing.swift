@@ -55,6 +55,8 @@ extension AvfxBlock {
         if position == nil {
             if let source = AvfxBlock.cumulativePrefixSource[tag], let after = list.lastIndex(where: { $0.tag == source }) {
                 position = after + 1
+            } else if tag == "Item", let trigger = list.firstIndex(where: { $0.tag == "Trgr" }) {
+                position = trigger
             } else {
                 position = list.firstIndex { $0.tag == "Data" || $0.tag == "Clip" } ?? list.count
             }
@@ -123,13 +125,32 @@ extension AvfxBlock {
         return AvfxBlock(tag: tag, children: [rgb, curveData(tag: "A", value: 1)])
     }
 
+    var referenceValue: Int {
+        get {
+            if data.count >= 4 { return intValue }
+            if data.count >= 2 { let raw = Int(data.u16(0)); return raw == 0xFFFF ? -1 : raw }
+            return data.first.map { $0 == 255 ? -1 : Int($0) } ?? -1
+        }
+        set {
+            if data.count >= 4 {
+                intValue = newValue
+            } else if data.count >= 2 {
+                let raw = newValue < 0 ? 0xFFFF : min(newValue, 0xFFFE)
+                data[0] = UInt8(raw & 0xff)
+                data[1] = UInt8(raw >> 8)
+            } else if data.count == 1 {
+                data[0] = newValue < 0 ? 255 : UInt8(min(newValue, 254))
+            }
+        }
+    }
+
     func remapReference(_ fieldTag: String, removed: Int) {
-        guard data.count >= 4 else { return }
-        let value = intValue
+        guard !data.isEmpty else { return }
+        let value = referenceValue
         if value == removed {
-            intValue = -1
+            referenceValue = -1
         } else if value > removed {
-            intValue = value - 1
+            referenceValue = value - 1
         }
     }
 }

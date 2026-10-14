@@ -57,6 +57,7 @@ struct AtchTable {
     }
 
     mutating func addEntry(after index: Int) {
+        guard entries.count < 256 else { return }
         let source = index < entries.count ? entries[index] : nil
         let states = source?.states ?? (0..<stateCount).map { _ in AtchState(bone: "n_root", scale: 1, offset: .zero, rotation: .zero) }
         entries.insert(AtchEntry(id: 0, name: "new", accessory: source?.accessory ?? false, states: states), at: min(index + 1, entries.count))

@@ -39,6 +39,7 @@ final class AppModel: ObservableObject {
     @Published var modList: [PenumbraMod]?
     @Published var gameFile: GameFileDocument?
     @Published var skeletonName: String?
+    var modelEditorCount = 0
     @Published var timelineHits: [URL]?
     @Published var timelineHitsTitle = "Timelines Using This Effect"
     var openGameFileWindow: (() -> Void)?
@@ -243,6 +244,7 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try Data(contentsOf: source).write(to: url, options: .atomic)
+            EffectDocument.markOwned(url)
             documents[url] = nil
             open(url)
             if let root = libraryRoot, url.path.hasPrefix(root.path) { setLibrary(root) }
@@ -315,6 +317,7 @@ final class AppModel: ObservableObject {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         modelEditorTarget = nodeID
+        modelEditorCount = document?.avfxRoot?.childrenNamed("Modl").count ?? 0
         openModelWindow?()
     }
 
@@ -662,7 +665,8 @@ final class AppModel: ObservableObject {
 
     var customPrefix: String {
         let stored = UserDefaults.standard.string(forKey: "texture.prefix") ?? ""
-        return stored.isEmpty ? "vfx/custom/" : stored
+        if stored.isEmpty { return "vfx/custom/" }
+        return stored.hasSuffix("/") ? stored : stored + "/"
     }
 
     func convertTextures() {
@@ -1062,6 +1066,7 @@ final class AppModel: ObservableObject {
         guard document.url != old else { return }
         documents[old] = nil
         documents[document.url] = document
+        remember(document.url)
         notice = "Saved as \(document.url.lastPathComponent). The original \(old.lastPathComponent) is untouched"
         if let root = libraryRoot, document.url.path.hasPrefix(root.path) { setLibrary(root) }
     }
@@ -1103,8 +1108,14 @@ final class AppModel: ObservableObject {
     }
 
     func gamePath(forAsset url: URL) -> String? {
-        let parts = url.standardizedFileURL.path.lowercased().split(separator: "/").map(String.init)
-        guard let start = parts.lastIndex(where: { ["vfx", "chara", "bg", "bgcommon"].contains($0) }) else { return nil }
+        let roots = ["vfx", "chara", "bg", "bgcommon"]
+        let path = url.standardizedFileURL.path
+        if let base = libraryRoot?.standardizedFileURL.path, path.hasPrefix(base + "/") {
+            let inside = path.dropFirst(base.count + 1).lowercased().split(separator: "/").map(String.init)
+            if let start = inside.firstIndex(where: { roots.contains($0) }) { return inside[start...].joined(separator: "/") }
+        }
+        let parts = path.lowercased().split(separator: "/").map(String.init)
+        guard let start = parts.lastIndex(where: { roots.contains($0) }) else { return nil }
         return parts[start...].joined(separator: "/")
     }
 
@@ -1117,16 +1128,16 @@ final class AppModel: ObservableObject {
             return root.childrenNamed("Tex").count - 1
         }
         guard AppModel.imageSourceTypes.contains(ext) else { return nil }
-        document.undoManager.beginUndoGrouping()
-        defer { document.undoManager.endUndoGrouping() }
-        document.addTexture(path: customPrefix + url.deletingPathExtension().lastPathComponent.lowercased() + ".atex")
-        guard let block = root.childrenNamed("Tex").last else { return nil }
-        do {
-            _ = try installTexture(from: url, for: block, in: document)
-        } catch {
-            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        return document.batch("Add Texture") { () -> Int? in
+            document.addTexture(path: customPrefix + url.deletingPathExtension().lastPathComponent.lowercased() + ".atex")
+            guard let block = root.childrenNamed("Tex").last else { return nil }
+            do {
+                _ = try installTexture(from: url, for: block, in: document)
+            } catch {
+                errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+            }
+            return root.childrenNamed("Tex").count - 1
         }
-        return root.childrenNamed("Tex").count - 1
     }
 
     func textureURL(_ path: String) -> URL? {

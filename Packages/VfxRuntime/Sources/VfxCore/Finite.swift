@@ -6,7 +6,8 @@ public extension Int {
             self = Swift.min(Swift.max(0, range.lowerBound), range.upperBound)
             return
         }
-        self = Int(Swift.min(Swift.max(Double(value), Double(range.lowerBound)), Double(range.upperBound)))
+        let bounded = Swift.min(Swift.max(Double(value), Double(range.lowerBound)), Double(range.upperBound))
+        if bounded >= 9.2e18 { self = range.upperBound } else if bounded <= -9.2e18 { self = range.lowerBound } else { self = Swift.min(Swift.max(Int(bounded), range.lowerBound), range.upperBound) }
     }
 }
 

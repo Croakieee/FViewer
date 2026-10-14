@@ -635,9 +635,12 @@ extension AppModel {
         let name = document.url.lastPathComponent.lowercased()
         let size = (try? document.url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1
         var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
-        if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
+        if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix.lowercased()) { base.removeLast(EffectDocument.editSuffix.count) }
         let wanted = [name, base + "." + document.url.pathExtension.lowercased()]
-        if let direct = gamePath(forAsset: document.url), direct.hasPrefix("vfx/") { return direct }
+        if let direct = gamePath(forAsset: document.url), direct.hasPrefix("vfx/") {
+            let folder = (direct as NSString).deletingLastPathComponent
+            return folder + "/" + base + "." + document.url.pathExtension.lowercased()
+        }
         var fallback: String?
         for file in files where wanted.contains(file.name.lowercased()) && file.url != document.url {
             guard let path = gamePath(forAsset: file.url) else { continue }
@@ -694,7 +697,7 @@ extension AppModel {
                 guard let self, token == AppModel.searchToken else { return }
                 self.notice = "\(hits.count) file\(hits.count == 1 ? "" : "s") mention \(text) (\(urls.count) searched)"
                 self.timelineHitsTitle = (effects ? "Effects" : "Files") + " Using " + text
-                if !hits.isEmpty { self.timelineHits = hits }
+                self.timelineHits = hits.isEmpty ? nil : hits
             }
         }
     }
@@ -704,8 +707,8 @@ extension AppModel {
         findFiles(containing: text.trimmingCharacters(in: .whitespaces), effects: true)
     }
 
-    func listEffects(of url: URL) {
-        guard let data = try? Data(contentsOf: url) else { return }
+    func listEffects(of url: URL, data given: Data? = nil) {
+        guard let data = given ?? (try? Data(contentsOf: url)) else { return }
         let paths = AppModel.effectPaths(in: data)
         if paths.isEmpty {
             notice = "\(url.lastPathComponent) starts no effects"
@@ -731,17 +734,19 @@ extension AppModel {
     func findTimelines(using document: EffectDocument) {
         if !gameFiles.isEmpty {
             var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
-            if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
+            if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix.lowercased()) { base.removeLast(EffectDocument.editSuffix.count) }
             timelineHitsTitle = "Timelines Using This Effect"
             let needle = Array((base + ".avfx").utf8)
             let urls = gameFiles.filter { ["tmb", "pap"].contains($0.url.pathExtension.lowercased()) }.map(\.url)
             notice = "Searching \(urls.count) timelines for \(base).avfx…"
+            AppModel.searchToken += 1
+            let token = AppModel.searchToken
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let hits = AppModel.files(containing: needle, among: urls)
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, token == AppModel.searchToken else { return }
                     self.notice = "\(hits.count) timeline\(hits.count == 1 ? "" : "s") use \(base).avfx (\(urls.count) files searched)"
-                    if !hits.isEmpty { self.timelineHits = hits }
+                    self.timelineHits = hits.isEmpty ? nil : hits
                 }
             }
             return
@@ -749,17 +754,19 @@ extension AppModel {
         timelineHitsTitle = "Timelines Using This Effect"
         guard let folder = chooseFolder("Folder with .tmb and .pap Files") else { return }
         var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
-        if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix) { base.removeLast(EffectDocument.editSuffix.count) }
+        if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix.lowercased()) { base.removeLast(EffectDocument.editSuffix.count) }
         let needle = Array((base + ".avfx").utf8)
         notice = "Searching timelines for \(base).avfx…"
+        AppModel.searchToken += 1
+        let token = AppModel.searchToken
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = AppModel.timelines(containing: needle, in: folder)
             let hits = result.hits, scanned = result.scanned
             let found = hits, total = scanned
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, token == AppModel.searchToken else { return }
                 self.notice = "\(found.count) timeline\(found.count == 1 ? "" : "s") use \(base).avfx (\(total) files searched)"
-                if !found.isEmpty { self.timelineHits = found }
+                self.timelineHits = found.isEmpty ? nil : found
             }
         }
     }

@@ -34,7 +34,7 @@ private final class LinkMenu: NSObject {
             handler.actions.append(option.perform)
             menu.addItem(item)
         }
-        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        withExtendedLifetime(handler) { _ = menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil) }
     }
 }
 

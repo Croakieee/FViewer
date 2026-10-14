@@ -6,7 +6,10 @@ struct ModelEditorView: View {
 
     var body: some View {
         Group {
-            if let document = app.document, let id = app.modelEditorTarget, case .avfx(let block, _, _)? = document.node(id)?.payload, block.tag == "Modl" {
+            if let document = app.document, app.modelEditorTarget != nil, document.avfxRoot?.childrenNamed("Modl").count != app.modelEditorCount {
+                Text("The list of models changed. Open the model again from the Outliner.").font(Theme.font).foregroundStyle(Theme.dim)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let document = app.document, let id = app.modelEditorTarget, case .avfx(let block, _, _)? = document.node(id)?.payload, block.tag == "Modl" {
                 ModelEditorContent(document: document, session: ModelEditSession(document: document, nodeID: id, model: block), title: document.node(id)?.title ?? "Model")
                     .id(document.id.uuidString + id)
             } else {
@@ -102,6 +105,7 @@ private struct ModelEditorContent: View {
     private func axisField(_ label: String, _ value: Double, step: Double = 0.01, _ title: String, shift: @escaping (Double) -> Void) -> some View {
         NumberField(label: label, value: value, step: step, digits: 4,
                     onLive: { next in
+                        if pending == nil { pending = session.capture() }
                         shift(next - value)
                         document.liveDrag()
                     },

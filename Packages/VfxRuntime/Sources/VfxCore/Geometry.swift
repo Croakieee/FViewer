@@ -72,8 +72,8 @@ func meshGeometry(_ name: String, _ model: ModelData, _ unit: Double) -> Geometr
     if let g = meshes[key] { return g }
     let p = model.positions
     let n = p.count / 2
-    var positions = [Float](repeating: 0, count: p.count)
-    for i in stride(from: 0, to: p.count, by: 2) {
+    var positions = [Float](repeating: 0, count: n * 2)
+    for i in stride(from: 0, to: n * 2, by: 2) {
         positions[i] = Float(p[i] * unit)
         positions[i + 1] = Float(-p[i + 1] * unit)
     }
@@ -157,7 +157,7 @@ final class RoundRectGeometry {
     private var shape = ""
 
     init(cornerSegments: Int, rows: Int) {
-        let c = max(1, cornerSegments), m = max(1, rows)
+        let c = min(max(1, cornerSegments), 64), m = min(max(1, rows), 64)
         let n = 4 * (c + 1) + 1
         var indices: [UInt32] = []
         for i in 0..<(n - 1) {

@@ -1,6 +1,6 @@
 import Foundation
 
-struct AvfxKey: Equatable {
+struct AvfxKey: Hashable {
     var time: Int
     var type: Int
     var x: Float
@@ -18,10 +18,22 @@ extension AvfxBlock {
             }
         }
         set {
+            var kept: [AvfxKey: [UInt8]] = [:]
+            if let data = child("Keys")?.data {
+                for (index, key) in curveKeys.enumerated() {
+                    let o = index * 16
+                    let raw = [data.u32(o + 4), data.u32(o + 8), data.u32(o + 12)].map { Float(bitPattern: $0) }
+                    if raw != [key.x, key.y, key.z] { kept[key] = Array(data[o..<o + 16]) }
+                }
+            }
             var bytes: [UInt8] = []
             bytes.reserveCapacity(newValue.count * 16)
             for key in newValue {
-                bytes.appendU16(UInt16(bitPattern: Int16(truncatingIfNeeded: key.time)))
+                if let raw = kept[key] {
+                    bytes.append(contentsOf: raw)
+                    continue
+                }
+                bytes.appendU16(UInt16(bitPattern: Int16(truncatingIfNeeded: min(max(key.time, -32768), 32767))))
                 bytes.appendU16(UInt16(bitPattern: Int16(truncatingIfNeeded: key.type)))
                 bytes.appendU32(key.x.bitPattern)
                 bytes.appendU32(key.y.bitPattern)

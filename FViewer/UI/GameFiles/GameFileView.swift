@@ -210,7 +210,7 @@ private struct GameFileContent: View {
                 if ["tex", "atex", "mdl"].contains(file.url.pathExtension.lowercased()) {
                     SegmentButton(title: "Find Effects", active: false) { app.findFiles(containing: file.url.lastPathComponent, effects: true) }
                 }
-                if file.kind == .tmb || file.kind == .pap { SegmentButton(title: "Effects", active: false) { app.listEffects(of: file.url) } }
+                if file.kind == .tmb || file.kind == .pap { SegmentButton(title: "Effects", active: false) { app.listEffects(of: file.url, data: Data(file.bytes)) } }
                 if file.dirty {
                     let changed = zip(file.bytes, file.original).reduce(abs(file.bytes.count - file.original.count)) { $0 + ($1.0 == $1.1 ? 0 : 1) }
                     Text("\(changed) bytes changed").font(Theme.small).foregroundStyle(Theme.dim)
@@ -371,6 +371,17 @@ private struct TmbView: View {
         switch field.type {
         case "Float":
             number(field.name, Double(GameFiles.f32(b, at)), integer: false) { GameFiles.put32(&file.bytes, at, Float($0).bitPattern) }
+        case "Float2", "Float3":
+            let count = field.type == "Float2" ? 2 : 3
+            if at + count * 4 <= b.count {
+                row(field.name) {
+                    ForEach(0..<count, id: \.self) { index in
+                        NumberField(label: nil, value: Double(GameFiles.f32(b, at + index * 4)), step: 0.01,
+                                    onLive: { _ in }, onCommit: { _, v in GameFiles.put32(&file.bytes, at + index * 4, Float(v).bitPattern) })
+                            .frame(width: 84)
+                    }
+                }
+            }
         case "Bool":
             row(field.name) { CheckBox(isOn: read(b, at, field.size) != 0, label: "") { write(at, field.size, $0 ? 1 : 0) }.frame(width: 40) }
         case "Enum" where !field.choices.isEmpty:
@@ -791,9 +802,9 @@ private struct RecordsView: View {
         HStack(spacing: 6) {
             if case .variant(let variant) = slot {
                 SegmentButton(title: "Add Variant", active: false) { apply(GameRecords.imcAdd(file.bytes, after: variant)) }
-                if variant > 0 { SegmentButton(title: "Delete Variant", active: false) { apply(GameRecords.imcRemove(file.bytes, variant: variant), select: file.selection - 1) } }
+                if variant > 0, variant == Int(file.bytes.u16(0)) { SegmentButton(title: "Delete Variant", active: false) { apply(GameRecords.imcRemove(file.bytes, variant: variant), select: file.selection - 1) } }
                 Spacer()
-                HelpBadge(text: "A new variant is a copy of this one and goes to the end of the list. The default entry cannot be deleted.")
+                HelpBadge(text: "A new variant is a copy of this one and goes to the end of the list. Only the last variant can be deleted, because items refer to variants by number. The default entry cannot be deleted.")
             } else {
                 addMenu(slot)
                 SegmentButton(title: { if case .parameters = slot { return "Duplicate Simulator" } else { return "Duplicate" } }(), active: false) {
@@ -1019,7 +1030,15 @@ private struct MtrlPanels: View {
                         text("Texture \(index)", item.path) { value in change { $0.textures[index].path = value } }
                         NumberField(label: nil, value: Double(item.flags), isInteger: true, onLive: { _ in },
                                     onCommit: { _, v in change { $0.textures[index].flags = UInt16(max(0, min(v, 65535))) } }).frame(width: 80)
-                        HeaderButton(symbol: "trash", help: "Remove this texture") { change { $0.textures.remove(at: index) } }
+                        HeaderButton(symbol: "trash", help: "Remove this texture") {
+                            change { model in
+                                model.textures.remove(at: index)
+                                for slot in model.samplers.indices where model.samplers[slot].count > 8 {
+                                    let used = Int(model.samplers[slot][8])
+                                    if used == index { model.samplers[slot][8] = 255 } else if used > index, used != 255 { model.samplers[slot][8] = UInt8(used - 1) }
+                                }
+                            }
+                        }
                     }
                 }
                 ForEach(Array(model.uvSets.enumerated()), id: \.offset) { index, item in
@@ -1035,7 +1054,7 @@ private struct MtrlPanels: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    SegmentButton(title: "Add Texture", active: false) { change { $0.textures.append(("chara/replace_me_d.tex", 0)) } }
+                    SegmentButton(title: "Add Texture", active: false) { change { if $0.textures.count < 255 { $0.textures.append(("chara/replace_me_d.tex", 0)) } } }
                     SegmentButton(title: "Add UV Set", active: false) { change { $0.uvSets.append(("map\($0.uvSets.count + 1)", UInt16($0.uvSets.count))) } }
                     SegmentButton(title: "Add Colour Set", active: false) { change { $0.colorSets.append(("colorSet\($0.colorSets.count + 1)", UInt16($0.colorSets.count))) } }
                     SegmentButton(title: "Add Key", active: false) { change { $0.keys.append((0, 0)) } }
@@ -1056,8 +1075,8 @@ private struct MtrlPanels: View {
                 integer(layout.shaderFlagsAt)
                 label(hex(layout.shaderFlagsAt), 80)
                 if let flagsAt = layout.flagsAt {
-                    CheckBox(isOn: file.bytes[flagsAt] & 0x4 != 0, label: "Colour table") { on in file.bytes[flagsAt] = on ? file.bytes[flagsAt] | 0x4 : file.bytes[flagsAt] & ~0x4 }
-                    CheckBox(isOn: file.bytes[flagsAt] & 0x8 != 0, label: "Dyeable") { on in file.bytes[flagsAt] = on ? file.bytes[flagsAt] | 0x8 : file.bytes[flagsAt] & ~0x8 }
+                    CheckBox(isOn: file.bytes[flagsAt] & 0x4 != 0, label: "Colour table") { _ in file.note = "The colour table flag cannot be switched here: the table data would have to be added or removed with it" }
+                    CheckBox(isOn: file.bytes[flagsAt] & 0x8 != 0, label: "Dyeable") { _ in file.note = "The dye flag cannot be switched here: the dye table data would have to be added or removed with it" }
                 }
                 Spacer(minLength: 0)
             }

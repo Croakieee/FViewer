@@ -23,6 +23,11 @@ extension EffectDocument {
             block = AvfxBlock(tag: "Modl", children: [])
         } else {
             block = AvfxBlock.template(kind.template)
+            if let color = block?.child("Col"), color.children == nil, color.data.isEmpty, let host = block,
+               let at = host.children?.firstIndex(where: { $0 === color }) {
+                host.remove(color)
+                host.insert(AvfxBlock.curveColor(tag: "Col"), at: at)
+            }
         }
         guard let block else { return }
         performStructural("Add " + kind.title) {
@@ -95,7 +100,7 @@ extension EffectDocument {
     func defaultRecord(_ cls: String) -> [AvfxBlock] {
         var fields = (catalog.classes[cls] ?? []).compactMap { catalog.freshLeaf($0, in: cls) }
         if cls == "AvfxTimelineItem" {
-            fields.removeAll { $0.tag == "ClNo" }
+            fields.first { $0.tag == "ClNo" }?.intValue = -1
             fields.first { $0.tag == "bEna" }?.data = [0, 0, 0, 0]
             fields.first { $0.tag == "EdTm" }?.intValue = 1
         }
@@ -159,7 +164,7 @@ extension EffectDocument {
     }
 
     func changeRecords(_ owner: AvfxBlock, list: String, title: String, _ change: (inout [[AvfxBlock]]) -> Void) {
-        var records = owner.ownRecords(list)
+        var records = owner.ownRecords(list).map { $0.map { $0.deepCopy() } }
         change(&records)
         performStructural(title) { owner.setOwnRecords(list, records) }
     }
@@ -457,7 +462,16 @@ extension EffectDocument {
         }
         if block.tag == "UvSt", let parent {
             actions.append(NodeAction(id: node.id + "!del", title: "Delete UV Set", symbol: "trash", destructive: true) { [weak self] in
-                self?.removeChild(block, from: parent, title: "Delete UV Set")
+                let removed = parent.childrenNamed("UvSt").firstIndex { $0 === block } ?? -1
+                self?.batch("Delete UV Set") {
+                    self?.removeChild(block, from: parent, title: "Delete UV Set")
+                    guard removed >= 0 else { return }
+                    for tag in ["TC1", "TC2", "TC3", "TC4", "TD", "TN"] {
+                        guard let field = parent.child(tag)?.child("UvSN"), field.data.count >= 4 else { continue }
+                        let value = field.intValue
+                        if value == removed { field.intValue = 0 } else if value > removed { field.intValue = value - 1 }
+                    }
+                }
             })
         }
         return actions

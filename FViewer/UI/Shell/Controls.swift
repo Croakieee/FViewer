@@ -431,10 +431,11 @@ struct CurveValueRows: View {
     private func makeConstant(_ channels: [CurveChannel]) {
         let before = document.snapshot()
         let time = document.clock.time
-        for channel in channels {
+        let values = channels.map { channel -> Double in
             let keys = channel.read()
-            guard keys.count != 1 else { continue }
-            let value = keys.isEmpty ? (channel.clampUnit ? 1 : 0) : CurveMath.sample(keys, at: time)
+            return keys.isEmpty ? (channel.clampUnit ? 1 : 0) : keys.count == 1 ? keys[0].value : CurveMath.sample(keys, at: time)
+        }
+        for (channel, value) in zip(channels, values) {
             channel.write([CurveKeyPoint(time: 0, value: value, interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0)])
         }
         document.registerUndo("Make " + group.title + " Constant", since: before)

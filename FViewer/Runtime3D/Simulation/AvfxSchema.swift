@@ -325,7 +325,7 @@ private extension Array where Element == AvfxBlock {
 
 private extension AvfxBlock {
     func bool(_ tag: String) -> Bool { int(tag) & 0xff == 1 }
-    func byteFlag(_ tag: String, _ fallback: UInt8 = 0) -> Bool { (child(tag)?.data.first ?? fallback) == 1 }
+    func byteFlag(_ tag: String, _ fallback: UInt8 = 0) -> Bool { child(tag)?.data.first.map { $0 == 1 } ?? (fallback != 0) }
     func lastRecords(_ tag: String) -> [[AvfxBlock]] {
         children?.last { $0.tag == tag && $0.children != nil }?.records() ?? []
     }

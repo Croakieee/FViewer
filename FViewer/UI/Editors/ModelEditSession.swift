@@ -309,25 +309,28 @@ final class ModelEditSession: ObservableObject {
         status = "Added \(fresh.count) emit point\(fresh.count == 1 ? "" : "s")"
     }
 
+    static func removeEmitPoint(_ index: Int, in model: AvfxBlock) {
+        if let block = model.child("VEmt"), (index + 1) * 28 <= block.data.count { block.data.removeSubrange(index * 28..<(index + 1) * 28) }
+        guard let block = model.child("VNum") else { return }
+        if (index + 1) * 2 <= block.data.count {
+            let gone = block.data.u16(index * 2)
+            block.data.removeSubrange(index * 2..<(index + 1) * 2)
+            for at in stride(from: 0, to: block.data.count - 1, by: 2) {
+                let value = block.data.u16(at)
+                guard value > gone else { continue }
+                block.data[at] = UInt8((value - 1) & 0xff)
+                block.data[at + 1] = UInt8((value - 1) >> 8)
+            }
+        } else if block.data.count >= 2 {
+            block.data.removeLast(2)
+        }
+    }
+
     func removeSelectedEmitPoints() {
         let doomed = emitSelection.filter { $0 < emitCount }.sorted(by: >)
         guard !doomed.isEmpty else { return }
         document.performStructural(doomed.count == 1 ? "Remove Emit Point" : "Remove Emit Points") {
-            for index in doomed {
-                if let block = model.child("VEmt"), (index + 1) * 28 <= block.data.count { block.data.removeSubrange(index * 28..<(index + 1) * 28) }
-                if let block = model.child("VNum"), (index + 1) * 2 <= block.data.count {
-                    let gone = block.data.u16(index * 2)
-                    block.data.removeSubrange(index * 2..<(index + 1) * 2)
-                    for at in stride(from: 0, to: block.data.count - 1, by: 2) {
-                        let value = block.data.u16(at)
-                        guard value > gone else { continue }
-                        block.data[at] = UInt8((value - 1) & 0xff)
-                        block.data[at + 1] = UInt8((value - 1) >> 8)
-                    }
-                } else if let block = model.child("VNum"), block.data.count >= 2 {
-                    block.data.removeLast(2)
-                }
-            }
+            for index in doomed { ModelEditSession.removeEmitPoint(index, in: model) }
         }
         emitSelection = []
         status = "Removed \(doomed.count) emit point\(doomed.count == 1 ? "" : "s")"
