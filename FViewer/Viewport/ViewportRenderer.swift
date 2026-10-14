@@ -947,9 +947,6 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 DispatchQueue.main.async { request(image) }
             }
         }
-        #if FV_UITEST
-        if DebugSnapshot.wantCapture { DebugSnapshot.wantCapture = false; let texture = drawable.texture; buffer.addCompletedHandler { _ in DispatchQueue.main.async { DebugSnapshot.save(texture) } } }
-        #endif
         buffer.present(drawable)
         buffer.commit()
     }

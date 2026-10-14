@@ -15,7 +15,7 @@ final class AppModel: ObservableObject {
     @Published var libraryRoot: URL?
     @Published var files: [LibraryFile] = []
     @Published var gameFiles: [LibraryFile] = []
-    @Published var errorMessage: String?
+    @Published var errorMessage: String? { didSet { if let errorMessage { Log.app.error("\(errorMessage)") } } }
     @Published var bottomTab = 0 { didSet { if oldValue != bottomTab { document?.clock.playing = false } } }
     @Published var viewportMode = 0
     @Published var bottomExpanded = false
@@ -76,9 +76,6 @@ final class AppModel: ObservableObject {
         if let flag = arguments.firstIndex(of: "--open"), flag + 1 < arguments.count {
             open(URL(fileURLWithPath: arguments[flag + 1]))
         }
-        #if FV_UITEST
-        DebugSnapshot.schedule(self)
-        #endif
         AppDelegate.model = self
         restoreGameFolder()
         restoreSkeleton()
@@ -118,10 +115,16 @@ final class AppModel: ObservableObject {
         libraryTicket += 1
         let ticket = libraryTicket, known = jsonKinds
         libraryScanning = true
+        Log.library.info("Scanning \(root.path)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let started = CFAbsoluteTimeGetCurrent()
             let scan = LibraryScan.run(root, known: known)
+            Log.library.info("Scanned \(root.lastPathComponent): \(scan.files.count) effects, \(scan.others.count) game files, \(scan.textureFiles.count) textures in \(Log.milliseconds(since: started))")
             DispatchQueue.main.async {
-                guard let self, ticket == self.libraryTicket else { return }
+                guard let self, ticket == self.libraryTicket else {
+                    Log.library.debug("Dropped a scan of \(root.lastPathComponent): a newer one started")
+                    return
+                }
                 self.apply(scan)
             }
         }
@@ -158,7 +161,9 @@ final class AppModel: ObservableObject {
 
     func open(_ url: URL) {
         do {
+            let cached = documents[url] != nil
             let opened = try documents[url] ?? EffectDocument(url: url)
+            Log.document.info("\(cached ? "Switched to" : "Opened") \(url.path) (\(opened.format))")
             documents[url] = opened
             remember(url)
             document = opened
@@ -243,7 +248,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    @Published var notice: String?
+    @Published var notice: String? { didSet { if let notice { Log.app.info("\(notice)") } } }
     @Published var modExport = false
     @Published var modelEditorTarget: String?
     var openModelWindow: (() -> Void)?
@@ -798,6 +803,7 @@ final class AppModel: ObservableObject {
                 }.sorted { $0.lastPathComponent > $1.lastPathComponent }
             for url in older.dropFirst(autosaveCopies) { try? FileManager.default.removeItem(at: url) }
         }
+        Log.app.debug("Autosave wrote \(written) of \(dirtyDocuments.count) unsaved effects")
         return written
     }
 
@@ -1063,6 +1069,7 @@ final class AppModel: ObservableObject {
         let old = document.url
         do {
             try document.save()
+            Log.document.info("Saved \(document.url.path)")
             moved(document, from: old)
             reportMeta(document)
         } catch {
@@ -1101,6 +1108,7 @@ final class AppModel: ObservableObject {
         do {
             let old = document.url
             try document.save(to: url)
+            Log.document.info("Saved as \(url.path)")
             moved(document, from: old)
             reportMeta(document)
         } catch {
@@ -1231,6 +1239,7 @@ final class AppModel: ObservableObject {
         case .failure(let error):
             textureInfo[url] = error.localizedDescription
             failedTextures.insert(url)
+            Log.textures.error("\(url.lastPathComponent): \(error.localizedDescription)")
         }
     }
 
@@ -1238,7 +1247,9 @@ final class AppModel: ObservableObject {
         guard !failedTextures.contains(url), pendingTextures.insert(url).inserted else { return }
         let token = libraryToken
         AppModel.textureQueue.async { [weak self] in
+            let started = CFAbsoluteTimeGetCurrent()
             let result = AppModel.decode(url)
+            Log.textures.debug("Decoded \(url.lastPathComponent) in \(Log.milliseconds(since: started))")
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.pendingTextures.remove(url)

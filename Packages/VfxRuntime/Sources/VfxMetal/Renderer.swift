@@ -3,6 +3,7 @@ import Foundation
 import ImageIO
 import Metal
 import VfxCore
+import os
 import simd
 
 public struct VfxTexture {
@@ -193,21 +194,6 @@ public final class MetalRenderer: ViewFactory {
         }
     }
 
-    public static func shaderProblem(_ graph: MaterialGraph, device: MTLDevice) -> String? {
-        let body = graph.compile().code
-        guard !body.isEmpty else { return nil }
-        if let known = checked[body] { return known.isEmpty ? nil : known }
-        do {
-            let library = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
-            remember(body, problem: "", library: library)
-            return nil
-        } catch {
-            let problem = describe(error)
-            remember(body, problem: problem, library: nil)
-            return problem
-        }
-    }
-
     public enum ShaderCheck {
         case ready
         case failed(String)
@@ -246,6 +232,9 @@ public final class MetalRenderer: ViewFactory {
                                                         fragment: library.makeFunction(name: "materialFragment"))
             return true
         } catch {
+            #if DEBUG
+            Logger(subsystem: "VfxMetal", category: "Material").error("Material shader failed: \(String(describing: error), privacy: .public)")
+            #endif
             failedMaterials.insert(key)
             return false
         }

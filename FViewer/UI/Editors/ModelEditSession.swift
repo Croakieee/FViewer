@@ -16,9 +16,6 @@ struct ModelModal {
 }
 
 final class ModelEditSession: ObservableObject {
-    #if FV_UITEST
-    static weak var active: ModelEditSession?
-    #endif
 
     let document: EffectDocument
     let nodeID: String

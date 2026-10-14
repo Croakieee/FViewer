@@ -182,8 +182,11 @@ nonisolated final class GameArchive: @unchecked Sendable {
                 entry = other
             }
             do {
-                return try SqPackDat.read(try dat(stem, entry.dataFile), at: entry.offset)
+                let data = try SqPackDat.read(try dat(stem, entry.dataFile), at: entry.offset)
+                Log.game.debug("Read \(path): \(data.count) bytes from \(stem).dat\(entry.dataFile)")
+                return data
             } catch SqPackError.outOfBounds {
+                Log.game.error("Corrupt entry for \(path) in \(stem).dat\(entry.dataFile)")
                 throw SqPackError.corrupt(path)
             }
         }

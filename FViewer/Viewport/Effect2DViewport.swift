@@ -117,6 +117,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
             document.clock.status = ""
         } catch {
             document.clock.status = "Effect error: \(error)"
+            Log.document.error("2D effect \(document.title) failed to load: \(error)")
         }
         appliedRelease = false
         appliedTriggers = 0
@@ -216,9 +217,6 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
         if core != nil, shading != 1 { renderer.draw(encoder, half: half, zoom: zoom, pan: pan) }
         if shading != 0 { drawWireframe(encoder, half: half) }
         encoder.endEncoding()
-        #if FV_UITEST
-        if DebugSnapshot.wantCapture { DebugSnapshot.wantCapture = false; let texture = drawable.texture; buffer.addCompletedHandler { _ in DispatchQueue.main.async { DebugSnapshot.save(texture) } } }
-        #endif
         buffer.present(drawable)
         buffer.commit()
     }

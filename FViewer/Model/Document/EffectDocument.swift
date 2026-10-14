@@ -434,6 +434,7 @@ final class EffectDocument: ObservableObject, Identifiable {
             if let selection = from.selection, document.node(selection) != nil { document.selectionID = selection }
         }
         undoManager.setActionName(title)
+        Log.undo.debug("\(undoManager.isUndoing ? "Undid" : undoManager.isRedoing ? "Redid" : "Recorded") \(title) in \(self.title), \(undoTitles.count) steps")
         if grouped { undoManager.endUndoGrouping() }
         rebuildOutline()
         var path = selectionID

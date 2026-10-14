@@ -28,6 +28,7 @@ extension AppModel {
         let archive = try GameArchive(root: url)
         game = archive
         gameRoot = archive.root
+        Log.game.info("Game archives: \(archive.archiveCount) in \(archive.root.path)")
         notice = "Game archives: \(archive.archiveCount) in \(archive.root.lastPathComponent)"
     }
 

@@ -18,7 +18,6 @@ final class AvfxPlayer {
     private var frameRate: Double = 0
     private let stepFrames: Float = 0.5
     private var builtRoot: AvfxBlock?
-    private(set) var rebuilds = 0
 
     init(document: EffectDocument) {
         self.document = document
@@ -37,12 +36,17 @@ final class AvfxPlayer {
             builtRoot = nil
             return
         }
-        if sameSource, simulation != nil, let builtRoot, builtRoot.sameContent(as: root) { return }
+        if sameSource, simulation != nil, let builtRoot, builtRoot.sameContent(as: root) {
+            Log.simulation.debug("Revision \(loadedRevision) leaves the effect unchanged, simulation kept")
+            return
+        }
+        let started = CFAbsoluteTimeGetCurrent()
         builtRoot = root.deepCopy()
-        rebuilds += 1
-        simulation = AvfxSimulation(schema: AvfxSchemaReader.read(root))
+        let schema = AvfxSchemaReader.read(root)
+        simulation = AvfxSimulation(schema: schema)
         simulation?.startTrigger = chosenTrigger
         rewindSimulation()
+        Log.simulation.debug("Rebuilt for revision \(loadedRevision): \(schema.emitters.count) emitters, \(schema.particles.count) particles, \(Log.milliseconds(since: started))")
     }
 
     private func rewindSimulation() {

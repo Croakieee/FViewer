@@ -88,9 +88,6 @@ private struct ModelEditorContent: View {
             if session.modalOwner != nil, next != session.modalRevision { session.modalAbandon?() }
             session.clampSelection()
         }
-        #if FV_UITEST
-        .onAppear { ModelEditSession.active = session }
-        #endif
     }
 
     private var selectionText: String {
