@@ -256,17 +256,6 @@ private struct ItemPage: View {
         }
     }
 
-    private func texturePath(_ sections: [PropSection]) -> String? {
-        let slots = document.textureSlots
-        for field in sections.flatMap(\.fields) {
-            if field.tag == "TxNo" || field.tag.hasPrefix("TLst") || field.label.hasPrefix("Mask Texture"), case .int(let index) = field.read(), index >= 0,
-               index < slots.count {
-                return slots[index].path
-            }
-            if field.tag == "texture", case .text(let name) = field.read() { return name }
-        }
-        return nil
-    }
 
     private func columns(_ sections: [PropSection], count: Int) -> [[PropSection]] {
         var result = [[PropSection]](repeating: [], count: max(count, 1))
@@ -285,7 +274,7 @@ private struct ItemPage: View {
                 VStack(alignment: .leading, spacing: 6) {
                     titleRow
                     if !node.actions.isEmpty {
-                        FlowLayout(spacing: 4) { ForEach(node.actions) { actionButton($0) } }
+                        FlowLayout(spacing: 4) { ForEach(node.actions) { NodeActionButton(action: $0) } }
                             .padding(.horizontal, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -368,21 +357,6 @@ private struct ItemPage: View {
         .help("Presets: save the parameters and curves of this page, or apply a saved set")
     }
 
-    private func actionButton(_ action: NodeAction) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: action.symbol).font(.system(size: 9))
-            Text(action.title).font(Theme.font)
-        }
-        .foregroundStyle(action.destructive ? Color(red: 1, green: 0.5, blue: 0.45) : Theme.text)
-        .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action.perform)
-    }
-
     @ViewBuilder private func form(width: CGFloat) -> some View {
         let sections = filtered(document.sections(for: node))
         let curves = document.curveGroups(for: node)
@@ -411,8 +385,7 @@ private struct ItemPage: View {
                             Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missingCurves.count)") {
                                 let paired = CurveValueRows.pairs(curves, missingCurves)
                                 ForEach(paired.rows, id: \.group.id) { row in
-                                    CurveValueRows(document: document, group: row.group, changed: document.changes.contains(node.id)
-                                        && row.group.channels.contains { document.originalKeys(group: row.group.id, channel: $0.id, in: node.id) != $0.read() },
+                                    CurveValueRows(document: document, group: row.group, changed: document.curveChanged(row.group, in: node.id),
                                                    random: row.random, addRandom: row.add) {
                                         document.activeCurveID = row.group.id
                                     }
@@ -422,7 +395,7 @@ private struct ItemPage: View {
                         }
                         if !node.children.isEmpty {
                             Panel(title: "Contents", trailing: "\(node.children.count)") {
-                                ForEach(node.children) { child in contentRow(child) }
+                                ForEach(node.children) { child in ChildNodeRow(document: document, child: child) }
                             }
                         }
                     }
@@ -434,29 +407,12 @@ private struct ItemPage: View {
     }
 
     @ViewBuilder private func previews(_ sections: [PropSection]) -> some View {
-        if let path = texturePath(sections) {
+        if let path = document.texturePath(fields: sections.flatMap(\.fields)) {
             Panel(title: "Texture") { TexturePreview(path: path, height: 130) }
         }
         if case .avfx(let block, _, let record) = node.payload, record == nil, block.tag == "UvSt" {
             Panel(title: "UV Preview") { UvSetPreview(document: document, clock: document.clock, uvSet: block) }
         }
-    }
-
-    private func contentRow(_ child: OutlineNode) -> some View {
-        let changes = document.changes
-        return HStack(spacing: 6) {
-            Image(systemName: child.symbol).font(.system(size: 10)).foregroundStyle(child.tint.color).frame(width: 16)
-            Text(child.title).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
-            if changes.contains(child.id) { ChangeDot(added: changes.added.contains(child.id)) }
-            Spacer(minLength: 4)
-            Text(child.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
-            Image(systemName: "chevron.right").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.dim)
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.45)))
-        .contentShape(Rectangle())
-        .onTapGesture { document.selectionID = child.id }
     }
 }
 

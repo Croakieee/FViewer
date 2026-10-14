@@ -1,7 +1,7 @@
 import Compression
 import Foundation
 
-enum SqPackError: Error, LocalizedError {
+nonisolated enum SqPackError: Error, LocalizedError {
     case outOfBounds(Int)
     case notSqPack(String)
     case noArchives(String)
@@ -25,7 +25,7 @@ enum SqPackError: Error, LocalizedError {
     }
 }
 
-extension Data {
+nonisolated extension Data {
     func sqLE<T: FixedWidthInteger>(_ offset: Int, as _: T.Type = T.self) throws -> T {
         let size = MemoryLayout<T>.size
         guard offset >= 0, offset <= count - size else { throw SqPackError.outOfBounds(offset) }
@@ -33,18 +33,12 @@ extension Data {
     }
 }
 
-enum SqPackHash {
-    private static let table: [UInt32] = (0..<256).map { i in
-        var c = UInt32(i)
-        for _ in 0..<8 { c = c & 1 != 0 ? 0xEDB8_8320 ^ (c >> 1) : c >> 1 }
-        return c
-    }
-
+nonisolated enum SqPackHash {
     static func jam(_ text: Substring) -> UInt32 {
         var crc: UInt32 = 0xFFFF_FFFF
         for byte in text.utf8 {
             let lower = byte &- 65 < 26 ? byte | 0x20 : byte
-            crc = table[Int((crc ^ UInt32(lower)) & 0xFF)] ^ (crc >> 8)
+            crc = Crc32.step(crc, lower)
         }
         return crc
     }
@@ -55,7 +49,7 @@ enum SqPackHash {
     }
 }
 
-enum SqPackCategory {
+nonisolated enum SqPackCategory {
     static let ids: [String: UInt8] = [
         "common": 0x00, "bgcommon": 0x01, "bg": 0x02, "cut": 0x03, "chara": 0x04,
         "shader": 0x05, "ui": 0x06, "sound": 0x07, "vfx": 0x08, "ui_script": 0x09,
@@ -70,15 +64,16 @@ enum SqPackCategory {
     }
 }
 
-struct SqPackEntry {
+nonisolated struct SqPackEntry {
     let raw: UInt32
     var isSynonym: Bool { raw & 1 != 0 }
     var dataFile: Int { Int(raw >> 1 & 0b111) }
     var offset: Int { Int(raw & ~0xF) * 8 }
 }
 
-final class GameArchive {
+nonisolated final class GameArchive: @unchecked Sendable {
     let root: URL
+    private let lock = NSLock()
     private var indexFiles: [String: URL] = [:]
     private var indexes: [String: [UInt64: SqPackEntry]] = [:]
     private var indexes2: [String: [UInt32: SqPackEntry]] = [:]
@@ -112,6 +107,8 @@ final class GameArchive {
     }
 
     private func index(_ stem: String) throws -> [UInt64: SqPackEntry] {
+        lock.lock()
+        defer { lock.unlock() }
         if let cached = indexes[stem] { return cached }
         guard let url = indexFiles[stem] else { return [:] }
         let data = try Data(contentsOf: url, options: .alwaysMapped)
@@ -119,6 +116,7 @@ final class GameArchive {
         let header = Int(try data.sqLE(0x0C, as: UInt32.self))
         let tableOffset = Int(try data.sqLE(header + 0x08, as: UInt32.self))
         let count = Int(try data.sqLE(header + 0x0C, as: UInt32.self)) / 16
+        guard tableOffset >= 0, tableOffset + count * 16 <= data.count else { throw SqPackError.outOfBounds(tableOffset) }
         var table: [UInt64: SqPackEntry] = [:]
         table.reserveCapacity(min(count, 4_000_000))
         for i in 0..<count {
@@ -130,6 +128,8 @@ final class GameArchive {
     }
 
     private func index2(_ stem: String) throws -> [UInt32: SqPackEntry] {
+        lock.lock()
+        defer { lock.unlock() }
         if let cached = indexes2[stem] { return cached }
         guard let first = indexFiles[stem] else { return [:] }
         let url = first.deletingLastPathComponent().appending(path: "\(stem).win32.index2")
@@ -139,6 +139,7 @@ final class GameArchive {
         let header = Int(try data.sqLE(0x0C, as: UInt32.self))
         let tableOffset = Int(try data.sqLE(header + 0x08, as: UInt32.self))
         let count = Int(try data.sqLE(header + 0x0C, as: UInt32.self)) / 8
+        guard tableOffset >= 0, tableOffset + count * 8 <= data.count else { throw SqPackError.outOfBounds(tableOffset) }
         var table: [UInt32: SqPackEntry] = [:]
         table.reserveCapacity(min(count, 4_000_000))
         for i in 0..<count {
@@ -152,11 +153,17 @@ final class GameArchive {
     private func dat(_ stem: String, _ number: Int) throws -> Data {
         guard let indexURL = indexFiles[stem] else { throw SqPackError.missingDatFile(stem) }
         let url = indexURL.deletingLastPathComponent().appending(path: "\(stem).win32.dat\(number)")
+        lock.lock()
+        defer { lock.unlock() }
         if let cached = datFiles[url] { return cached }
         guard FileManager.default.fileExists(atPath: url.path) else { throw SqPackError.missingDatFile(url.lastPathComponent) }
         let data = try Data(contentsOf: url, options: .alwaysMapped)
         datFiles[url] = data
         return data
+    }
+
+    func available(_ paths: [String]) -> Set<String> {
+        Set(paths.filter { contains($0) })
     }
 
     func contains(_ gamePath: String) -> Bool {
@@ -184,7 +191,7 @@ final class GameArchive {
     }
 }
 
-enum SqPackDat {
+nonisolated enum SqPackDat {
     static func read(_ d: Data, at off: Int) throws -> Data {
         let headerSize = Int(try d.sqLE(off, as: UInt32.self))
         let type = try d.sqLE(off + 4, as: UInt32.self)
@@ -207,6 +214,7 @@ enum SqPackDat {
         let headerSize = Int(try d.sqLE(pos, as: UInt32.self))
         let compressed = Int(try d.sqLE(pos + 8, as: UInt32.self))
         let size = Int(try d.sqLE(pos + 12, as: UInt32.self))
+        guard size <= 1 << 20, compressed == 32000 || compressed <= 1 << 20 else { throw SqPackError.outOfBounds(pos) }
         let src = pos + headerSize
         if compressed == 32000 {
             guard src >= 0, size >= 0, src + size <= d.count else { throw SqPackError.outOfBounds(src) }

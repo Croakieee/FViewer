@@ -5,6 +5,7 @@ import VfxMetal
 
 final class Effect2DRenderer: NSObject, MTKViewDelegate {
     private let queue: MTLCommandQueue?
+    private let inFlight = DispatchSemaphore(value: 1)
     private var renderer: MetalRenderer?
     private var core: EffectCore?
     private var loadedDocument: UUID?
@@ -80,6 +81,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
         guard let renderer, let app else { return }
         if app.libraryToken != libraryToken {
             libraryToken = app.libraryToken
+            clearModelCache()
             loadedTextures = []
         }
         loadedDocument = document.id
@@ -199,12 +201,24 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        let waited = inFlight.wait(timeout: .now() + 0.1) == .success
         guard let renderer, let queue, let pass = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let buffer = queue.makeCommandBuffer(), let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+              let buffer = queue.makeCommandBuffer() else {
+            if waited { inFlight.signal() }
+            return
+        }
+        if waited { buffer.addCompletedHandler { [inFlight] _ in inFlight.signal() } }
+        guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else {
+            buffer.commit()
+            return
+        }
         let half = SIMD2(Float(view.bounds.width / 2), Float(view.bounds.height / 2))
         if core != nil, shading != 1 { renderer.draw(encoder, half: half, zoom: zoom, pan: pan) }
         if shading != 0 { drawWireframe(encoder, half: half) }
         encoder.endEncoding()
+        #if FV_UITEST
+        if DebugSnapshot.wantCapture { DebugSnapshot.wantCapture = false; let texture = drawable.texture; buffer.addCompletedHandler { _ in DispatchQueue.main.async { DebugSnapshot.save(texture) } } }
+        #endif
         buffer.present(drawable)
         buffer.commit()
     }

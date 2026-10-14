@@ -115,6 +115,16 @@ final class AvfxBlock: Identifiable {
         return out
     }
 
+    func sameContent(as other: AvfxBlock) -> Bool {
+        if self === other { return true }
+        guard rawTag == other.rawTag else { return false }
+        switch (children, other.children) {
+        case (nil, nil): return data == other.data
+        case let (mine?, theirs?): return mine.count == theirs.count && zip(mine, theirs).allSatisfy { $0.sameContent(as: $1) }
+        default: return false
+        }
+    }
+
     func deepCopy() -> AvfxBlock {
         AvfxBlock(rawTag: rawTag, data: data, children: children?.map { $0.deepCopy() })
     }
@@ -206,7 +216,7 @@ final class AvfxBlock: Identifiable {
     }
 }
 
-extension Array where Element == UInt8 {
+nonisolated extension Array where Element == UInt8 {
     func u16(_ at: Int) -> UInt16 {
         guard at >= 0, at + 1 < count else { return 0 }
         return UInt16(self[at]) | UInt16(self[at + 1]) << 8

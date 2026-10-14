@@ -16,7 +16,9 @@ struct ModelModal {
 }
 
 final class ModelEditSession: ObservableObject {
+    #if FV_UITEST
     static weak var active: ModelEditSession?
+    #endif
 
     let document: EffectDocument
     let nodeID: String
@@ -45,6 +47,8 @@ final class ModelEditSession: ObservableObject {
     @Published var uvOrigin = CGPoint(x: 40, y: 40)
     @Published var modalOwner: String?
     var modalConfirm: (() -> Void)?
+    var modalAbandon: (() -> Void)?
+    var modalRevision = -1
     var framed3D = false
     var framedUV = ""
 
@@ -69,7 +73,7 @@ final class ModelEditSession: ObservableObject {
 
     private func setHalf(_ block: AvfxBlock, _ at: Int, _ value: Float) {
         guard at + 1 < block.data.count else { return }
-        let bits = Gltf.floatToHalf(value)
+        let bits = CurveMath.floatToHalf(value)
         block.data[at] = UInt8(bits & 0xff)
         block.data[at + 1] = UInt8(bits >> 8)
     }
@@ -483,7 +487,7 @@ final class ModelEditSession: ObservableObject {
             for corner in [(Float(-0.5), Float(-0.5), Float(-0.5), Float(0.5)), (0.5, -0.5, 0.5, 0.5), (0.5, 0.5, 0.5, -0.5), (-0.5, 0.5, -0.5, -0.5)] {
                 var vertex = [UInt8](repeating: 0, count: 36)
                 func half(_ at: Int, _ value: Float) {
-                    let bits = Gltf.floatToHalf(value)
+                    let bits = CurveMath.floatToHalf(value)
                     vertex[at] = UInt8(bits & 0xff)
                     vertex[at + 1] = UInt8(bits >> 8)
                 }
@@ -568,7 +572,7 @@ final class ModelEditSession: ObservableObject {
         var vertex = [UInt8](repeating: 0, count: 36)
         for at in [0, 2, 4, 6, 20, 22, 24, 26, 28, 30, 32, 34] {
             let value = (CurveMath.halfToFloat(data.u16(a * 36 + at)) + CurveMath.halfToFloat(data.u16(b * 36 + at))) / 2
-            let bits = Gltf.floatToHalf(value)
+            let bits = CurveMath.floatToHalf(value)
             vertex[at] = UInt8(bits & 0xff)
             vertex[at + 1] = UInt8(bits >> 8)
         }

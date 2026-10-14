@@ -12,10 +12,13 @@ final class AvfxPlayer {
     private var duration: Double = 30
     private var appliedRelease = false
     private var appliedTriggers = 0
+    private var chosenTrigger: Int?
     private var statusTick = 0
     private var workTime: Double = 0
     private var frameRate: Double = 0
     private let stepFrames: Float = 0.5
+    private var builtRoot: AvfxBlock?
+    private(set) var rebuilds = 0
 
     init(document: EffectDocument) {
         self.document = document
@@ -24,15 +27,21 @@ final class AvfxPlayer {
     var schemaChanged: Bool { loadedRevision != document.previewRevision || loadedOriginal != document.showOriginal || loadedRules != PreviewRules.token }
 
     private func rebuild() {
+        let sameSource = loadedOriginal == document.showOriginal && loadedRules == PreviewRules.token
         loadedRevision = document.previewRevision
         duration = document.duration
         loadedOriginal = document.showOriginal
         loadedRules = PreviewRules.token
         guard let root = (document.showOriginal ? document.original?.avfxRoot : nil) ?? document.avfxRoot else {
             simulation = nil
+            builtRoot = nil
             return
         }
+        if sameSource, simulation != nil, let builtRoot, builtRoot.sameContent(as: root) { return }
+        builtRoot = root.deepCopy()
+        rebuilds += 1
         simulation = AvfxSimulation(schema: AvfxSchemaReader.read(root))
+        simulation?.startTrigger = chosenTrigger
         rewindSimulation()
     }
 
@@ -65,6 +74,10 @@ final class AvfxPlayer {
                 simulation.release()
             }
             while appliedTriggers < clock.triggers.count, Double(simulation.time) >= clock.triggers[appliedTriggers].time {
+                if simulation.triggerOnly {
+                    chosenTrigger = clock.triggers[appliedTriggers].index
+                    simulation.startTrigger = chosenTrigger
+                }
                 simulation.trigger(clock.triggers[appliedTriggers].index)
                 appliedTriggers += 1
             }
@@ -76,6 +89,10 @@ final class AvfxPlayer {
                 simulation.release()
             }
             while appliedTriggers < clock.triggers.count, Double(simulation.time) >= clock.triggers[appliedTriggers].time {
+                if simulation.triggerOnly {
+                    chosenTrigger = clock.triggers[appliedTriggers].index
+                    simulation.startTrigger = chosenTrigger
+                }
                 simulation.trigger(clock.triggers[appliedTriggers].index)
                 appliedTriggers += 1
             }

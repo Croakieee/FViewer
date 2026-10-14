@@ -51,7 +51,7 @@ struct AtchTable {
         while at < b.count {
             let text = GameFiles.string(b, at, max: 64)
             order.append(text)
-            at += text.utf8.count + 1
+            at += GameFiles.stringBytes(b, at, max: 64) + 1
         }
         return AtchTable(stateCount: states, entries: entries, order: order)
     }
@@ -145,28 +145,5 @@ struct MtrlLayout {
         }
         return MtrlLayout(flagsAt: extra > 0 ? extraAt : nil, tableAt: tableAt, rows: rows, rowWidth: width, shaderFlagsAt: shader + 8,
                           keys: (0..<keyCount).map { keysAt + $0 * 8 }, constants: constants, samplers: (0..<samplerCount).map { samplersAt + $0 * 12 })
-    }
-}
-
-extension GameFiles {
-    static func half(_ raw: UInt16) -> Float { CurveMath.halfToFloat(raw) }
-
-    static func halfBits(_ value: Float) -> UInt16 {
-        if value == 0 || !value.isFinite { return value.sign == .minus && value == 0 ? 0x8000 : 0 }
-        let sign: UInt16 = value < 0 ? 0x8000 : 0
-        let magnitude = abs(value)
-        var exponent = Int(floor(log2(magnitude)))
-        if exponent > 15 { return sign | 0x7BFF }
-        if exponent < -14 {
-            let mantissa = Int(safe: (magnitude / powf(2, -14) * 1024).rounded())
-            return sign | UInt16(min(mantissa, 1023))
-        }
-        var mantissa = Int(safe: ((magnitude / powf(2, Float(exponent)) - 1) * 1024).rounded())
-        if mantissa == 1024 {
-            mantissa = 0
-            exponent += 1
-            if exponent > 15 { return sign | 0x7BFF }
-        }
-        return sign | UInt16(exponent + 15) << 10 | UInt16(mantissa)
     }
 }

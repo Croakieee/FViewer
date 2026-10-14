@@ -40,7 +40,11 @@ struct MaterialInspector: View {
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        MaterialLibrary.save(graph, name: field.stringValue)
+        do {
+            if let url = try MaterialLibrary.save(graph, name: field.stringValue) { app.notice = "Material saved as \(url.deletingPathExtension().lastPathComponent)" }
+        } catch {
+            app.errorMessage = "Material \(field.stringValue): \(error.localizedDescription)"
+        }
         libraryToken += 1
     }
 
@@ -74,8 +78,12 @@ struct MaterialInspector: View {
         if let target, let kind = MaterialGraph.kind(of: target.type) {
             let pin = kind.outputs.isEmpty ? nil : (previewPin.flatMap { kind.outputs.contains($0) ? $0 : nil } ?? kind.outputs[0])
             Panel(title: "Preview", trailing: target.type == "output" ? "final" : kind.title, memory: "material.preview") {
-                let resolved = document.resolvedMaterial(particle)
-                MaterialPreviewImage(graph: resolved?.nodes.contains(where: { $0.id == target.id }) == true ? resolved ?? graph : graph, node: target.id, pin: pin,
+                let resolved = document.shownResolvedMaterial(particle)
+                let shared = document.shownSharedMaterials
+                let inner = target.type == "subgraph" ? target.graph.flatMap { shared[$0] }.map { $0.expanded(shared) } : nil
+                let innerOutput = inner?.nodes.first { $0.type == "output" }
+                let shown = inner ?? (resolved?.nodes.contains(where: { $0.id == target.id }) == true ? resolved ?? graph : graph)
+                MaterialPreviewImage(graph: shown, node: innerOutput?.id ?? target.id, pin: innerOutput == nil ? pin : nil,
                                      base: document.materialBaseTexture(particle), layers: document.materialLayers(particle), light: document.materialLight, side: 88)
                     .aspectRatio(1, contentMode: .fit)
                     .frame(maxWidth: 190)
@@ -145,7 +153,7 @@ struct MaterialInspector: View {
     }
 
     @ViewBuilder private func sceneLight(_ graph: MaterialGraph) -> some View {
-        if document.resolvedMaterial(particle)?.usesLighting == true {
+        if document.shownResolvedMaterial(particle)?.usesLighting == true {
             let light = document.materialLight
             let direction = light.directionVector, tint = light.colorVector, fill = light.ambientVector
             let azimuth = Double(atan2(direction.x, direction.z)) * 180 / .pi

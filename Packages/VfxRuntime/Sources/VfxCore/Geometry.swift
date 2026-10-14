@@ -67,8 +67,12 @@ func windmillGeometry(_ size: Double, _ mirror: Bool) -> GeometryData {
 
 private var meshes: [String: GeometryData] = [:]
 
+public func clearModelCache() {
+    meshes = [:]
+}
+
 func meshGeometry(_ name: String, _ model: ModelData, _ unit: Double) -> GeometryData {
-    let key = "\(name)@\(unit)"
+    let key = (model.hash.map { "#" + $0 } ?? name) + "@\(unit)"
     if let g = meshes[key] { return g }
     let p = model.positions
     let n = p.count / 2

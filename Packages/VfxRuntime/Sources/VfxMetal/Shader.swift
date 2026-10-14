@@ -150,8 +150,10 @@ fragment float4 FRAGMENT_NAME(VOut i [[stage_in]],
     c = applyLayer(c, layer0, layer0Smp, u.uv1, i, u.uvChannel.y, u.layerMode.x, u.layerAlphaMode.x, u.layerColorToAlpha.x, u.layerDistort.x, offset);
     c = applyLayer(c, layer1, layer1Smp, u.uv2, i, u.uvChannel.z, u.layerMode.y, u.layerAlphaMode.y, u.layerColorToAlpha.y, u.layerDistort.y, offset);
     c = applyLayer(c, layer2, layer2Smp, u.uv3, i, u.uvChannel.w, u.layerMode.z, u.layerAlphaMode.z, u.layerColorToAlpha.z, u.layerDistort.z, offset);
+    float4 particleTint = u.particleColor;
+    float4 vertexTint = i.color;
 MATERIAL_BODY
-    c *= u.particleColor * mix(u.edgeInner, u.edgeOuter, i.band) * i.color;
+    c *= particleTint * mix(u.edgeInner, u.edgeOuter, i.band) * vertexTint;
     if (u.misc1.y > 0.0) c.a *= smoothstep(0.0, u.misc1.y, i.band);
     if (u.misc1.z > 0.0) c.a *= smoothstep(0.0, u.misc1.z, 1.0 - i.band);
     c.a = clamp(c.a, 0.0, 1.0);

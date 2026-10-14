@@ -8,7 +8,11 @@ struct ModelUvEditor: View {
     private var scale: CGFloat { session.uvScale }
     private var origin: CGPoint { session.uvOrigin }
     @State private var size = CGSize(width: 1, height: 1)
-    @State private var mouse = CGPoint.zero
+    @State private var pointer = HoverPoint()
+    private var mouse: CGPoint {
+        get { pointer.location }
+        nonmutating set { pointer.location = newValue }
+    }
     @State private var dragStart: CGPoint?
     @State private var dragNow: CGPoint?
     @State private var dragMode = 0
@@ -75,7 +79,17 @@ struct ModelUvEditor: View {
         modal = ModelModal(kind: kind, start: mouse, before: session.capture(), axis: nil)
         session.status = hint(kind, nil)
         session.modalConfirm = { confirm() }
+        session.modalAbandon = { abandon() }
         session.modalOwner = "uv"
+        session.modalRevision = document.revision
+    }
+
+    private func abandon() {
+        modal = nil
+        session.status = ""
+        session.modalOwner = nil
+        session.modalConfirm = nil
+        session.modalAbandon = nil
     }
 
     private func applyModal() {
@@ -108,6 +122,7 @@ struct ModelUvEditor: View {
         }
         for index in picked { session.setUV(index, transform(origins[index])) }
         document.liveDrag()
+        session.modalRevision = document.revision
     }
 
     private func confirm() {
@@ -117,6 +132,7 @@ struct ModelUvEditor: View {
         session.status = ""
         session.modalOwner = nil
         session.modalConfirm = nil
+        session.modalAbandon = nil
     }
 
     private func cancel() {
@@ -126,6 +142,7 @@ struct ModelUvEditor: View {
         session.status = ""
         session.modalOwner = nil
         session.modalConfirm = nil
+        session.modalAbandon = nil
     }
 
     private func drawGrid(_ context: inout GraphicsContext, _ canvas: CGSize) {
@@ -200,9 +217,6 @@ struct ModelUvEditor: View {
             context.fill(Path(rect), with: .color(Color.white.opacity(0.06)))
             context.stroke(Path(rect), with: .color(Color.white.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
         }
-        let cursor = uv(mouse)
-        context.draw(Text(String(format: "U %.3f  V %.3f", cursor.x, cursor.y)).font(Theme.small).foregroundColor(Theme.dim),
-                     at: CGPoint(x: 8, y: canvas.height - 10), anchor: .leading)
     }
 
     private func key(_ press: KeyPress) -> KeyPress.Result {
@@ -328,6 +342,7 @@ struct ModelUvEditor: View {
                     _ = revision
                     drawContent(&context, canvasSize)
                 }
+                .overlay(alignment: .bottomLeading) { UvReadout(pointer: pointer) { uv($0) } }
                 .background(Theme.gray(0.2))
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { dragChanged($0) }.onEnded { dragEnded($0) })

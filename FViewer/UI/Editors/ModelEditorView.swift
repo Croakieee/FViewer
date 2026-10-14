@@ -84,8 +84,13 @@ private struct ModelEditorContent: View {
             .frame(height: 22)
             .background(Theme.header)
         }
-        .onChange(of: document.revision) { _, _ in session.clampSelection() }
+        .onChange(of: document.revision) { _, next in
+            if session.modalOwner != nil, next != session.modalRevision { session.modalAbandon?() }
+            session.clampSelection()
+        }
+        #if FV_UITEST
         .onAppear { ModelEditSession.active = session }
+        #endif
     }
 
     private var selectionText: String {

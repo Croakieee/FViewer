@@ -3,11 +3,8 @@ import simd
 
 enum GameModel {
     private static func half(_ raw: UInt16) -> Float {
-        let sign: Float = raw & 0x8000 != 0 ? -1 : 1
-        let exponent = Int(raw >> 10 & 0x1F), mantissa = Float(raw & 0x3FF)
-        if exponent == 0 { return sign * mantissa / 1024 * powf(2, -14) }
-        if exponent == 31 { return 0 }
-        return sign * (1 + mantissa / 1024) * powf(2, Float(exponent - 15))
+        let value = CurveMath.halfToFloat(raw)
+        return value.isFinite ? value : 0
     }
 
     private static func vector(_ b: [UInt8], _ at: Int, type: Int) -> SIMD4<Float>? {
@@ -41,7 +38,7 @@ enum GameModel {
         while at < stringsAt + 8 + size {
             let text = GameFiles.string(b, at, max: 260)
             if text.hasSuffix(".mtrl") { names.append(text) }
-            at += text.utf8.count + 1
+            at += GameFiles.stringBytes(b, at, max: 260) + 1
         }
         return names
     }

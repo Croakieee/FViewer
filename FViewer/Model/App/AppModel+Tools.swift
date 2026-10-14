@@ -174,7 +174,11 @@ extension AppModel {
         guard let url = libraryMetaURL else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try? encoder.encode(meta.filter { $0.value.color != 0 || !$0.value.note.isEmpty }).write(to: url, options: .atomic)
+        do {
+            try encoder.encode(meta.filter { $0.value.color != 0 || !$0.value.note.isEmpty }).write(to: url, options: .atomic)
+        } catch {
+            notice = "Library colours and notes could not be saved: \(error.localizedDescription)"
+        }
         objectWillChange.send()
     }
 
@@ -458,8 +462,11 @@ extension AppModel {
         }
     }
 
+    private static var notesCache: [String: String]?
+
     func note(for file: URL) -> String {
-        (UserDefaults.standard.dictionary(forKey: "file.notes") as? [String: String])?[file.standardizedFileURL.path] ?? ""
+        if AppModel.notesCache == nil { AppModel.notesCache = UserDefaults.standard.dictionary(forKey: "file.notes") as? [String: String] ?? [:] }
+        return AppModel.notesCache?[file.standardizedFileURL.path] ?? ""
     }
 
     func setNote(_ text: String, for file: URL) {
@@ -467,6 +474,7 @@ extension AppModel {
         let key = file.standardizedFileURL.path
         if text.isEmpty { notes.removeValue(forKey: key) } else { notes[key] = text }
         UserDefaults.standard.set(notes, forKey: "file.notes")
+        AppModel.notesCache = notes
         objectWillChange.send()
     }
 

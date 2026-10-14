@@ -42,19 +42,20 @@ extension ViewportRenderer {
         return document.sections(for: node).flatMap(\.fields).first { $0.id == id }
     }
 
-    private func radiusChannels(_ root: String, _ tags: [String]) -> [CurveChannel] {
-        guard let document, let node = document.node(root) else { return [] }
+    private func radiusChannels(_ root: String, _ tags: [String]) -> (channels: [CurveChannel], angle: Bool) {
+        guard !tags.isEmpty, let document, let node = document.node(root) else { return ([], false) }
         var result: [CurveChannel] = []
+        var angle = false
         for child in node.children {
             guard case .avfx(let block, _, let record) = child.payload, record == nil, block.tag == "Data" else { continue }
             for group in document.curveGroups(for: child) where tags.contains(group.tag) {
                 if let channel = group.channels.first {
                     result.append(channel)
-                    gizmo.radiusScale = group.isAngle ? 180 / .pi : 1
+                    angle = group.isAngle
                 }
             }
         }
-        return result
+        return (result, angle)
     }
 
     func updateGizmo(_ simulation: AvfxSimulation) {
@@ -99,10 +100,10 @@ extension ViewportRenderer {
                     }
                 }
             } else if let particle = simulation.particles.first(where: { $0.schema.index == index }) {
-                let parent = Math3D.decompose(particle.emitter.world)
-                basis = parent.rotation
-                unit = parent.scale
                 if let draw = lastDraws.first(where: { $0.particle == index && !$0.isSprite }) ?? lastDraws.first(where: { $0.particle == index }) {
+                    let parent = Math3D.decompose(draw.parent)
+                    basis = parent.rotation
+                    unit = parent.scale
                     origin = draw.worldBounds?.centre ?? Math3D.position(draw.model)
                     let type = particle.schema.type
                     if type == 12 || type == 11, !draw.isSprite {
@@ -149,10 +150,12 @@ extension ViewportRenderer {
             color.w = 0.55
             handles.append(GizmoHandle(index: handles.count, kind: 1, axis: axis, points: ring, color: color))
         }
-        if let model = gizmo.radiusModel, !gizmo.radiusTags.isEmpty {
-            let channels = radiusChannels(root, gizmo.radiusTags)
-            if let first = channels.first {
-                let raw = Float(first.read().first?.value ?? (gizmo.radiusMode == 1 ? 0.1 : gizmo.radiusMode == 3 ? 0 : 1))
+        let radius = radiusChannels(root, gizmo.radiusTags)
+        if !radius.channels.isEmpty { gizmo.radiusScale = radius.angle ? 180 / .pi : 1 }
+        let length = gizmo.lengthModel == nil && gizmo.shapeType != 4 ? nil : radiusChannels(root, ["Len"]).channels.first
+        if let model = gizmo.radiusModel {
+            if let first = radius.channels.first {
+                let raw = first.read().first.map { Float($0.value) } ?? radiusDefault
                 var local: Vec3
                 switch gizmo.radiusMode {
                 case 1: local = Vec3(0.5 + raw, 0.01, 0)
@@ -163,37 +166,45 @@ extension ViewportRenderer {
                 }
                 if gizmo.active == nil { gizmo.radiusLocal = local }
                 let centre = Math3D.point(model, .zero)
-                handles.append(GizmoHandle(index: handles.count, kind: 2, axis: 0, points: [centre, Math3D.point(model, local)], color: SIMD4(1, 0.72, 0.28, 1)))
+                var points = [centre, Math3D.point(model, local)]
+                if gizmo.radiusMode == 0 || gizmo.radiusMode == 2 { points.append(points[1] + stub(model, Vec3(1, 0, 0))) }
+                handles.append(GizmoHandle(index: handles.count, kind: 2, axis: 0, points: points, color: SIMD4(1, 0.72, 0.28, 1)))
             }
         }
-        if let model = gizmo.lengthModel, let channel = radiusChannels(root, ["Len"]).first {
-            let length = Float(channel.read().first?.value ?? 0)
-            handles.append(GizmoHandle(index: handles.count, kind: 4, axis: 1, points: [Math3D.point(model, .zero), Math3D.point(model, Vec3(0, length / 2, 0))],
-                                       color: SIMD4(1, 0.72, 0.28, 1)))
+        let half = Float(length?.read().first?.value ?? 0) / 2
+        if let model = gizmo.lengthModel, length != nil {
+            let top = Math3D.point(model, Vec3(0, half, 0))
+            handles.append(GizmoHandle(index: handles.count, kind: 4, axis: 1, points: [top, top + stub(model, Vec3(0, 1, 0))], color: SIMD4(1, 0.72, 0.28, 1)))
         }
-        handles.append(contentsOf: shapeOutline(root, firstIndex: handles.count))
+        handles.append(contentsOf: shapeOutline(radius.channels.first?.read().first?.value, half: half, firstIndex: handles.count))
         gizmo.handles = handles
     }
 
-    private func shapeOutline(_ root: String, firstIndex: Int) -> [GizmoHandle] {
+    private var radiusDefault: Float {
+        gizmo.radiusMode == 1 || gizmo.radiusMode == 3 ? 0 : 1
+    }
+
+    private func stub(_ model: Mat4, _ axis: Vec3) -> Vec3 {
+        let direction = Math3D.direction(model, axis)
+        return simd_length_squared(direction) > 1e-12 ? simd_normalize(direction) * gizmo.size * 0.25 : .zero
+    }
+
+    private func shapeOutline(_ first: Double?, half: Float, firstIndex: Int) -> [GizmoHandle] {
         guard let model = gizmo.radiusModel ?? gizmo.lengthModel, gizmo.shapeType >= 1, gizmo.shapeType <= 4 else { return [] }
         let color = SIMD4<Float>(1, 0.72, 0.28, 0.45)
         var outlines: [[Vec3]] = []
         func circle(_ point: (Float) -> Vec3) -> [Vec3] { (0...48).map { point(Float($0) / 48 * 2 * .pi) } }
-        let first = radiusChannels(root, gizmo.radiusTags).first?.read().first?.value
         switch gizmo.shapeType {
         case 3:
             let r = Float(first ?? 1)
             outlines = [circle { Vec3(cos($0) * r, 0, sin($0) * r) }, circle { Vec3(cos($0) * r, sin($0) * r, 0) }, circle { Vec3(0, cos($0) * r, sin($0) * r) }]
         case 4:
             let r = Float(first ?? 1)
-            let half = Float(radiusChannels(root, ["Len"]).first?.read().first?.value ?? 0) / 2
             outlines = [circle { Vec3(cos($0) * r, half, sin($0) * r) }, circle { Vec3(cos($0) * r, -half, sin($0) * r) }]
             for step in 0..<4 {
                 let a = Float(step) / 4 * 2 * .pi
                 outlines.append([Vec3(cos(a) * r, -half, sin(a) * r), Vec3(cos(a) * r, half, sin(a) * r)])
             }
-            _ = radiusChannels(root, gizmo.radiusTags)
         default:
             let angle = Float(first ?? 0) / Float(gizmo.radiusScale)
             outlines = [circle { Vec3(sin(angle) * cos($0), sin(angle) * sin($0), cos(angle)) }]
@@ -229,7 +240,7 @@ extension ViewportRenderer {
                 nearest = min(nearest, distance(point, a, b))
             }
             let reach: CGFloat = handle.kind == 1 ? 5 : 8
-            let score = nearest - (handle.kind == 2 ? 2 : handle.kind == 1 ? 0 : 1)
+            let score = nearest - (handle.kind == 2 || handle.kind == 4 ? 2 : handle.kind == 1 ? 0 : 1)
             if nearest <= reach, score < (best?.1 ?? .infinity) { best = (handle, score) }
         }
         return best?.0
@@ -242,11 +253,10 @@ extension ViewportRenderer {
         case 0: values = (0..<3).map { transformField(root, "Pos", $0)?.read().number ?? 0 }
         case 1: values = (0..<3).map { transformField(root, "Rot", $0)?.read().number ?? 0 }
         case 3: values = (0..<3).map { transformField(root, "Scl", $0)?.read().number ?? 1 }
-        case 4: values = radiusChannels(root, ["Len"]).map { $0.read().first?.value ?? 0 }
-        default: values = radiusChannels(root, gizmo.radiusTags).map { $0.read().first?.value ?? 0 }
+        case 4: values = radiusChannels(root, ["Len"]).channels.map { $0.read().first?.value ?? 0 }
+        default: values = radiusChannels(root, gizmo.radiusTags).channels.map { $0.read().first?.value ?? Double(radiusDefault) }
         }
         if handle.kind == 4 {
-            _ = radiusChannels(root, gizmo.radiusTags)
             gizmo.active = (handle.index, handle.kind, handle.axis, point, values, document.snapshot(), gizmo.origin, gizmo.basis, gizmo.unit, gizmo.size,
                             gizmo.lengthModel, Vec3(0, Float(values.first ?? 0) / 2, 0))
             return true
@@ -295,9 +305,10 @@ extension ViewportRenderer {
             guard length > 0.01 else { return }
             let scale = gizmo.radiusScale
             let amount = Double((dx * sx + dy * sy) / length) * (active.kind == 4 ? 2 : gizmo.radiusMode == 3 ? scale : 1)
-            for (slot, channel) in radiusChannels(root, active.kind == 4 ? ["Len"] : gizmo.radiusTags).enumerated() where slot < active.values.count {
+            for (slot, channel) in radiusChannels(root, active.kind == 4 ? ["Len"] : gizmo.radiusTags).channels.enumerated() where slot < active.values.count {
                 var keys = channel.read()
                 if keys.isEmpty {
+                    guard amount != 0 else { continue }
                     keys = [CurveKeyPoint(time: 0, value: active.values[slot] + amount, interpolation: CurveKeyPoint.linear, tangentOut: 0, tangentIn: 0)]
                 } else {
                     let shift = active.values[slot] + amount - keys[0].value

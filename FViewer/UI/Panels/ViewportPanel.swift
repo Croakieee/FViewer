@@ -95,7 +95,7 @@ struct SoloButton: View {
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: 4).fill(document.soloPreview ? Theme.changed.opacity(0.75) : Theme.gray(0.22)))
         .contentShape(Rectangle())
-        .onTapGesture { document.setSolo(!document.soloPreview) }
+        .pressable { document.setSolo(!document.soloPreview) }
         .help("Play only the selected emitter or particle, looping over the frames where it is alive. Edits show up on the next loop")
     }
 }
@@ -170,7 +170,7 @@ struct PreviewMenu: View {
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: 4).fill(shown || bloom.on ? Theme.accent : Theme.gray(0.22)))
         .contentShape(Rectangle())
-        .onTapGesture { shown.toggle() }
+        .pressable { shown.toggle() }
         .help("Preview background and bloom. Neither is saved into the effect")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
@@ -237,7 +237,7 @@ struct GizmoMenu: View {
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: 4).fill(shown ? Theme.accent : Theme.gray(0.22)))
         .contentShape(Rectangle())
-        .onTapGesture { shown.toggle() }
+        .pressable { shown.toggle() }
         .help("Choose which helpers are drawn in the viewport")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
@@ -257,7 +257,7 @@ struct GizmoMenu: View {
 struct ViewportPanel: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
-    @State private var camera = ViewportCamera()
+    @StateObject private var camera = ViewportCamera()
     @State private var framedKey = ""
     @State private var effectView: (yaw: Float, pitch: Float, distance: Float, target: SIMD3<Float>)?
 
@@ -332,7 +332,7 @@ struct ViewportPanel: View {
                     Image(systemName: "eye.slash").font(.system(size: 9))
                     Text(filter.isolated != nil ? "Isolated" : "\(filter.hidden.count) hidden").font(Theme.small)
                     Text("Show All").font(Theme.small).underline()
-                        .onTapGesture {
+                        .pressable {
                             document.hidden = []
                             document.isolateSelection = false
                         }

@@ -67,18 +67,28 @@ struct TextureImage {
         let w = max(width / 2, 1), h = max(height / 2, 1)
         var out = [UInt8](repeating: 0, count: w * h * 4)
         for y in 0..<h {
+            let y0 = y * height / h, y1 = max(y0 + 1, (y + 1) * height / h)
             for x in 0..<w {
-                let taps = [pixel(x * 2, y * 2), pixel(x * 2 + 1, y * 2), pixel(x * 2, y * 2 + 1), pixel(x * 2 + 1, y * 2 + 1)]
-                let to = (y * w + x) * 4
-                let alpha = taps.reduce(0) { $0 + Int(rgba[$1 + 3]) }
-                for k in 0..<3 {
-                    if alpha > 0 {
-                        out[to + k] = UInt8(min(255, (taps.reduce(0) { $0 + Int(rgba[$1 + k]) * Int(rgba[$1 + 3]) } + alpha / 2) / alpha))
-                    } else {
-                        out[to + k] = UInt8((taps.reduce(0) { $0 + Int(rgba[$1 + k]) } + 2) / 4)
+                let x0 = x * width / w, x1 = max(x0 + 1, (x + 1) * width / w)
+                var sums = [0, 0, 0, 0], weighted = [0, 0, 0], count = 0
+                for sy in y0..<min(y1, height) {
+                    for sx in x0..<min(x1, width) {
+                        let at = (sy * width + sx) * 4
+                        let a = Int(rgba[at + 3])
+                        for k in 0..<3 {
+                            sums[k] += Int(rgba[at + k])
+                            weighted[k] += Int(rgba[at + k]) * a
+                        }
+                        sums[3] += a
+                        count += 1
                     }
                 }
-                out[to + 3] = UInt8((alpha + 2) / 4)
+                let to = (y * w + x) * 4
+                guard count > 0 else { continue }
+                for k in 0..<3 {
+                    out[to + k] = sums[3] > 0 ? UInt8(min(255, (weighted[k] + sums[3] / 2) / sums[3])) : UInt8((sums[k] + count / 2) / count)
+                }
+                out[to + 3] = UInt8((sums[3] + count / 2) / count)
             }
         }
         return TextureImage(width: w, height: h, rgba: out)
@@ -111,6 +121,51 @@ enum TextureCodec {
             high = (max(high.0, Int(block[i * 4])), max(high.1, Int(block[i * 4 + 1])), max(high.2, Int(block[i * 4 + 2])))
         }
         if low.0 > high.0 { low = (0, 0, 0) }
+        var mean = SIMD3<Double>(0, 0, 0), used = 0.0
+        var points: [SIMD3<Double>] = []
+        for i in 0..<16 where !(punchThrough && block[i * 4 + 3] < 128) {
+            let point = SIMD3(Double(block[i * 4]), Double(block[i * 4 + 1]), Double(block[i * 4 + 2]))
+            points.append(point)
+            mean += point
+            used += 1
+        }
+        if used > 1 {
+            mean /= used
+            var axis = SIMD3<Double>(0, 0, 0), reach = -1.0
+            for point in points {
+                let d = point - mean
+                let far = d.x * d.x + d.y * d.y + d.z * d.z
+                if far > reach {
+                    reach = far
+                    axis = d
+                }
+            }
+            for _ in 0..<4 {
+                var next = SIMD3<Double>(0, 0, 0)
+                for point in points {
+                    let d = point - mean
+                    next += d * (d.x * axis.x + d.y * axis.y + d.z * axis.z)
+                }
+                let length = (next.x * next.x + next.y * next.y + next.z * next.z).squareRoot()
+                if length < 1e-6 { break }
+                axis = next / length
+            }
+            let size = (axis.x * axis.x + axis.y * axis.y + axis.z * axis.z).squareRoot()
+            if size > 1e-6 {
+                axis /= size
+                var least = Double.infinity, most = -Double.infinity
+                for point in points {
+                    let d = point - mean
+                    let along = d.x * axis.x + d.y * axis.y + d.z * axis.z
+                    least = min(least, along)
+                    most = max(most, along)
+                }
+                let a = mean + axis * least, b = mean + axis * most
+                func byte(_ v: Double) -> Int { Int(min(max(v.rounded(), 0), 255)) }
+                low = (byte(a.x), byte(a.y), byte(a.z))
+                high = (byte(b.x), byte(b.y), byte(b.z))
+            }
+        }
         var c0 = pack565(high.0, high.1, high.2), c1 = pack565(low.0, low.1, low.2)
         let threeColor = punchThrough && transparent
         if threeColor {
@@ -307,7 +362,14 @@ enum TextureCodec {
         } else if bitCount == 8 {
             format = flags & 0x2 != 0 ? .a8 : .l8
         } else if bitCount == 16 {
-            format = alphaMask == 0x8000 ? .b5g5r5a1 : .b4g4r4a4
+            let greenMask = bytes.u32(96)
+            if redMask == 0x0f00, greenMask == 0x00f0, alphaMask == 0xf000 {
+                format = .b4g4r4a4
+            } else if redMask == 0x7c00, greenMask == 0x03e0, alphaMask == 0x8000 {
+                format = .b5g5r5a1
+            } else {
+                throw TexError.invalid("This 16-bit DDS layout (R5G6B5, A8L8 or X1R5G5B5) is not supported. Save it as DXT or 32-bit")
+            }
         }
         guard let format, width > 0, height > 0 else { throw TexError.invalid("This DDS pixel format is not supported") }
         var sizes: [Int] = []

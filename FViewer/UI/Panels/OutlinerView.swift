@@ -205,6 +205,9 @@ struct LibraryView: View {
                 filter = ""
                 category = ""
             }
+            if app.libraryScanning {
+                Text("Reading the folder…").font(Theme.small).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
+            }
             if app.files.count > 12 {
                 HStack(spacing: 4) {
                     Image(systemName: "magnifyingglass").font(.system(size: 9)).foregroundStyle(Theme.dim)

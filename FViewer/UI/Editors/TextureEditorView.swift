@@ -281,6 +281,7 @@ struct TextureEditorView: View {
     @State private var hover: CGPoint?
     @State private var repeatImage = false
     @State private var uvModel: Int?
+    @State private var uvChannel = 0
     @State private var canvasSize = CGSize(width: 600, height: 400)
 
     private var block: AvfxBlock? {
@@ -305,9 +306,9 @@ struct TextureEditorView: View {
                 return
             }
         }
-        if let decoded = app.decodedTexture(for: path) {
+        if let decoded = app.decodedTexture(for: path, wait: true) {
             model.load(TextureImage(width: decoded.width, height: decoded.height, rgba: decoded.rgba), path: path, key: key)
-        } else if let image = app.image(for: path), let pixels = AtexWriter.rgba(from: image) {
+        } else if let image = app.image(for: path, wait: true), let pixels = AtexWriter.rgba(from: image) {
             model.load(TextureImage(width: pixels.width, height: pixels.height, rgba: pixels.pixels), path: path, key: key)
         } else {
             model.load(TextureImage(width: 256, height: 256, rgba: [UInt8](repeating: 0, count: 256 * 256 * 4)), path: path, key: key)
@@ -446,8 +447,16 @@ struct TextureEditorView: View {
             Button((repeatImage ? "✓ " : "") + "Repeat Image") { repeatImage.toggle() }
             Menu("UV Overlay") {
                 Button((uvModel == nil ? "✓ " : "") + "None") { uvModel = nil }
+                let used = usedUvChannels
                 ForEach(0..<modelCount, id: \.self) { index in
-                    Button((uvModel == index ? "✓ " : "") + "Model \(index)") { uvModel = index }
+                    Menu((uvModel == index ? "✓ " : "") + "Model \(index)") {
+                        ForEach(0..<4, id: \.self) { channel in
+                            Button((uvModel == index && uvChannel == channel ? "✓ " : "") + "UV \(channel + 1)" + (used.contains(channel) ? " · used by this texture" : "")) {
+                                uvModel = index
+                                uvChannel = channel
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -466,6 +475,24 @@ struct TextureEditorView: View {
     }
 
     private var modelCount: Int { app.document?.avfxRoot?.childrenNamed("Modl").count ?? 0 }
+
+    private func showUv(model index: Int) {
+        let used = usedUvChannels
+        if uvModel == nil, !used.contains(uvChannel), let first = used.min() { uvChannel = first }
+        uvModel = index
+    }
+
+    private var usedUvChannels: Set<Int> {
+        guard let root = app.document?.avfxRoot, let id = app.textureEditorTarget, id.hasPrefix("avfx/Tex/"), let texture = Int(id.dropFirst(9)) else { return [] }
+        var result = Set<Int>()
+        for particle in root.childrenNamed("Ptcl") {
+            for tag in ["TC1", "TC2", "TC3", "TC4", "TN", "TR", "TD"] {
+                guard let layer = particle.child(tag), layer.children != nil, layer.int("TxNo", -1) == texture else { continue }
+                result.insert(min(max(layer.int("UvSN", 0), 0), 3))
+            }
+        }
+        return result
+    }
 
     private func fitView() {
         let room = CGSize(width: max(canvasSize.width - 40, 20), height: max(canvasSize.height - 40, 20))
@@ -496,7 +523,7 @@ struct TextureEditorView: View {
             let models = root.childrenNamed("Modl")
             guard uvModel < models.count else { return }
             let mesh = Gltf.mesh(from: models[uvModel])
-            let uvs = mesh.uvs[0]
+            let uvs = mesh.uvs[min(max(uvChannel, 0), 3)]
             var wires = Path()
             for t in stride(from: 0, to: mesh.indices.count - 2, by: 3) {
                 let ids = [Int(mesh.indices[t]), Int(mesh.indices[t + 1]), Int(mesh.indices[t + 2])]
@@ -675,10 +702,22 @@ struct TextureEditorView: View {
                             Text("UV").font(Theme.small).foregroundStyle(Theme.dim).frame(height: 20)
                             SegmentButton(title: "None", active: uvModel == nil) { uvModel = nil }
                             ForEach(0..<modelCount, id: \.self) { index in
-                                SegmentButton(title: "Model \(index)", active: uvModel == index) { uvModel = index }
+                                SegmentButton(title: "Model \(index)", active: uvModel == index) { showUv(model: index) }
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        if uvModel != nil {
+                            let used = usedUvChannels
+                            FlowLayout(spacing: 4) {
+                                Text("Map").font(Theme.small).foregroundStyle(Theme.dim).frame(height: 20)
+                                ForEach(0..<4, id: \.self) { channel in
+                                    SegmentButton(title: "UV \(channel + 1)" + (used.contains(channel) ? " •" : ""), active: uvChannel == channel) { uvChannel = channel }
+                                }
+                                HelpBadge(text: used.isEmpty ? "No texture layer reads this texture, so no UV map is marked."
+                                          : "• marks the UV maps the layers that read this texture use (their UV Set).")
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
                 Panel(title: "Tool Options", trailing: model.tool.rawValue) {
@@ -737,7 +776,7 @@ struct TextureEditorView: View {
                 .font(.system(size: 10, design: .monospaced))
             }
             if repeatImage { Text("Repeat").font(Theme.small).foregroundStyle(Theme.changed) }
-            if let uvModel { Text("UV of Model \(uvModel)").font(Theme.small).foregroundStyle(Theme.changed) }
+            if let uvModel { Text("UV \(uvChannel + 1) of Model \(uvModel)").font(Theme.small).foregroundStyle(Theme.changed) }
             Spacer()
             if model.canUndo { ChangeDot() }
         }
@@ -771,6 +810,10 @@ struct TextureEditorView: View {
         panel.title = "Export PNG"
         panel.nameFieldStringValue = ((model.sourcePath as NSString).lastPathComponent as NSString).deletingPathExtension + ".png"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            app.errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
     }
 }

@@ -176,7 +176,7 @@ struct EffectLibraryButton: View {
         .frame(height: 20)
         .background(RoundedRectangle(cornerRadius: 4).fill(shown ? Theme.gray(0.26) : Color.clear))
         .contentShape(Rectangle())
-        .onTapGesture { shown.toggle() }
+        .pressable { shown.toggle() }
         .help("Effects of the open folder: search and switch")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             let needle = filter.lowercased()
@@ -205,7 +205,7 @@ struct EffectLibraryButton: View {
                             .frame(height: 20)
                             .background(RoundedRectangle(cornerRadius: 3).fill(current ? Theme.selection : Color.clear))
                             .contentShape(Rectangle())
-                            .onTapGesture {
+                            .pressable {
                                 app.open(file.url)
                                 shown = false
                             }
@@ -345,7 +345,7 @@ struct ContentView: View {
             .frame(height: 26)
             .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field))
             .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+            .pressable(perform: action)
     }
 
     private var statusBar: some View {

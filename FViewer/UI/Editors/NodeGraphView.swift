@@ -261,10 +261,11 @@ struct NodeGraphView: View {
             .onAppear {
                 if loadedDocument != document.id {
                     loadedDocument = document.id
-                    moved = [:]
+                    moved = document.graphLayout
                     frameAll(graph, layout(graph), geometry.size)
                 }
             }
+            .onChange(of: moved) { _, next in document.graphLayout = next }
             .onChange(of: document.id) { _, _ in
                 loadedDocument = document.id
                 moved = [:]

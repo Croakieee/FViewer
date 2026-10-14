@@ -15,6 +15,13 @@ struct PhybSimulator {
 
 struct PhybModel {
     static let shapeSizes = [124, 116, 92, 168, 80]
+
+    var withinLimits: Bool {
+        shapes.allSatisfy { $0.count <= 255 } && simulators.allSatisfy { simulator in
+            simulator.lists.allSatisfy { $0.count <= 255 } && simulator.chains.count <= 255
+                && simulator.chains.allSatisfy { $0.collisions.count <= 65535 && $0.nodes.count <= 65535 }
+        }
+    }
     static let listSizes = [36, 36, 48, 32, 52, 48, 16, 36]
     static let shapeNames = ["Capsule", "Ellipsoid", "Normal Plane", "Three-Point Plane", "Sphere"]
     static let listNames = ["Collision Object", "Collision Connector", "Chain", "Connector", "Attract", "Pin", "Spring", "Post Alignment"]
@@ -242,6 +249,7 @@ extension GameRecords {
         case .node(let simulator, let chain, let index): model.simulators[simulator].chains[chain].nodes.remove(at: index)
         case .variant: return nil
         }
+        guard model.withinLimits else { return nil }
         return model.serialized()
     }
 
@@ -260,6 +268,7 @@ extension GameRecords {
             model.simulators[simulator].chains[chain].nodes.insert(model.simulators[simulator].chains[chain].nodes[index], at: index + 1)
         case .variant: return nil
         }
+        guard model.withinLimits else { return nil }
         return model.serialized()
     }
 
@@ -300,6 +309,7 @@ extension GameRecords {
             guard simulator < model.simulators.count, chain < model.simulators[simulator].chains.count else { return nil }
             model.simulators[simulator].chains[chain].nodes.append(PhybModel.blank(size: 84, texts: [0], named: false))
         }
+        guard model.withinLimits else { return nil }
         return model.serialized()
     }
 
@@ -522,7 +532,16 @@ extension GameRecords {
         switch slot {
         case .parameter(let index):
             guard index < model.parameters.count else { return nil }
-            if remove { model.parameters.remove(at: index) } else { model.parameters.insert(model.parameters[index], at: index + 1) }
+            if remove {
+                model.parameters.remove(at: index)
+            } else {
+                var copy = model.parameters[index]
+                if copy.count > 52 {
+                    let taken = Set(model.parameters.compactMap { $0.count > 52 ? Int($0[52]) : nil })
+                    if let free = (0...255).first(where: { !taken.contains($0) }) { copy[52] = UInt8(free) }
+                }
+                model.parameters.insert(copy, at: index + 1)
+            }
         case .group(let index):
             guard index < model.groups.count else { return nil }
             if remove { model.groups.remove(at: index) } else { model.groups.insert(model.groups[index], at: index + 1) }
@@ -534,6 +553,14 @@ extension GameRecords {
             if remove { model.points.remove(at: index) } else { model.points.insert(model.points[index], at: index + 1) }
         }
         return model.serialized()
+    }
+
+    static func skpParameterUsers(_ b: [UInt8], parameter: Int) -> (index: Int, users: Int)? {
+        guard let model = SkpModel.parse(b), parameter < model.parameters.count, model.parameters[parameter].count > 52 else { return nil }
+        let value = model.parameters[parameter][52]
+        guard !model.parameters.enumerated().contains(where: { $0.offset != parameter && $0.element.count > 52 && $0.element[52] == value }) else { return (Int(value), 0) }
+        let users = model.groups.reduce(0) { total, group in total + group.elements.filter { $0.count > 1 && $0[1] == value }.count }
+        return (Int(value), users)
     }
 
     static func skpAddElement(_ b: [UInt8], group: Int) -> [UInt8]? {

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-enum TexFormat: UInt32 {
+nonisolated enum TexFormat: UInt32, Sendable {
     case l8 = 0x1130, a8 = 0x1131, b4g4r4a4 = 0x1440, b5g5r5a1 = 0x1441, b8g8r8a8 = 0x1450, b8g8r8x8 = 0x1451
     case bc1 = 0x3420, bc2 = 0x3430, bc3 = 0x3431, bc4 = 0x6120, bc5 = 0x6230, bc7 = 0x6432
 
@@ -23,7 +23,7 @@ enum TexFormat: UInt32 {
     }
 }
 
-struct DecodedTexture {
+nonisolated struct DecodedTexture: Sendable {
     var width: Int
     var height: Int
     var formatName: String
@@ -40,7 +40,7 @@ struct DecodedTexture {
     }
 }
 
-enum TexError: LocalizedError {
+nonisolated enum TexError: LocalizedError {
     case invalid(String)
     var errorDescription: String? {
         switch self {
@@ -49,7 +49,7 @@ enum TexError: LocalizedError {
     }
 }
 
-enum Atex {
+nonisolated enum Atex {
     private static let header = 80
 
     static func decode(_ data: [UInt8], mip: Int = 0) throws -> DecodedTexture {
@@ -79,10 +79,10 @@ enum Atex {
         }
         var rgba = [UInt8](repeating: 0, count: px * 4)
         switch format {
-        case .bc1: blocks(&rgba, width, height, data, surface, 8) { b, o, out in color(b, o, &out, bc1: true) }
+        case .bc1: blocks(&rgba, width, height, data, surface, 8) { b, o, out in color(b, o, out, bc1: true) }
         case .bc2:
             blocks(&rgba, width, height, data, surface, 16) { b, o, out in
-                color(b, o + 8, &out, bc1: false)
+                color(b, o + 8, out, bc1: false)
                 for i in 0..<16 {
                     let nibble = (b[o + i / 2] >> UInt8((i % 2) * 4)) & 0xf
                     out[i * 4 + 3] = nibble * 17
@@ -90,12 +90,12 @@ enum Atex {
             }
         case .bc3:
             blocks(&rgba, width, height, data, surface, 16) { b, o, out in
-                color(b, o + 8, &out, bc1: false)
-                channel(b, o, &out, 3)
+                color(b, o + 8, out, bc1: false)
+                channel(b, o, out, 3)
             }
         case .bc4:
             blocks(&rgba, width, height, data, surface, 8) { b, o, out in
-                channel(b, o, &out, 0)
+                channel(b, o, out, 0)
                 for i in 0..<16 {
                     out[i * 4 + 1] = out[i * 4]
                     out[i * 4 + 2] = out[i * 4]
@@ -104,15 +104,15 @@ enum Atex {
             }
         case .bc5:
             blocks(&rgba, width, height, data, surface, 16) { b, o, out in
-                channel(b, o, &out, 0)
-                channel(b, o + 8, &out, 1)
+                channel(b, o, out, 0)
+                channel(b, o + 8, out, 1)
                 for i in 0..<16 {
                     out[i * 4 + 2] = 255
                     out[i * 4 + 3] = 255
                 }
             }
         case .bc7:
-            blocks(&rgba, width, height, data, surface, 16) { b, o, out in Bc7.decode(b, o, &out) }
+            blocks(&rgba, width, height, data, surface, 16) { b, o, out in Bc7.decode(b, o, out) }
         default:
             uncompressed(&rgba, format, px, data, surface)
         }
@@ -120,13 +120,26 @@ enum Atex {
                               alphaOnly: format == .a8, rgba: rgba)
     }
 
-    private static func blocks(_ dst: inout [UInt8], _ w: Int, _ h: Int, _ src: [UInt8], _ base: Int, _ blockBytes: Int,
-                               _ decode: ([UInt8], Int, inout [UInt8]) -> Void) {
+    private static func blocks(_ target: inout [UInt8], _ w: Int, _ h: Int, _ source: [UInt8], _ base: Int, _ blockBytes: Int,
+                               _ decode: (UnsafeBufferPointer<UInt8>, Int, UnsafeMutablePointer<UInt8>) -> Void) {
         let bw = (w + 3) / 4, bh = (h + 3) / 4
-        var out = [UInt8](repeating: 0, count: 64)
+        source.withUnsafeBufferPointer { src in
+            target.withUnsafeMutableBufferPointer { dst in
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 64) { block in
+                    guard let out = block.baseAddress else { return }
+                    out.initialize(repeating: 0, count: 64)
+                    copyBlocks(dst, w, h, bw, bh, src, base, blockBytes, out, decode)
+                }
+            }
+        }
+    }
+
+    private static func copyBlocks(_ dst: UnsafeMutableBufferPointer<UInt8>, _ w: Int, _ h: Int, _ bw: Int, _ bh: Int, _ src: UnsafeBufferPointer<UInt8>,
+                                   _ base: Int, _ blockBytes: Int, _ out: UnsafeMutablePointer<UInt8>,
+                                   _ decode: (UnsafeBufferPointer<UInt8>, Int, UnsafeMutablePointer<UInt8>) -> Void) {
         for by in 0..<bh {
             for bx in 0..<bw {
-                decode(src, base + (by * bw + bx) * blockBytes, &out)
+                decode(src, base + (by * bw + bx) * blockBytes, out)
                 for py in 0..<4 {
                     let y = by * 4 + py
                     if y >= h { break }
@@ -147,46 +160,43 @@ enum Atex {
     private static func expand5(_ v: Int) -> UInt8 { UInt8((v << 3) | (v >> 2)) }
     private static func expand6(_ v: Int) -> UInt8 { UInt8((v << 2) | (v >> 4)) }
 
-    private static func color(_ b: [UInt8], _ o: Int, _ out: inout [UInt8], bc1: Bool) {
-        let c0 = Int(b.u16(o)), c1 = Int(b.u16(o + 2))
-        var pal = [[Int]](repeating: [0, 0, 0, 255], count: 4)
-        pal[0] = [Int(expand5(c0 >> 11)), Int(expand6((c0 >> 5) & 0x3f)), Int(expand5(c0 & 0x1f)), 255]
-        pal[1] = [Int(expand5(c1 >> 11)), Int(expand6((c1 >> 5) & 0x3f)), Int(expand5(c1 & 0x1f)), 255]
+    private static func color(_ b: UnsafeBufferPointer<UInt8>, _ o: Int, _ out: UnsafeMutablePointer<UInt8>, bc1: Bool) {
+        let c0 = Int(b[o]) | Int(b[o + 1]) << 8, c1 = Int(b[o + 2]) | Int(b[o + 3]) << 8
+        let p0 = SIMD4<Int>(Int(expand5(c0 >> 11)), Int(expand6((c0 >> 5) & 0x3f)), Int(expand5(c0 & 0x1f)), 255)
+        let p1 = SIMD4<Int>(Int(expand5(c1 >> 11)), Int(expand6((c1 >> 5) & 0x3f)), Int(expand5(c1 & 0x1f)), 255)
+        let p2: SIMD4<Int>, p3: SIMD4<Int>
         if c0 > c1 || !bc1 {
-            for k in 0..<3 {
-                pal[2][k] = (2 * pal[0][k] + pal[1][k]) / 3
-                pal[3][k] = (pal[0][k] + 2 * pal[1][k]) / 3
-            }
+            p2 = SIMD4((2 * p0.x + p1.x) / 3, (2 * p0.y + p1.y) / 3, (2 * p0.z + p1.z) / 3, 255)
+            p3 = SIMD4((p0.x + 2 * p1.x) / 3, (p0.y + 2 * p1.y) / 3, (p0.z + 2 * p1.z) / 3, 255)
         } else {
-            for k in 0..<3 { pal[2][k] = (pal[0][k] + pal[1][k]) / 2 }
-            pal[3] = [0, 0, 0, 0]
+            p2 = SIMD4((p0.x + p1.x) / 2, (p0.y + p1.y) / 2, (p0.z + p1.z) / 2, 255)
+            p3 = .zero
         }
-        let bits = b.u32(o + 4)
+        let bits = UInt32(b[o + 4]) | UInt32(b[o + 5]) << 8 | UInt32(b[o + 6]) << 16 | UInt32(b[o + 7]) << 24
         for i in 0..<16 {
-            let p = pal[Int((bits >> UInt32(i * 2)) & 3)]
-            out[i * 4] = UInt8(p[0])
-            out[i * 4 + 1] = UInt8(p[1])
-            out[i * 4 + 2] = UInt8(p[2])
-            out[i * 4 + 3] = UInt8(p[3])
+            let k = Int((bits >> UInt32(i * 2)) & 3)
+            let p = k == 0 ? p0 : k == 1 ? p1 : k == 2 ? p2 : p3
+            out[i * 4] = UInt8(p.x)
+            out[i * 4 + 1] = UInt8(p.y)
+            out[i * 4 + 2] = UInt8(p.z)
+            out[i * 4 + 3] = UInt8(p.w)
         }
     }
 
-    private static func channel(_ b: [UInt8], _ o: Int, _ out: inout [UInt8], _ component: Int) {
+    private static func channel(_ b: UnsafeBufferPointer<UInt8>, _ o: Int, _ out: UnsafeMutablePointer<UInt8>, _ component: Int) {
         let a0 = Int(b[o]), a1 = Int(b[o + 1])
-        var pal = [Int](repeating: 0, count: 8)
-        pal[0] = a0
-        pal[1] = a1
-        if a0 > a1 {
-            for i in 1..<7 { pal[i + 1] = ((7 - i) * a0 + i * a1) / 7 }
-        } else {
-            for i in 1..<5 { pal[i + 1] = ((5 - i) * a0 + i * a1) / 5 }
-            pal[6] = 0
-            pal[7] = 255
+        func value(_ k: Int) -> Int {
+            if k == 0 { return a0 }
+            if k == 1 { return a1 }
+            if a0 > a1 { return ((8 - k) * a0 + (k - 1) * a1) / 7 }
+            if k == 6 { return 0 }
+            if k == 7 { return 255 }
+            return ((6 - k) * a0 + (k - 1) * a1) / 5
         }
         var bits: UInt64 = 0
         for i in 0..<6 { bits |= UInt64(b[o + 2 + i]) << UInt64(8 * i) }
         for i in 0..<16 {
-            out[i * 4 + component] = UInt8(pal[Int((bits >> UInt64(i * 3)) & 7)])
+            out[i * 4 + component] = UInt8(value(Int((bits >> UInt64(i * 3)) & 7)))
         }
     }
 

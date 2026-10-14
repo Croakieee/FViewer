@@ -120,7 +120,7 @@ struct ModelSpreadsheet: View {
 
     private func setHalf(_ block: AvfxBlock, _ at: Int, _ value: Double) {
         guard at + 1 < block.data.count else { return }
-        let bits = Gltf.floatToHalf(Float(value))
+        let bits = CurveMath.floatToHalf(Float(value))
         block.data[at] = UInt8(bits & 0xff)
         block.data[at + 1] = UInt8(bits >> 8)
     }

@@ -5,10 +5,12 @@ final class MaterialPixels {
     static let shared = MaterialPixels()
     private var cache: [String: (width: Int, height: Int, data: [UInt8])] = [:]
     private var missing: Set<String> = []
+    private var images: [String: CGImage] = [:]
 
     func reset() {
         cache = [:]
         missing = []
+        images = [:]
     }
 
     private func load(_ name: String, _ app: AppModel) -> (width: Int, height: Int, data: [UInt8])? {
@@ -51,8 +53,10 @@ final class MaterialPixels {
     }
 
     func image(_ app: AppModel, name: String) -> CGImage? {
-        guard let texture = load(name, app) else { return nil }
-        return MaterialPixels.makeImage(texture.data, texture.width, texture.height)
+        if let known = images[name] { return known }
+        guard let texture = load(name, app), let image = MaterialPixels.makeImage(texture.data, texture.width, texture.height) else { return nil }
+        images[name] = image
+        return image
     }
 
     static func makeImage(_ data: [UInt8], _ width: Int, _ height: Int) -> CGImage? {
@@ -115,8 +119,12 @@ struct MaterialPreviewImage: View {
     var side = 72
     var animated = true
 
+    private var moving: Bool {
+        animated && graph.nodes.contains { ["age", "life", "panner", "rotator", "noise", "time", "subgraph"].contains($0.type) }
+    }
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: animated ? 0.12 : 3600)) { timeline in
+        TimelineView(.periodic(from: .now, by: moving ? 0.12 : 3600)) { timeline in
             let time = Float(timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 600))
             ZStack {
                 CheckerBackground()

@@ -131,6 +131,22 @@ enum GeometryBuilder {
         return g
     }
 
+    private static var rings: [String: RenderGeometry] = [:]
+    private static var ringOrder: [String] = []
+
+    static func ring(fan: Float, inner: Float, outer: Float) -> RenderGeometry {
+        func step(_ value: Float) -> Float { (value * 1024).rounded() / 1024 }
+        let a = step(inner), b = step(outer)
+        let key = "\(fan)|\(a)|\(b)"
+        if let known = rings[key] { return known }
+        let g = decalRing(fan: fan)
+        setRingRadii(g, fan: fan, inner: a, outer: b)
+        rings[key] = g
+        ringOrder.append(key)
+        while ringOrder.count > 64 { rings[ringOrder.removeFirst()] = nil }
+        return g
+    }
+
     static func setRingRadii(_ g: RenderGeometry, fan: Float, inner innerRadius: Float, outer outerRadius: Float) {
         let outer = max(0, outerRadius)
         let inner = max(0, min(outer, innerRadius))

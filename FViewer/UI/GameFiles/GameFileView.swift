@@ -9,6 +9,7 @@ final class GameFileDocument: ObservableObject {
     @Published var bytes: [UInt8] {
         didSet {
             texturePreview = nil
+            bytesRevision += 1
             guard !travelling, oldValue != bytes else { return }
             undoStack.append(oldValue)
             if undoStack.count > 40 { undoStack.removeFirst() }
@@ -16,6 +17,24 @@ final class GameFileDocument: ObservableObject {
         }
     }
     private var undoStack: [[UInt8]] = []
+    private var bytesRevision = 0
+    private var memo: [String: Any] = [:]
+    private var memoRevision = -1
+
+    private struct Box<T> {
+        let value: T
+    }
+
+    func cached<T>(_ key: String, _ make: () -> T) -> T {
+        if memoRevision != bytesRevision {
+            memo = [:]
+            memoRevision = bytesRevision
+        }
+        if let known = memo[key] as? Box<T> { return known.value }
+        let value = make()
+        memo[key] = Box(value: value)
+        return value
+    }
     private var redoStack: [[UInt8]] = []
     private var travelling = false
     var canUndo: Bool { !undoStack.isEmpty }
@@ -69,11 +88,12 @@ final class GameFileDocument: ObservableObject {
         return value
     }
 
-    var dirty: Bool { bytes != original }
-    var savedBytes: [UInt8]?
+    var dirty: Bool { cached("dirty") { bytes != original } }
+    var savedBytes: [UInt8]? { didSet { memo["unsaved"] = nil } }
     var savedCopy: URL?
-    var unsaved: Bool { dirty && bytes != savedBytes }
-    var tmbBlocks: [TmbBlock] { GameFiles.tmbBlocks(bytes) }
+    var unsaved: Bool { dirty && cached("unsaved") { bytes != savedBytes } }
+    var tmbBlocks: [TmbBlock] { cached("tmb") { GameFiles.tmbBlocks(bytes) } }
+    var changedBytes: Int { cached("changed") { zip(bytes, original).reduce(abs(bytes.count - original.count)) { $0 + ($1.0 == $1.1 ? 0 : 1) } } }
 
     func setInt(_ at: Int, _ value: Int) { GameFiles.put32(&bytes, at, UInt32(bitPattern: Int32(truncatingIfNeeded: value))) }
     func setShort(_ at: Int, _ value: Int) { GameFiles.put16(&bytes, at, value) }
@@ -144,7 +164,7 @@ final class GameFileDocument: ObservableObject {
         do {
             let sound = try GameFiles.pcm(from: source)
             let aux = GameFiles.scdAux(bytes, audio)
-            let auxBytes = aux > 0 ? Array(bytes[(audio.offset + 0x20)..<(audio.offset + 0x20 + aux)]) : []
+            let auxBytes = aux > 0 ? GameFiles.scdMarker(Array(bytes[(audio.offset + 0x20)..<(audio.offset + 0x20 + aux)]), from: audio.sampleRate, to: sound.rate) : []
             let entry = GameFiles.scdEntry(samples: sound.samples, channels: sound.channels, rate: sound.rate, flags: bytes.u32(audio.offset + 28), aux: auxBytes)
             guard let next = GameFiles.scdReplacing(bytes, index: audio.id, entry: entry) else {
                 note = "This file keeps its sounds in an order this app cannot rebuild"
@@ -212,8 +232,7 @@ private struct GameFileContent: View {
                 }
                 if file.kind == .tmb || file.kind == .pap { SegmentButton(title: "Effects", active: false) { app.listEffects(of: file.url, data: Data(file.bytes)) } }
                 if file.dirty {
-                    let changed = zip(file.bytes, file.original).reduce(abs(file.bytes.count - file.original.count)) { $0 + ($1.0 == $1.1 ? 0 : 1) }
-                    Text("\(changed) bytes changed").font(Theme.small).foregroundStyle(Theme.dim)
+                    Text("\(file.changedBytes) bytes changed").font(Theme.small).foregroundStyle(Theme.dim)
                 }
                 HeaderButton(symbol: "arrow.uturn.backward", help: "Undo (⌘Z)") { file.undo() }.opacity(file.canUndo ? 1 : 0.35)
                 HeaderButton(symbol: "arrow.uturn.forward", help: "Redo (⇧⌘Z)") { file.redo() }.opacity(file.canRedo ? 1 : 0.35)
@@ -232,14 +251,14 @@ private struct GameFileContent: View {
             .background(Theme.gray(0.157))
             switch file.kind {
             case .tmb: TmbView(file: file, blocks: file.tmbBlocks, animations: [])
-            case .pap: TmbView(file: file, blocks: file.tmbBlocks, animations: GameFiles.papAnimations(file.bytes))
+            case .pap: TmbView(file: file, blocks: file.tmbBlocks, animations: file.cached("pap") { GameFiles.papAnimations(file.bytes) })
             case .eid: EidView(file: file)
             case .scd: ScdView(file: file)
             case .atch: AtchView(file: file)
-            case .phyb: RecordsView(file: file, records: GameRecords.phyb(file.bytes))
-            case .skp: RecordsView(file: file, records: GameRecords.skp(file.bytes))
-            case .imc: RecordsView(file: file, records: GameRecords.imc(file.bytes))
-            case .kdb: RecordsView(file: file, records: GameRecords.kdb(file.bytes))
+            case .phyb: RecordsView(file: file, records: file.cached("phyb") { GameRecords.phyb(file.bytes) })
+            case .skp: RecordsView(file: file, records: file.cached("skp") { GameRecords.skp(file.bytes) })
+            case .imc: RecordsView(file: file, records: file.cached("imc") { GameRecords.imc(file.bytes) })
+            case .kdb: RecordsView(file: file, records: file.cached("kdb") { GameRecords.kdb(file.bytes) })
             case .other: RawFileView(file: file)
             }
         }
@@ -329,7 +348,7 @@ private struct TmbView: View {
                         }
                     }
                     if let item { detail(item) }
-                    let problems = TmbCatalog.problems(file.bytes)
+                    let problems = file.cached("tmbProblems") { TmbCatalog.problems(file.bytes) }
                     if !problems.isEmpty {
                         Panel(title: "Problems", trailing: "\(problems.count)") {
                             ForEach(Array(problems.prefix(30).enumerated()), id: \.offset) { _, text in
@@ -664,7 +683,7 @@ private struct AtchView: View {
     }
 
     var body: some View {
-        if let table = AtchTable.parse(file.bytes) {
+        if let table = file.cached("atch", { AtchTable.parse(file.bytes) }) {
             let index = min(max(file.selection, 0), table.entries.count - 1)
             let entry = table.entries[index]
             HStack(spacing: 0) {
@@ -757,7 +776,7 @@ private struct RecordsView: View {
 
     private func apply(_ next: [UInt8]?, select: Int? = nil) {
         guard let next else {
-            file.note = "This file has a layout this app cannot rebuild"
+            file.note = "This change cannot be made: the file has a layout this app cannot rebuild, or a list would pass its limit of 255 entries"
             return
         }
         file.bytes = next
@@ -868,8 +887,8 @@ private struct RecordsView: View {
                     file.bytes = edited
             }
         case .half:
-            number(field.at, Double(GameFiles.half(b.u16(field.at)))) { value in
-                let bits = GameFiles.halfBits(Float(value))
+            number(field.at, Double(CurveMath.halfToFloat(b.u16(field.at)))) { value in
+                let bits = CurveMath.floatToHalf(Float(value))
                 var edited = file.bytes
                 guard field.at >= 0, field.at + 1 < edited.count else { return }
                 edited[field.at] = UInt8(bits & 0xFF)
@@ -933,7 +952,14 @@ private struct RecordsView: View {
                         if let slot = record.skp {
                             HStack(spacing: 6) {
                                 SegmentButton(title: "Duplicate", active: false) { apply(GameRecords.skpEdit(file.bytes, slot, remove: false)) }
-                                SegmentButton(title: "Delete", active: false) { apply(GameRecords.skpEdit(file.bytes, slot, remove: true), select: file.selection - 1) }
+                                SegmentButton(title: "Delete", active: false) {
+                                    var orphaned: (index: Int, users: Int)?
+                                    if case .parameter(let index) = slot { orphaned = GameRecords.skpParameterUsers(file.bytes, parameter: index) }
+                                    apply(GameRecords.skpEdit(file.bytes, slot, remove: true), select: file.selection - 1)
+                                    if let orphaned, orphaned.users > 0 {
+                                        file.note = "\(orphaned.users) look-at element\(orphaned.users == 1 ? "" : "s") still use Setup Parameters Index \(orphaned.index). Point them to another parameter set"
+                                    }
+                                }
                                 if case .group(let group) = slot { SegmentButton(title: "Add Element", active: false) { apply(GameRecords.skpAddElement(file.bytes, group: group)) } }
                                 Spacer()
                             }
@@ -955,7 +981,7 @@ private struct RecordsView: View {
         } else {
             VStack(spacing: 10) {
                 Text(records == nil ? "This file has a layout this app does not know" : "The file holds no records").font(Theme.font).foregroundStyle(Theme.dim)
-                if file.kind == .phyb, PhybModel.parse(file.bytes) != nil { addMenu(nil).frame(width: 120) }
+                if file.kind == .phyb, file.cached("phybModel", { PhybModel.parse(file.bytes) }) != nil { addMenu(nil).frame(width: 120) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -979,16 +1005,16 @@ private struct MtrlPanels: View {
 
     private func color(_ row: Int, _ first: Int) -> some View {
         let at = layout.tableAt + (row * layout.rowWidth + first) * 2
-        let value = SIMD4<Double>(Double(GameFiles.half(file.bytes.u16(at))), Double(GameFiles.half(file.bytes.u16(at + 2))), Double(GameFiles.half(file.bytes.u16(at + 4))), 1)
+        let value = SIMD4<Double>(Double(CurveMath.halfToFloat(file.bytes.u16(at))), Double(CurveMath.halfToFloat(file.bytes.u16(at + 2))), Double(CurveMath.halfToFloat(file.bytes.u16(at + 4))), 1)
         return ColorField(color: value, alpha: false, onLive: { _ in }, onCommit: { _, next in
+            var edited = file.bytes
+            guard at >= 0, at + 5 < edited.count else { return }
             for axis in 0..<3 {
-                let bits = GameFiles.halfBits(Float(next[axis]))
-                var edited = file.bytes
-                guard at + axis * 2 >= 0, at + axis * 2 + 1 < edited.count else { return }
+                let bits = CurveMath.floatToHalf(Float(next[axis]))
                 edited[at + axis * 2] = UInt8(bits & 0xFF)
                 edited[at + axis * 2 + 1] = UInt8(bits >> 8)
-                file.bytes = edited
             }
+            file.bytes = edited
         })
         .frame(width: 150)
     }
@@ -1024,7 +1050,7 @@ private struct MtrlPanels: View {
     }
 
     @ViewBuilder private var names: some View {
-        if let model = MtrlModel.parse(file.bytes) {
+        if let model = file.cached("mtrlModel", { MtrlModel.parse(file.bytes) }) {
             Panel(title: "Material") {
                 text("Shader", model.shader) { value in change { $0.shader = value } }
                 ForEach(Array(model.textures.enumerated()), id: \.offset) { index, item in
@@ -1192,10 +1218,10 @@ private struct RawFileView: View {
     }
 
     var body: some View {
-        let strings = GameFiles.strings(file.bytes)
+        let strings = file.cached("strings") { GameFiles.strings(file.bytes) }
         let ext = file.url.pathExtension.lowercased()
         ScrollView {
-            VStack(spacing: 6) {
+            LazyVStack(spacing: 6) {
                 if ext == "tex" || ext == "atex", let preview = file.decodedPreview {
                     let decoded = preview.decoded, image = preview.image
                     Panel(title: "Texture", trailing: "\(decoded.width) × \(decoded.height) · \(decoded.formatName) · \(decoded.mipLevels) mips") {
@@ -1207,8 +1233,8 @@ private struct RawFileView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 4))
                     }
                 }
-                if ext == "mtrl", let layout = MtrlLayout.parse(file.bytes) { MtrlPanels(file: file, layout: layout) }
-                if ext == "sklb", let skeleton = GameSkeleton.parse(file.bytes) {
+                if ext == "mtrl", let layout = file.cached("mtrlLayout", { MtrlLayout.parse(file.bytes) }) { MtrlPanels(file: file, layout: layout) }
+                if ext == "sklb", let skeleton = file.cached("sklb", { GameSkeleton.parse(file.bytes) }) {
                     Panel(title: "Bones", trailing: "\(skeleton.names.count)") {
                         ForEach(Array(skeleton.names.enumerated()), id: \.offset) { index, name in
                             let parent = index < skeleton.parents.count ? skeleton.parents[index] : -1
@@ -1224,17 +1250,19 @@ private struct RawFileView: View {
                         }
                     }
                 }
-                if ext == "mdl", let summary = GameFiles.mdlSummary(file.bytes) {
+                if ext == "mdl", let summary = file.cached("mdl", { GameFiles.mdlSummary(file.bytes) }) {
                     Panel(title: "Model") {
                         ForEach(Array(summary.enumerated()), id: \.offset) { _, entry in line(entry.label, entry.value) }
                     }
                 }
                 Panel(title: "Strings", trailing: "\(strings.count)") {
-                    ForEach(Array(strings.enumerated()), id: \.offset) { _, entry in
-                        HStack(spacing: 8) {
-                            Text(String(format: "%06X", entry.offset)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: 52, alignment: .leading)
-                            Text(entry.text).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1).textSelection(.enabled)
-                            Spacer(minLength: 0)
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(strings.enumerated()), id: \.offset) { _, entry in
+                            HStack(spacing: 8) {
+                                Text(String(format: "%06X", entry.offset)).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.dim).frame(width: 52, alignment: .leading)
+                                Text(entry.text).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1).textSelection(.enabled)
+                                Spacer(minLength: 0)
+                            }
                         }
                     }
                 }

@@ -214,8 +214,8 @@ public struct MaterialGraph: Decodable {
 
     public static let kinds: [MaterialNodeKind] = [
         kind("layers", "Layer Stack", "Particle", [], ["rgb", "a"], "The particle's texture and its layers, combined as without a material"),
-        kind("particleColor", "Particle Color", "Particle", [], ["rgb", "a"], "Colour, brightness and alpha of the particle at this moment"),
-        kind("vertexColor", "Vertex Color", "Particle", [], ["rgb", "a"], "Colour stored in the vertices of the shape"),
+        kind("particleColor", "Particle Color", "Particle", [], ["rgb", "a"], "Colour, brightness and alpha of the particle at this moment. A graph that uses it decides the tint itself: the result is not multiplied by it again"),
+        kind("vertexColor", "Vertex Color", "Particle", [], ["rgb", "a"], "Colour stored in the vertices of the shape. A graph that uses it decides the tint itself: the result is not multiplied by it again"),
         kind("age", "Particle Age", "Particle", [], ["out"], "Seconds since the particle appeared"),
         kind("life", "Relative Time", "Particle", [], ["out"], "0 when the particle appears, 1 when it ends"),
         kind("random", "Particle Random", "Particle", [], ["out"], "A number from 0 to 1 that differs between particles"),
@@ -280,6 +280,7 @@ public struct MaterialGraph: Decodable {
         public var textures: [String]
         public var problems: [String]
         public var values: [Float] = []
+        public var key: Int { code.hashValue }
     }
 
     public static let maxValues = 64
@@ -290,6 +291,7 @@ public struct MaterialGraph: Decodable {
         var visiting: Set<String> = []
         var problems: [String] = []
         var counter = 0
+        var usesParticleColor = false, usesVertexColor = false
         let slots = Array(textures.prefix(MaterialGraph.maxTextures))
         if textures.count > MaterialGraph.maxTextures { problems.append("Only \(MaterialGraph.maxTextures) different textures can be sampled") }
         let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -352,9 +354,11 @@ public struct MaterialGraph: Decodable {
                 set("rgb", "float4(c.rgb, c.a)")
                 set("a", "float4(c.a)")
             case "particleColor":
+                usesParticleColor = true
                 set("rgb", "float4(u.particleColor.rgb, u.particleColor.a)")
                 set("a", "float4(u.particleColor.a)")
             case "vertexColor":
+                usesVertexColor = true
                 set("rgb", "float4(i.color.rgb, i.color.a)")
                 set("a", "float4(i.color.a)")
             case "age": set("out", "float4(u.material.x)")
@@ -452,6 +456,8 @@ public struct MaterialGraph: Decodable {
         if let color { lines.append("    c.rgb = \(color).rgb;") }
         if let alpha { lines.append("    c.a = \(alpha).x;") }
         if let emissive { lines.append("    c.rgb += \(emissive).rgb;") }
+        if usesParticleColor { lines.append("    particleTint = float4(1.0);") }
+        if usesVertexColor { lines.append("    vertexTint = float4(1.0);") }
         return Compiled(code: lines.joined(separator: "\n"), textures: slots, problems: problems, values: values)
     }
 
@@ -499,6 +505,16 @@ public struct MaterialGraph: Decodable {
         let byID = Dictionary(nodes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var building: Set<String> = []
         func constant(_ value: Float) -> Evaluator { { _ in SIMD4(repeating: value) } }
+        let sampled = Set(textures.prefix(MaterialGraph.maxTextures))
+        func feeds(_ id: String, _ type: String) -> Bool {
+            var seen: Set<String> = [], stack = [id]
+            while let next = stack.popLast() {
+                guard seen.insert(next).inserted else { continue }
+                if next != id, byID[next]?.type == type { return true }
+                stack.append(contentsOf: links.filter { $0.to == next }.map(\.from))
+            }
+            return false
+        }
 
         func build(_ id: String, _ pin: String) -> Evaluator {
             guard let node = byID[id], let kind = MaterialGraph.kind(of: node.type), !building.contains(id) else { return constant(0) }
@@ -585,7 +601,7 @@ public struct MaterialGraph: Decodable {
                 let name = node.texture ?? ""
                 return channel { s in
                     let v = uv(s)
-                    return name.isEmpty ? SIMD4(repeating: 1) : texture(name, SIMD2(v.x, v.y))
+                    return name.isEmpty || !sampled.contains(name) ? SIMD4(repeating: 1) : texture(name, SIMD2(v.x, v.y))
                 }
             case "add": return binary(+)
             case "subtract": return binary(-)
@@ -672,6 +688,7 @@ public struct MaterialGraph: Decodable {
                 let color: Evaluator = links.contains { $0.to == id && $0.input == "color" } ? input("color") : { $0.layers }
                 let alpha: Evaluator? = links.contains { $0.to == id && $0.input == "alpha" } ? input("alpha") : nil
                 let emissive: Evaluator? = links.contains { $0.to == id && $0.input == "emissive" } ? input("emissive") : nil
+                let tinted = !feeds(id, "particleColor")
                 return { s in
                     var c = color(s)
                     c.w = alpha.map { $0(s).x } ?? s.layers.w
@@ -681,6 +698,7 @@ public struct MaterialGraph: Decodable {
                         c.y += e.y
                         c.z += e.z
                     }
+                    if tinted { c *= s.particle }
                     return c
                 }
             default: return constant(0)

@@ -14,6 +14,7 @@ final class EffectDefs {
     let table: ParamTable
     private var emitters: [String: EmitterDef] = [:]
     private var particles: [String: ParticleDef] = [:]
+    private var compiled: [String: (material: MaterialGraph.Compiled, key: Int)] = [:]
     private var models: [String: ModelData] = [:]
 
     init(_ def: EffectDef, table: ParamTable, hasTexture: (String) -> Bool, models allModels: [String: ModelData], params: [String: Double]) throws {
@@ -44,6 +45,10 @@ final class EffectDefs {
             if let material = p.material {
                 resolved.material = material.resolved(shared: def.materials ?? [:])
                 resolved.material?.light = def.light
+                if let graph = resolved.material {
+                    let material = graph.compile()
+                    compiled[p.id] = (material, material.key)
+                }
             }
             particles[p.id] = resolved
         }
@@ -65,6 +70,7 @@ final class EffectDefs {
 
     func emitter(_ id: String) -> EmitterDef { emitters[id]! }
     func particle(_ id: String) -> ParticleDef { particles[id]! }
+    func compiledMaterial(_ id: String) -> (material: MaterialGraph.Compiled, key: Int)? { compiled[id] }
     func model(_ name: String) -> ModelData { models[name]! }
 
     func particleTextures(_ p: ParticleDef) -> ParticleTextures {

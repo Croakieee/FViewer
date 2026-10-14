@@ -13,15 +13,16 @@ struct UvSetPreview: View {
 
     private var index: Int { uvSet.parent?.childrenNamed("UvSt").firstIndex { $0 === uvSet } ?? 0 }
 
-    private var users: [(title: String, path: String?)] {
+    private var users: [(title: String, path: String?, border: (u: Int, v: Int))] {
         guard let particle = uvSet.parent, let root = document.avfxRoot else { return [] }
         let textures = root.childrenNamed("Tex").map(\.stringValue)
-        var result: [(String, String?)] = []
+        var result: [(String, String?, (Int, Int))] = []
         for entry in UvSetPreview.layerTitles {
             guard let block = particle.child(entry.tag), block.int("UvSN", 0) == index else { continue }
             let texture = block.int("TxNo", -1)
             let enabled = block.child("bEna").map { $0.data.first == 1 } ?? true
-            result.append((entry.title + (enabled ? "" : " (off)"), texture >= 0 && texture < textures.count ? textures[texture] : nil))
+            result.append((entry.title + (enabled ? "" : " (off)"), texture >= 0 && texture < textures.count ? textures[texture] : nil,
+                           (block.int("TBUT", 0), block.int("TBVT", 0))))
         }
         return result
     }
@@ -35,20 +36,36 @@ struct UvSetPreview: View {
         return CurveMath.sampleExtended(keys, at: time, pre: holder?.int("BvPr") ?? 0, post: holder?.int("BvPo") ?? 0)
     }
 
-    private func render(_ texture: DecodedTexture?, side: Int, time: Double) -> (image: CGImage?, text: String) {
+    private static let memo = ViewMemo<(image: CGImage?, text: String)>(limit: 8)
+
+    private func parameters(at time: Double) -> String {
+        [value("Scl", "X", fallback: 1, at: time), value("Scl", "Y", fallback: 1, at: time), value("Scr", "X", fallback: 0, at: time),
+         value("Scr", "Y", fallback: 0, at: time), value("Rot", nil, fallback: 0, at: time)].map { String(format: "%.5f", $0) }.joined(separator: ",")
+    }
+
+    private func address(_ t: Double, _ border: Int) -> Double {
+        switch border {
+        case 1: return min(max(t, 0), 1)
+        case 2:
+            let f = t - 2 * (t / 2).rounded(.down)
+            return f > 1 ? 2 - f : f
+        default: return t - t.rounded(.down)
+        }
+    }
+
+    private func render(_ texture: DecodedTexture?, border: (u: Int, v: Int), side: Int, time: Double) -> (image: CGImage?, text: String) {
         let sx = value("Scl", "X", fallback: 1, at: time), sy = value("Scl", "Y", fallback: 1, at: time)
         let ox = value("Scr", "X", fallback: 0, at: time), oy = value("Scr", "Y", fallback: 0, at: time)
         let rotation = value("Rot", nil, fallback: 0, at: time)
         let text = String(format: "Scale %.2f × %.2f · Scroll %.2f, %.2f · Rotation %.1f°", sx, sy, ox, oy, rotation * 180 / .pi)
-        let c = cos(-rotation), s = sin(-rotation)
+        let angle = (PreviewRules.isOn("uvRotationReversed") ? -1 : 1) * rotation
+        let c = cos(angle), s = sin(angle)
         var pixels = [UInt8](repeating: 255, count: side * side * 4)
         for y in 0..<side {
             for x in 0..<side {
                 let u = (Double(x) + 0.5) / Double(side) - 0.5, v = (Double(y) + 0.5) / Double(side) - 0.5
-                var tx = sx * c * u + sx * s * v + ox + 0.5
-                var ty = -sy * s * u + sy * c * v + oy + 0.5
-                tx -= tx.rounded(.down)
-                ty -= ty.rounded(.down)
+                let tx = address(sx * c * u + sx * s * v + ox + 0.5, border.u)
+                let ty = address(-sy * s * u + sy * c * v + oy + 0.5, border.v)
                 let at = (y * side + x) * 4
                 if let texture, texture.width > 0, texture.height > 0 {
                     let px = Int(safe: tx * Double(texture.width), in: 0...texture.width - 1), py = Int(safe: ty * Double(texture.height), in: 0...texture.height - 1)
@@ -78,7 +95,10 @@ struct UvSetPreview: View {
         let users = self.users
         let chosen = min(layer, max(users.count - 1, 0))
         let path = users.isEmpty ? nil : users[chosen].path
-        let result = render(path.flatMap { app.decodedTexture(for: $0) }, side: 160, time: max(0, clock.time))
+        let border = users.isEmpty ? (0, 0) : users[chosen].border
+        let shownTime = max(0, clock.time)
+        let key = "\(ObjectIdentifier(uvSet).hashValue)|\(document.revision)|\(path ?? "-")|\(border)|\(app.textureRevision)|\(PreviewRules.token)|" + parameters(at: shownTime)
+        let result = UvSetPreview.memo.value(key) { render(path.flatMap { app.decodedTexture(for: $0) }, border: border, side: 160, time: shownTime) }
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 Theme.gray(0.12)

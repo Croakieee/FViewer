@@ -54,7 +54,7 @@ extension EffectDocument {
 
     func materialGraph(_ particleID: String) -> MaterialGraph? {
         guard let material = materialParticle(particleID)?["material"], material.members != nil else { return nil }
-        if let name = material["use"]?.string { return jsonRoot?["materials"]?[name].map(EffectDocument.parseMaterial) }
+        if let name = material["use"]?.string { return jsonRoot?["materials"]?[name].map { EffectDocument.parseMaterial($0) } }
         return EffectDocument.parseMaterial(material)
     }
 
@@ -71,6 +71,23 @@ extension EffectDocument {
         }
         return result
     }
+
+    private struct ViewBox<T> {
+        let value: T
+    }
+
+    private func viewMemo<T>(_ key: String, _ make: () -> T) -> T {
+        let root = jsonRoot.map(ObjectIdentifier.init)
+        if materialViewCache.revision != revision || materialViewCache.root != root { materialViewCache = (revision, root, [:]) }
+        if let known = materialViewCache.values[key] as? ViewBox<T> { return known.value }
+        let value = make()
+        materialViewCache.values[key] = ViewBox(value: value)
+        return value
+    }
+
+    func shownMaterialGraph(_ particleID: String) -> MaterialGraph? { viewMemo("graph|" + particleID) { materialGraph(particleID) } }
+    func shownResolvedMaterial(_ particleID: String) -> MaterialGraph? { viewMemo("resolved|" + particleID) { resolvedMaterial(particleID) } }
+    var shownSharedMaterials: [String: MaterialGraph] { viewMemo("shared") { sharedMaterials } }
 
     func resolvedMaterial(_ particleID: String) -> MaterialGraph? {
         guard let graph = materialGraph(particleID) else { return nil }
@@ -340,9 +357,9 @@ enum MaterialLibrary {
         return fresh
     }
 
-    static func save(_ graph: MaterialGraph, name: String) {
+    @discardableResult static func save(_ graph: MaterialGraph, name: String) throws -> URL? {
         let clean = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-").trimmingCharacters(in: .whitespaces)
-        guard !clean.isEmpty, let folder else { return }
+        guard !clean.isEmpty, let folder else { return nil }
         let nodes: [[String: Any]] = graph.nodes.map { node in
             var entry: [String: Any] = ["id": node.id, "type": node.type, "x": (node.x ?? 0).finite, "y": (node.y ?? 0).finite]
             if let texture = node.texture { entry["texture"] = texture }
@@ -352,15 +369,16 @@ enum MaterialLibrary {
             return entry
         }
         let links = graph.links.map { ["from": $0.from, "out": $0.out, "to": $0.to, "in": $0.input] }
-        guard let data = try? JSONSerialization.data(withJSONObject: ["nodes": nodes, "links": links], options: [.prettyPrinted, .sortedKeys]) else { return }
+        let data = try JSONSerialization.data(withJSONObject: ["nodes": nodes, "links": links], options: [.prettyPrinted, .sortedKeys])
         var target = folder.appendingPathComponent(clean + ".material")
         var copy = 2
         while FileManager.default.fileExists(atPath: target.path) {
             target = folder.appendingPathComponent("\(clean) \(copy).material")
             copy += 1
         }
-        try? data.write(to: target, options: .atomic)
+        try data.write(to: target, options: .atomic)
         savedCache = nil
+        return target
     }
 
     static func load(_ url: URL) -> MaterialGraph? {

@@ -303,7 +303,7 @@ public struct Emission: Decodable {
     public var direction: Range?
 }
 
-public enum Follow: String, Decodable { case always, spawn }
+public enum Follow: String, Decodable { case always, spawn, world }
 
 public struct EmitterItem: Decodable {
     public enum Target {
@@ -525,6 +525,7 @@ public struct ParticleDef: Decodable {
 }
 
 public struct ModelData: Decodable {
+    public var hash: String?
     public var positions: [Double]
     public var z: [Double]?
     public var indices: [UInt32]

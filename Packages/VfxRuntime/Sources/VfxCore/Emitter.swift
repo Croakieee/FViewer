@@ -8,7 +8,8 @@ public struct Plane {
 }
 
 public final class EffectState {
-    public var released: Double?
+    public var released: Double? { didSet { generation &+= 1 } }
+    var generation = 0
     public var plane = Plane()
     public var turn = Affine3.identity
     public var fps = 30.0
@@ -37,6 +38,7 @@ final class EmitterInstance: Parent {
     private var copies: [Int]
     private let color: ParsedColor
     private let startRotation: Vec3
+    private var cachedStop: (generation: Int, value: Double)?
 
     init(_ def: EmitterDef, _ parent: Parent, _ seed: UInt32, _ born: Double, _ limit: @escaping () -> Double, _ state: EffectState) throws {
         self.def = def
@@ -53,6 +55,13 @@ final class EmitterInstance: Parent {
     }
 
     var stop: Double {
+        if let cachedStop, cachedStop.generation == state.generation { return cachedStop.value }
+        let value = computeStop()
+        cachedStop = (state.generation, value)
+        return value
+    }
+
+    private func computeStop() -> Double {
         let limit = self.limit()
         if def.life < 0 { return limit }
         guard let loop = def.loop else { return min(born + def.life, limit) }

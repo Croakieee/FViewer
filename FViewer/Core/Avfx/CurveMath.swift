@@ -95,4 +95,20 @@ enum CurveMath {
         if exponent == 31 { return Float(bitPattern: sign | 0x7f80_0000 | mantissa << 13) }
         return Float(bitPattern: sign | UInt32(exponent - 15 + 127) << 23 | mantissa << 13)
     }
+
+    static func floatToHalf(_ value: Float) -> UInt16 {
+        guard !value.isNaN else { return 0 }
+        let bits = value.bitPattern
+        let sign = UInt16((bits >> 16) & 0x8000)
+        let exponent = Int((bits >> 23) & 0xff) - 127 + 15
+        let mantissa = bits & 0x7f_ffff
+        if exponent >= 31 { return sign | 0x7bff }
+        if exponent <= 0 {
+            if exponent < -10 { return sign }
+            let shifted = (mantissa | 0x80_0000) >> UInt32(1 - exponent)
+            return sign | UInt16((shifted + 0x1000) >> 13)
+        }
+        let rounded = UInt32(exponent) << 10 + (mantissa + 0x1000) >> 13
+        return sign | UInt16(min(rounded, 0x7bff))
+    }
 }

@@ -148,6 +148,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var effectTextures: [String: LoadedTexture] = [:]
     private var texturePaths: [String] = []
     private var libraryToken = -1
+    private var textureRevision = -1
     private var lastFrame = CACurrentMediaTime()
     private var lastActivity = CACurrentMediaTime()
     private var idleSignature: [Double] = []
@@ -156,6 +157,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var sceneColor: MTLTexture?
     private var postPipeline: MTLRenderPipelineState?
     private var bloomPipeline: MTLRenderPipelineState?
+    private var topPipeline: MTLRenderPipelineState?
+    private let inFlight = DispatchSemaphore(value: 1)
     private var backdrop: (token: Int, aspect: Float, item: DrawItem)?
     static var bloom: (on: Bool, threshold: Float, intensity: Float, radius: Float) = (false, 0.7, 0.8, 0.03)
     static var backgroundColor: SIMD3<Double>?
@@ -208,6 +211,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         layout.layouts[0].stride = MemoryLayout<MeshVertex>.stride
         descriptor.vertexDescriptor = layout
         pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+        descriptor.depthAttachmentPixelFormat = .invalid
+        descriptor.rasterSampleCount = 1
+        topPipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
         let post = MTLRenderPipelineDescriptor()
         post.vertexFunction = library.makeFunction(name: "postVertex")
         post.fragmentFunction = library.makeFunction(name: "postFragment")
@@ -334,7 +340,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         var items: [DrawItem] = []
         if let item = lineItem(lines) { items.append(item) }
-        if !points.isEmpty, let buffer = device.makeBuffer(bytes: points, length: MemoryLayout<MeshVertex>.stride * points.count) {
+        if !points.isEmpty, let buffer = frameBuffer(points) {
             items.append(DrawItem(vertices: buffer, indices: nil, count: points.count, primitive: .point, tint: SIMD4(1, 1, 1, 1), lit: false,
                                   textured: false, wire: false, pointSize: 6))
         }
@@ -346,6 +352,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if player?.document !== document { player = AvfxPlayer(document: document) }
         guard let player else { return nil }
         let token = app?.libraryToken ?? 0
+        if let revision = app?.textureRevision, revision != textureRevision {
+            textureRevision = revision
+            particleRenderer?.reset()
+        }
         if player.schemaChanged || token != libraryToken || rulesToken != PreviewRules.token {
             rulesToken = PreviewRules.token
             if token != libraryToken { effectTextures = [:] }
@@ -357,17 +367,59 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         lastDraws = draws
         highlightDraws = []
         if let highlight, filter.isolated == nil, effectShading == 0, let simulation = player.simulation {
-            highlightDraws = simulation.render(camera: state, filter: VisibilityFilter(hidden: filter.hidden, isolated: highlight))
+            highlightDraws = simulation.render(camera: state, filter: VisibilityFilter(hidden: filter.hidden, isolated: highlight), record: false)
         }
         return (draws, player.simulation?.schema.particles ?? [])
     }
 
-    fileprivate func lineItem(_ points: [(SIMD3<Float>, SIMD4<Float>)]) -> DrawItem? {
+    private var lineCache: [Int: DrawItem] = [:]
+    private var linesBefore: Set<Int> = []
+    private var linesNow: Set<Int> = []
+    private var framePool: [MTLBuffer] = []
+    private var frameSlot = 0
+
+    private func beginFrameBuffers() {
+        frameSlot = 0
+        linesBefore = linesNow
+        linesNow = []
+    }
+
+    fileprivate func frameBuffer<T>(_ values: [T]) -> MTLBuffer? {
+        let length = max(MemoryLayout<T>.stride * values.count, 16)
+        defer { frameSlot += 1 }
+        if frameSlot < framePool.count, framePool[frameSlot].length >= length {
+            values.withUnsafeBytes { raw in if let base = raw.baseAddress { framePool[frameSlot].contents().copyMemory(from: base, byteCount: raw.count) } }
+            return framePool[frameSlot]
+        }
+        var size = 4096
+        while size < length { size *= 2 }
+        guard let buffer = device.makeBuffer(length: size, options: .storageModeShared) else { return nil }
+        values.withUnsafeBytes { raw in if let base = raw.baseAddress { buffer.contents().copyMemory(from: base, byteCount: raw.count) } }
+        if frameSlot < framePool.count { framePool[frameSlot] = buffer } else { framePool.append(buffer) }
+        return buffer
+    }
+
+    fileprivate func lineItem(_ points: [(SIMD3<Float>, SIMD4<Float>)], persistent: Bool = false) -> DrawItem? {
+        guard !points.isEmpty else { return nil }
+        var hasher = Hasher()
+        for point in points {
+            hasher.combine(point.0)
+            hasher.combine(point.1)
+        }
+        let key = hasher.finalize()
+        if let known = lineCache[key], known.count == points.count { return known }
+        linesNow.insert(key)
         let vertices = points.map { MeshVertex(position: $0.0, normal: SIMD3(0, 1, 0), color: $0.1, uv: .zero) }
-        guard !vertices.isEmpty,
-              let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<MeshVertex>.stride * vertices.count) else { return nil }
-        return DrawItem(vertices: buffer, indices: nil, count: vertices.count, primitive: .line, tint: SIMD4(1, 1, 1, 1), lit: false,
-                        textured: false, wire: false)
+        guard persistent || linesBefore.contains(key) else {
+            guard let buffer = frameBuffer(vertices) else { return nil }
+            return DrawItem(vertices: buffer, indices: nil, count: vertices.count, primitive: .line, tint: SIMD4(1, 1, 1, 1), lit: false, textured: false, wire: false)
+        }
+        guard let buffer = device.makeBuffer(bytes: vertices, length: MemoryLayout<MeshVertex>.stride * vertices.count) else { return nil }
+        let item = DrawItem(vertices: buffer, indices: nil, count: vertices.count, primitive: .line, tint: SIMD4(1, 1, 1, 1), lit: false,
+                            textured: false, wire: false)
+        if lineCache.count >= 24 { lineCache.removeAll() }
+        lineCache[key] = item
+        return item
     }
 
     private func buildGrid() {
@@ -387,7 +439,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         points.append((SIMD3(e, 0, 0), SIMD4(0.93, 0.25, 0.30, 0.9)))
         points.append((SIMD3(0, 0, -e), SIMD4(0.25, 0.50, 0.95, 0.9)))
         points.append((SIMD3(0, 0, e), SIMD4(0.25, 0.50, 0.95, 0.9)))
-        grid = lineItem(points).map { [$0] } ?? []
+        grid = lineItem(points, persistent: true).map { [$0] } ?? []
         var disc: [MeshVertex] = [MeshVertex(position: SIMD3(0, -0.002, 0), normal: SIMD3(0, 1, 0), color: SIMD4(0.43, 0.38, 0.34, 1), uv: SIMD2(0.5, 0.5))]
         var indices: [UInt32] = []
         let segments = 64
@@ -408,6 +460,22 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         var center: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
         var shape: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
         var count = SIMD4<Float>(0, 1, 0, 0)
+    }
+
+    private func drawHelpers(_ encoder: MTLRenderCommandEncoder, viewProjection: Mat4, depth: Bool) {
+        guard captureRequest == nil else { return }
+        for (items, onTop) in [(overlayItems(), false), (gizmoItems(), true)] {
+            for item in items {
+                var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
+                                        options: SIMD4(0, 0, item.pointSize, 0))
+                if depth { encoder.setDepthStencilState(onTop ? alwaysDepthState ?? overlayDepthState : overlayDepthState) }
+                encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
+                encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+                encoder.setFragmentTexture(white, index: 0)
+                encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
+            }
+        }
     }
 
     private func applyBloom(buffer: MTLCommandBuffer, target: MTLTexture) {
@@ -580,7 +648,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                     normals.append((point.position, SIMD4(0.36, 0.82, 0.82, 0.9)))
                     normals.append((point.position + point.normal * 0.15, SIMD4(0.36, 0.82, 0.82, 0.1)))
                 }
-                if let item = lineItem(normals) { items.append(item) }
+                if let item = lineItem(normals, persistent: true) { items.append(item) }
             }
         }
     }
@@ -612,7 +680,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         var result: [DrawItem] = []
         if let item = lineItem(lines) { result.append(item) }
-        if !tips.isEmpty, let buffer = device.makeBuffer(bytes: tips, length: MemoryLayout<MeshVertex>.stride * tips.count) {
+        if !tips.isEmpty, let buffer = frameBuffer(tips) {
             result.append(DrawItem(vertices: buffer, indices: nil, count: tips.count, primitive: .point, tint: SIMD4(1, 1, 1, 1), lit: false,
                                    textured: false, wire: false, pointSize: 11))
         }
@@ -691,8 +759,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         let busy = playing || CACurrentMediaTime() - lastActivity < 1.5
         let rate = busy ? 60 : 10
         if view.preferredFramesPerSecond != rate { view.preferredFramesPerSecond = rate }
-        guard let pipeline, let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
-              let buffer = queue.makeCommandBuffer() else { return }
+        guard pipeline != nil else { return }
         let aspect = Float(view.drawableSize.width / max(view.drawableSize.height, 1))
         let near = max(camera.distance * 0.01, 0.01)
         let projection = camera.ortho
@@ -720,6 +787,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         quake = (screen?.quake ?? 0, screen?.phase ?? 0)
         let lights = Array((effect != nil ? player?.simulation?.lights(filter: filter) : nil ?? []) ?? []).prefix(4)
         let split = effect.map { particleRenderer?.needsScene($0.particles) ?? false } ?? false
+        let waited = inFlight.wait(timeout: .now() + 0.1) == .success
+        guard let pipeline, let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable,
+              let buffer = queue.makeCommandBuffer() else {
+            if waited { inFlight.signal() }
+            return
+        }
+        if waited { buffer.addCompletedHandler { [inFlight] _ in inFlight.signal() } }
+        beginFrameBuffers()
         let depthTarget = descriptor.depthAttachment.texture
         let resolved = descriptor.colorAttachments[0].resolveTexture ?? descriptor.colorAttachments[0].texture
         let canSplit = split && depthTarget != nil && resolved != nil && descriptor.colorAttachments[0].resolveTexture != nil
@@ -727,7 +802,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             descriptor.colorAttachments[0].storeAction = .storeAndMultisampleResolve
             descriptor.depthAttachment.storeAction = .store
         }
-        guard var encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+        let bloomOn = ViewportRenderer.bloom.on && showEffect
+        let helpersOnTop = (bloomOn || screen?.effects.isEmpty == false) && topPipeline != nil && !drawable.texture.isFramebufferOnly
+        guard var encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+            buffer.commit()
+            return
+        }
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
         encoder.setFragmentTexture(white, index: 1)
@@ -832,31 +912,25 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             encoder.setFragmentSamplerState(sampler, index: 0)
             encoder.setFragmentTexture(white, index: 1)
             encoder.setCullMode(.none)
-            let capturing = captureRequest != nil
-            for item in capturing ? [] : overlayItems() {
-                var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
-                                        options: SIMD4(0, 0, item.pointSize, 0))
-                encoder.setDepthStencilState(overlayDepthState)
-                encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
-                encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-                encoder.setFragmentTexture(white, index: 0)
-                encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
-            }
-            for item in capturing ? [] : gizmoItems() {
-                var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
-                                        options: SIMD4(0, 0, item.pointSize, 0))
-                encoder.setDepthStencilState(alwaysDepthState ?? overlayDepthState)
-                encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
-                encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-                encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-                encoder.setFragmentTexture(white, index: 0)
-                encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
-            }
+            if !helpersOnTop { drawHelpers(encoder, viewProjection: viewProjection, depth: true) }
         }
         encoder.endEncoding()
-        if let effects = screen?.effects, !effects.isEmpty, let postPipeline { applyPost(Array(effects.prefix(4)), buffer: buffer, target: drawable.texture, viewProjection: viewProjection) }
-        if ViewportRenderer.bloom.on, showEffect { applyBloom(buffer: buffer, target: drawable.texture) }
+        if let effects = screen?.effects, !effects.isEmpty, postPipeline != nil { applyPost(Array(effects.prefix(4)), buffer: buffer, target: drawable.texture, viewProjection: viewProjection) }
+        if bloomOn { applyBloom(buffer: buffer, target: drawable.texture) }
+        if helpersOnTop, let topPipeline {
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = drawable.texture
+            pass.colorAttachments[0].loadAction = .load
+            pass.colorAttachments[0].storeAction = .store
+            if let top = buffer.makeRenderCommandEncoder(descriptor: pass) {
+                top.setRenderPipelineState(topPipeline)
+                top.setFragmentSamplerState(sampler, index: 0)
+                top.setFragmentTexture(white, index: 1)
+                top.setCullMode(.none)
+                drawHelpers(top, viewProjection: viewProjection, depth: false)
+                top.endEncoding()
+            }
+        }
         if let request = captureRequest, effect != nil {
             captureRequest = nil
             let texture = drawable.texture
@@ -873,6 +947,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 DispatchQueue.main.async { request(image) }
             }
         }
+        #if FV_UITEST
+        if DebugSnapshot.wantCapture { DebugSnapshot.wantCapture = false; let texture = drawable.texture; buffer.addCompletedHandler { _ in DispatchQueue.main.async { DebugSnapshot.save(texture) } } }
+        #endif
         buffer.present(drawable)
         buffer.commit()
     }

@@ -44,7 +44,7 @@ final class ParticleInstance {
     private var trailPoints: [TrailPoint] = []
     private let faces: FaceOrder?
 
-    init(_ def: ParticleDef, _ textures: ParticleTextures, _ spawn: Spawn) throws {
+    init(_ def: ParticleDef, _ textures: ParticleTextures, _ compiled: (material: MaterialGraph.Compiled, key: Int)?, _ spawn: Spawn) throws {
         self.def = def
         let seed = spawn.seed
         let emission = spawn.emitter.def.emission
@@ -137,7 +137,8 @@ final class ParticleInstance {
             edgeSoftness: softness,
             edgeColor: (try rgba(edges?.inner), try rgba(edges?.outer)),
             cull: def.cull,
-            material: def.material))
+            material: def.material,
+            compiled: compiled))
     }
 
     private func loopedAgeAt(_ time: Double) -> Double {

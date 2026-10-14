@@ -31,7 +31,7 @@ enum PenumbraExport {
         return cleaned.isEmpty ? "option" : cleaned
     }
 
-    static func normalized(_ gamePath: String) -> String {
+    nonisolated static func normalized(_ gamePath: String) -> String {
         gamePath.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\\", with: "/").lowercased()
     }
 
@@ -71,44 +71,44 @@ enum PenumbraExport {
                 JSONMember(key: "Manipulations", node: JSONNode(.array([]))),
             ]
         }
-        let container = JSONNode(.object([
-            JSONMember(key: "Name", node: text("")),
-            JSONMember(key: "Description", node: text("")),
-        ] + redirects(0, folder: "")))
-        var groupFiles: [(path: String, data: [UInt8])] = []
+        func id() -> JSONNode { text(UUID().uuidString.lowercased()) }
+        var groups: [JSONNode] = []
         if let group {
             let options = group.options.enumerated().map { index, name in
                 JSONNode(.object([
                     JSONMember(key: "Name", node: text(name)),
                     JSONMember(key: "Description", node: text("")),
                     JSONMember(key: "Priority", node: JSONNode(.number(0))),
+                    JSONMember(key: "Id", node: id()),
+                    JSONMember(key: "Layout", node: JSONNode(.array([]))),
                 ] + redirects(index + 1, folder: "\(PenumbraExport.folderName(group.name))/\(PenumbraExport.folderName(name))".lowercased())))
             }
-            let body = JSONNode(.object([
-                JSONMember(key: "Version", node: JSONNode(.number(0))),
+            groups.append(JSONNode(.object([
                 JSONMember(key: "Name", node: text(group.name)),
                 JSONMember(key: "Description", node: text("")),
-                JSONMember(key: "Image", node: text("")),
-                JSONMember(key: "Page", node: JSONNode(.number(0))),
                 JSONMember(key: "Priority", node: JSONNode(.number(0))),
+                JSONMember(key: "Id", node: id()),
                 JSONMember(key: "Type", node: text(group.multi ? "Multi" : "Single")),
                 JSONMember(key: "DefaultSettings", node: JSONNode(.number(group.multi ? 1 : 0))),
+                JSONMember(key: "Layout", node: JSONNode(.array([]))),
                 JSONMember(key: "Options", node: JSONNode(.array(options))),
-            ]))
-            let slug = String(PenumbraExport.folderName(group.name).lowercased().map { $0.isLetter || $0.isNumber ? $0 : "_" })
-            groupFiles.append(("group_001_\(slug).json", Array(body.serialized().utf8)))
+                JSONMember(key: "Containers", node: JSONNode(.array([]))),
+            ])))
         }
         let meta = JSONNode(.object([
-            JSONMember(key: "FileVersion", node: JSONNode(.number(3))),
+            JSONMember(key: "FileVersion", node: JSONNode(.number(4))),
+            JSONMember(key: "Identifier", node: id()),
+            JSONMember(key: "LastWrite", node: text(ISO8601DateFormatter().string(from: Date()))),
             JSONMember(key: "Name", node: text(mod.name)),
             JSONMember(key: "Author", node: text(mod.author)),
             JSONMember(key: "Description", node: text(mod.description)),
-            JSONMember(key: "Image", node: text("")),
             JSONMember(key: "Version", node: text(mod.version)),
             JSONMember(key: "Website", node: text(mod.website)),
             JSONMember(key: "ModTags", node: JSONNode(.array([]))),
+            JSONMember(key: "DefaultData", node: JSONNode(.object(redirects(0, folder: "")))),
+            JSONMember(key: "Groups", node: JSONNode(.array(groups))),
         ]))
-        entries.insert(contentsOf: [("meta.json", Array(meta.serialized().utf8)), ("default_mod.json", Array(container.serialized().utf8))] + groupFiles, at: 0)
+        entries.insert(("meta.json", Array(meta.serialized().utf8)), at: 0)
         return ZipWriter.archive(entries)
     }
 }

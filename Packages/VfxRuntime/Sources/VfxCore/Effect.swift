@@ -18,6 +18,7 @@ public struct EffectCoreOptions {
 
 private let maxDt = 0.1
 private let maxCreations = 10000
+private let maxEmitters = 500
 
 public final class EffectCore {
     public let fps: Double
@@ -112,6 +113,7 @@ public final class EffectCore {
     }
 
     public func update(_ dt: Double) {
+        state.generation &+= 1
         if playing && !killed && error == nil {
             time += min(dt, maxDt) * fps * timeScale
             do {
@@ -175,26 +177,58 @@ public final class EffectCore {
         }
     }
 
-    private func runCreations() throws {
-        for _ in 0..<maxCreations {
-            guard let e = nextEmitter() else { break }
-            try create(e, e.takeCreation())
+    private struct Due {
+        let time: Double
+        let seed: UInt32
+        let index: Int
+
+        func before(_ other: Due) -> Bool {
+            time != other.time ? time < other.time : seed != other.seed ? seed < other.seed : index < other.index
         }
-        emitterList = emitterList.filter { $0.nextCreation < .infinity }
     }
 
-    private func nextEmitter() -> EmitterInstance? {
-        var best: EmitterInstance?
-        var bestTime = Double.infinity
-        for e in emitterList {
-            let t = e.nextCreation
-            if t > time { continue }
-            if best == nil || t < bestTime || (t == bestTime && e.seed < best!.seed) {
-                best = e
-                bestTime = t
+    private func runCreations() throws {
+        var heap: [Due] = []
+        func push(_ index: Int) {
+            let t = emitterList[index].nextCreation
+            guard t <= time else { return }
+            heap.append(Due(time: t, seed: emitterList[index].seed, index: index))
+            var child = heap.count - 1
+            while child > 0 {
+                let parent = (child - 1) / 2
+                guard heap[child].before(heap[parent]) else { break }
+                heap.swapAt(child, parent)
+                child = parent
             }
         }
-        return best
+        func pop() -> Due? {
+            guard let first = heap.first else { return nil }
+            let last = heap.removeLast()
+            guard !heap.isEmpty else { return first }
+            heap[0] = last
+            var parent = 0
+            while true {
+                let left = parent * 2 + 1, right = left + 1
+                var smallest = parent
+                if left < heap.count, heap[left].before(heap[smallest]) { smallest = left }
+                if right < heap.count, heap[right].before(heap[smallest]) { smallest = right }
+                guard smallest != parent else { break }
+                heap.swapAt(parent, smallest)
+                parent = smallest
+            }
+            return first
+        }
+        for index in emitterList.indices { push(index) }
+        var made = 0
+        while made < maxCreations, let due = pop() {
+            let e = emitterList[due.index]
+            let count = emitterList.count
+            try create(e, e.takeCreation())
+            made += 1
+            push(due.index)
+            for index in count..<emitterList.count { push(index) }
+        }
+        emitterList = emitterList.filter { $0.nextCreation < .infinity }
     }
 
     private func create(_ e: EmitterInstance, _ c: Creation) throws {
@@ -219,10 +253,11 @@ public final class EffectCore {
                     emitter: e, time: c.time, parent: parent, seed: seed, inheritColor: item.inheritColor ?? false, life: item.life,
                     unit: unit, model: { [defs] in defs.model($0) }, state: state, perspective: { [unowned self] in self.perspective },
                     point: (points?.isEmpty == false) ? points![n % points!.count] : nil, views: views)
-                let created = try ParticleInstance(def, defs.particleTextures(def), spawn)
+                let created = try ParticleInstance(def, defs.particleTextures(def), defs.compiledMaterial(id), spawn)
                 created.owner = e.def.id
                 particleList.append(created)
             case .emitter(let id):
+                guard emitterList.count < maxEmitters else { break copies }
                 let creator = e
                 emitterList.append(try EmitterInstance(defs.emitter(id), parent, seed, c.time, { creator.stop }, state))
             }

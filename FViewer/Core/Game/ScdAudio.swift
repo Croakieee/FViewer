@@ -133,6 +133,22 @@ extension GameFiles {
         return size > 0 && size <= audio.headerSize ? size : 0
     }
 
+    static func scdMarker(_ aux: [UInt8], from oldRate: Int, to newRate: Int) -> [UInt8] {
+        guard aux.count >= 20, oldRate > 0, newRate > 0 else { return aux }
+        let count = i32(aux, 16)
+        guard count >= 0, 20 + count * 4 <= aux.count else { return aux }
+        var out = aux
+        func convert(_ at: Int) {
+            let seconds = Float(i32(aux, at)) / Float(oldRate)
+            let samples = Int(safe: Double(seconds * Float(newRate)).rounded(.toNearestOrAwayFromZero), in: Int(Int32.min)...Int(Int32.max))
+            put32(&out, at, UInt32(bitPattern: Int32(samples)))
+        }
+        convert(8)
+        convert(12)
+        for index in 0..<count { convert(20 + index * 4) }
+        return out
+    }
+
     static func scdOgg(_ b: [UInt8], _ audio: ScdAudio) -> [UInt8]? {
         guard audio.format == 0x06 else { return nil }
         let at = audio.offset + 0x20 + scdAux(b, audio)

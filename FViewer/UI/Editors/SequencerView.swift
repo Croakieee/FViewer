@@ -142,8 +142,8 @@ struct SequencerView: View {
                             let shift = frame - fresh.start
                             if shift != 0 {
                                 func value(_ field: PropField, _ v: Double) -> FieldValue { if case .int = field.kind { return .int(Int(v)) }; return .double(v) }
-                                start.write?(value(start, (start.read().number ?? 0) + shift))
-                                if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, (finish.read().number ?? 0) + shift)) }
+                                start.write?(value(start, start.read().number + shift))
+                                if let finish = fresh.endField, !fresh.openEnded { finish.write?(value(finish, finish.read().number + shift)) }
                                 document.amendLastUndo()
                             }
                             document.selectionID = fresh.nodeID

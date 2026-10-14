@@ -107,6 +107,13 @@ enum GameFiles {
         b[at + 1] = UInt8(raw >> 8)
     }
 
+    static func stringBytes(_ b: [UInt8], _ at: Int, max: Int = 512) -> Int {
+        guard at >= 0, at < b.count else { return 0 }
+        var end = at
+        while end < b.count, end - at < max, b[end] != 0 { end += 1 }
+        return end - at
+    }
+
     static func string(_ b: [UInt8], _ at: Int, max: Int = 512) -> String {
         guard at >= 0, at < b.count else { return "" }
         var end = at
@@ -329,7 +336,7 @@ enum GameFiles {
         while at < end, names.count < stringCount {
             let text = string(b, at, max: 260)
             names.append(text)
-            at += text.utf8.count + 1
+            at += stringBytes(b, at, max: 260) + 1
         }
         let paths = names.filter { $0.contains("/") }, bones = names.filter { $0.hasPrefix("j_") || $0.hasPrefix("n_") }
         return [("Version", String(format: "0x%08X", b.u32(0))), ("Vertex Declarations", "\(declarations)"), ("Materials", "\(materials)"), ("LODs", "\(b[0x40])"),

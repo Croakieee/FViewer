@@ -3,7 +3,16 @@ import Foundation
 import QuartzCore
 
 final class PlaybackClock: ObservableObject {
-    @Published var time: Double = 0
+    private var storedTime: Double = 0
+    private var lastPublished: Double = 0
+    var time: Double {
+        get { storedTime }
+        set {
+            objectWillChange.send()
+            lastPublished = CACurrentMediaTime()
+            storedTime = newValue
+        }
+    }
     @Published var playing = true { didSet { if playing, !oldValue { resumed = true } } }
     private var resumed = false
     @Published var loop = true
@@ -56,6 +65,10 @@ final class PlaybackClock: ObservableObject {
             }
             return
         }
-        time = next
+        if now - lastPublished >= 1.0 / 24 {
+            objectWillChange.send()
+            lastPublished = now
+        }
+        storedTime = next
     }
 }

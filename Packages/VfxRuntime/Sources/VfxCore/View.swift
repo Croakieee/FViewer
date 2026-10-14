@@ -34,6 +34,7 @@ public struct ParticleViewSpec {
     public var edgeColor: (inner: [Float], outer: [Float])
     public var cull: Cull?
     public var material: MaterialGraph?
+    public var compiled: (material: MaterialGraph.Compiled, key: Int)?
 }
 
 public protocol ParticleView: AnyObject {

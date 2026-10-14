@@ -33,6 +33,19 @@ final class JSONNode: Identifiable {
 
     subscript(key: String) -> JSONNode? { members?.first { $0.key == key }?.node }
 
+    func sameContent(as other: JSONNode) -> Bool {
+        if self === other { return true }
+        switch (value, other.value) {
+        case (.null, .null): return true
+        case let (.bool(a), .bool(b)): return a == b
+        case let (.number(a), .number(b)): return a == b
+        case let (.string(a), .string(b)): return a == b
+        case let (.array(a), .array(b)): return a.count == b.count && zip(a, b).allSatisfy { $0.sameContent(as: $1) }
+        case let (.object(a), .object(b)): return a.count == b.count && zip(a, b).allSatisfy { $0.key == $1.key && $0.node.sameContent(as: $1.node) }
+        default: return false
+        }
+    }
+
     func set(_ key: String, _ node: JSONNode) {
         guard var m = members else { return }
         if let i = m.firstIndex(where: { $0.key == key }) { m[i].node = node } else { m.append(JSONMember(key: key, node: node)) }

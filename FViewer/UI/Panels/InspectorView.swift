@@ -202,18 +202,15 @@ struct TexturePreview: View {
     var height: CGFloat = 150
     @State private var mip = 0
 
-    private static var mipCache: (key: String, token: Int, value: (image: CGImage, levels: Int, size: String)?)?
+    private static let mipCache = ViewMemo<(image: CGImage, levels: Int, size: String)?>(limit: 24)
 
     private var mipImage: (image: CGImage, levels: Int, size: String)? {
         guard let url = app.textureURL(path), url.pathExtension.lowercased() != "png" else { return nil }
-        let key = url.path + "#\(mip)"
-        if let cached = TexturePreview.mipCache, cached.key == key, cached.token == app.libraryToken { return cached.value }
-        var value: (image: CGImage, levels: Int, size: String)?
-        if let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data), mip: mip), let image = decoded.makeImage() {
-            value = (image, decoded.mipLevels, "\(decoded.width)×\(decoded.height)")
+        let level = mip
+        return TexturePreview.mipCache.value(url.path + "#\(level)|\(app.libraryToken)") {
+            guard let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data), mip: level), let image = decoded.makeImage() else { return nil }
+            return (image, decoded.mipLevels, "\(decoded.width)×\(decoded.height)")
         }
-        TexturePreview.mipCache = (key, app.libraryToken, value)
-        return value
     }
 
     var body: some View {
@@ -256,16 +253,6 @@ struct InspectorView: View {
     @ObservedObject var document: EffectDocument
     @State private var tab = 0
 
-    private func texturePath(for node: OutlineNode, sections: [PropSection]) -> String? {
-        let slots = document.textureSlots
-        if let slot = slots.first(where: { $0.nodeID == node.id }) { return slot.path }
-        for field in sections.flatMap(\.fields) {
-            if field.tag == "TxNo", case .int(let index) = field.read(), index >= 0, index < slots.count { return slots[index].path }
-            if field.tag == "texture", case .text(let name) = field.read() { return name }
-        }
-        return nil
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             EditorHeader(symbol: "slider.horizontal.3", title: "Properties") { Spacer() }
@@ -303,41 +290,6 @@ struct InspectorView: View {
             .help(help)
     }
 
-    private func contentRow(_ child: OutlineNode) -> some View {
-        let changes = document.changes
-        return HStack(spacing: 6) {
-            Image(systemName: child.symbol).font(.system(size: 10)).foregroundStyle(child.tint.color).frame(width: 16)
-            Text(child.title).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
-            if changes.contains(child.id) { ChangeDot(added: changes.added.contains(child.id)) }
-            Spacer(minLength: 4)
-            Text(child.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
-            Image(systemName: "chevron.right").font(.system(size: 7, weight: .bold)).foregroundStyle(Theme.dim)
-        }
-        .padding(.horizontal, 6)
-        .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.45)))
-        .contentShape(Rectangle())
-        .onTapGesture { document.selectionID = child.id }
-        .contextMenu {
-            ForEach(child.actions) { action in Button(action.title, role: action.destructive ? .destructive : nil, action: action.perform) }
-        }
-    }
-
-    private func actionButton(_ action: NodeAction) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: action.symbol).font(.system(size: 9))
-            Text(action.title).font(Theme.font)
-        }
-        .foregroundStyle(action.destructive ? Color(red: 1, green: 0.5, blue: 0.45) : Theme.text)
-        .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, 8)
-        .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Theme.field.opacity(0.6)))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action.perform)
-    }
-
     @ViewBuilder private var properties: some View {
         if let node = document.selectedNode {
             let sections = document.sections(for: node)
@@ -365,11 +317,11 @@ struct InspectorView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 2)
             if !node.actions.isEmpty {
-                FlowLayout(spacing: 4) { ForEach(node.actions) { actionButton($0) } }
+                FlowLayout(spacing: 4) { ForEach(node.actions) { NodeActionButton(action: $0) } }
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let path = texturePath(for: node, sections: sections) {
+            if let path = document.texturePath(of: node, fields: sections.flatMap(\.fields)) {
                 Panel(title: "Preview") {
                     TexturePreview(path: path)
                     if case .avfx(let block, _, _) = node.payload, block.tag == "Tex", block.children == nil {
@@ -402,12 +354,12 @@ struct InspectorView: View {
                 Panel(title: "Not Set", trailing: "\(missingFields.count)", memory: "notset") { UnsetRows(items: missingFields) }
             }
             if !curves.isEmpty || !missing.isEmpty {
-                let animated = curves.filter { curveChanged($0) }.count
+                let animated = curves.filter { document.curveChanged($0, in: document.selectionID) }.count
                 Panel(title: "Animation", trailing: "\(curves.count) of \(curves.count + missing.count)", badge: animated > 0 ? "\(animated) edited" : "",
                       memory: "animation") {
                     let paired = CurveValueRows.pairs(curves, missing)
                     ForEach(paired.rows, id: \.group.id) { row in
-                        CurveValueRows(document: document, group: row.group, changed: curveChanged(row.group), random: row.random, addRandom: row.add) {
+                        CurveValueRows(document: document, group: row.group, changed: document.curveChanged(row.group, in: document.selectionID), random: row.random, addRandom: row.add) {
                             document.activeCurveID = row.group.id
                             app.bottomTab = 1
                         }
@@ -417,18 +369,13 @@ struct InspectorView: View {
             }
             if !node.children.isEmpty {
                 Panel(title: "Contents", trailing: "\(node.children.count)") {
-                    ForEach(node.children) { child in contentRow(child) }
+                    ForEach(node.children) { child in ChildNodeRow(document: document, child: child) }
                 }
             }
             if let text = document.jsonText(of: node) {
                 JSONTextPanel(document: document, node: node, original: text).id(node.id + "#\(text.hashValue)")
             }
         }
-    }
-
-    private func curveChanged(_ group: CurveGroup) -> Bool {
-        guard let id = document.selectionID, document.changes.contains(id) else { return false }
-        return group.channels.contains { channel in document.originalKeys(group: group.id, channel: channel.id, in: id) != channel.read() }
     }
 
     @ViewBuilder private var textures: some View {

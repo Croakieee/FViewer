@@ -32,9 +32,28 @@ private enum GraphDrag {
     case idle
 }
 
+private struct CurvePlayhead: View {
+    @ObservedObject var clock: PlaybackClock
+    let position: (Double) -> CGFloat
+    let rulerHeight: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let px = position(clock.time)
+            var line = Path()
+            line.move(to: CGPoint(x: px, y: 0))
+            line.addLine(to: CGPoint(x: px, y: size.height))
+            context.stroke(line, with: .color(Theme.playhead), lineWidth: 1.5)
+            let box = CGRect(x: px - 16, y: 1, width: 32, height: rulerHeight - 2)
+            context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(Theme.playhead))
+            context.draw(Text(JSONNode.format(clock.time.rounded())).font(Theme.small).foregroundStyle(.white), at: CGPoint(x: px, y: rulerHeight / 2))
+        }
+    }
+}
+
 struct CurveEditorView: View {
     @ObservedObject var document: EffectDocument
-    @ObservedObject var clock: PlaybackClock
+    let clock: PlaybackClock
     @State private var range = GraphRange()
     @State private var hidden: Set<String> = []
     @State private var selection: Set<KeyRef> = []
@@ -521,15 +540,8 @@ struct CurveEditorView: View {
                     px += 3
                 }
             }
-            let px = x(clock.time)
-            var playhead = Path()
-            playhead.move(to: CGPoint(x: px, y: 0))
-            playhead.addLine(to: CGPoint(x: px, y: canvasSize.height))
-            context.stroke(playhead, with: .color(Theme.playhead), lineWidth: 1.5)
-            let box = CGRect(x: px - 16, y: 1, width: 32, height: rulerHeight - 2)
-            context.fill(Path(roundedRect: box, cornerRadius: 3), with: .color(Theme.playhead))
-            context.draw(Text(JSONNode.format(clock.time.rounded())).font(Theme.small).foregroundStyle(.white), at: CGPoint(x: px, y: rulerHeight / 2))
         }
+        .overlay(CurvePlayhead(clock: clock, position: { x($0) }, rulerHeight: rulerHeight).allowsHitTesting(false))
         .background(ScrollMonitor(
             onScroll: { delta, flags, point in
                 if flags.contains(.command) {
@@ -1185,8 +1197,8 @@ struct CurveEditorView: View {
     private func keyTable(_ channel: CurveChannel) -> some View {
         let keys = channel.read()
         let unit = group?.isAngle == true && radians ? Double.pi / 180 : 1
-        return VStack(spacing: 2) {
-            ForEach(Array(keys.enumerated().prefix(64)), id: \.offset) { index, key in
+        return LazyVStack(spacing: 2) {
+            ForEach(Array(keys.enumerated()), id: \.offset) { index, key in
                 let ref = KeyRef(channel: channel.id, index: index)
                 HStack(spacing: 3) {
                     NumberField(label: nil, value: key.time, isInteger: true, onLive: { _ in },
@@ -1206,7 +1218,7 @@ struct CurveEditorView: View {
                             .frame(width: 20, height: 20).background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                change(channel, "Set Interpolation") { keys in if index < keys.count { keys[index].interpolation = (keys[index].interpolation + 1) % 3 } }
+                                change(channel, "Set Interpolation") { keys in if index < keys.count { keys[index].interpolation = nextInterpolation(keys[index].interpolation) } }
                             }
                             .help("Interpolation: Spline, Linear or Step. Click to cycle")
                     }
@@ -1288,7 +1300,12 @@ struct CurveEditorView: View {
         guard let active = activeKey ?? selection.first, let channel = channel(active.channel) else { return }
         let keys = channel.read()
         guard active.index < keys.count else { return }
-        setInterpolation((keys[active.index].interpolation + 1) % 3)
+        setInterpolation(nextInterpolation(keys[active.index].interpolation))
+    }
+
+    private func nextInterpolation(_ current: Int) -> Int {
+        if document.format == .pixi { return current == CurveKeyPoint.linear ? CurveKeyPoint.spline : CurveKeyPoint.linear }
+        return (current + 1) % 3
     }
 
     static func holdOrder(_ keys: inout [CurveKeyPoint], _ index: Int) {
@@ -1797,7 +1814,7 @@ struct CurveEditorView: View {
     private func listWidth(_ total: CGFloat) -> CGFloat { min(max(total * 0.16, 110), 240) }
 
     private func sidebarWidth(_ total: CGFloat) -> CGFloat {
-        let wanted = min(max(total * 0.24, 190), 320)
+        let wanted = min(max(total * 0.24, 214), 320)
         return max(150, min(wanted, total - listWidth(total) - 180))
     }
 

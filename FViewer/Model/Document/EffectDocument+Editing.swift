@@ -120,7 +120,7 @@ extension EffectDocument {
     }
 
     func defaultRecord(_ cls: String) -> [AvfxBlock] {
-        var fields = (catalog.classes[cls] ?? []).compactMap { catalog.freshLeaf($0, in: cls) }
+        let fields = (catalog.classes[cls] ?? []).compactMap { catalog.freshLeaf($0, in: cls) }
         if cls == "AvfxTimelineItem" {
             fields.first { $0.tag == "ClNo" }?.intValue = -1
             fields.first { $0.tag == "bEna" }?.data = [0, 0, 0, 0]
@@ -158,9 +158,10 @@ extension EffectDocument {
     func siblingNodes(of nodeID: String) -> [OutlineNode] {
         let parts = nodeID.split(separator: "/").map(String.init)
         guard parts.count >= 3, Int(parts[2]) != nil else { return [] }
+        let slot = parts.lastIndex { Int($0) != nil } ?? 2
         var result: [OutlineNode] = []
         var index = 0
-        while let node = node((parts.prefix(2) + ["\(index)"] + parts.dropFirst(3)).joined(separator: "/")) {
+        while let node = node((parts.prefix(slot) + ["\(index)"] + parts.dropFirst(slot + 1)).joined(separator: "/")) {
             if node.id != nodeID { result.append(node) }
             index += 1
             if index > 4096 { break }
@@ -187,8 +188,54 @@ extension EffectDocument {
 
     func changeRecords(_ owner: AvfxBlock, list: String, title: String, _ change: (inout [[AvfxBlock]]) -> Void) {
         var records = owner.ownRecords(list).map { $0.map { $0.deepCopy() } }
+        let marks = records.map { $0.first.map(ObjectIdentifier.init) }
         change(&records)
-        performStructural(title) { owner.setOwnRecords(list, records) }
+        let ownerID = nodeID(of: owner)
+        performStructural(title) {
+            owner.setOwnRecords(list, records)
+            guard let ownerID else { return }
+            var moved: [Int: Int] = [:]
+            for (position, record) in records.enumerated() {
+                if let mark = record.first.map(ObjectIdentifier.init), let old = marks.firstIndex(of: mark) { moved[old] = position }
+            }
+            renumberIDs(prefix: ownerID + "/" + list + "/") { moved[$0] }
+        }
+    }
+
+    func renumberIDs(prefix: String, _ map: (Int) -> Int?) {
+        func remap(_ key: String) -> String?? {
+            guard key.hasPrefix(prefix) else { return .none }
+            let rest = key.dropFirst(prefix.count)
+            let digits = rest.prefix { $0.isNumber }
+            guard let old = Int(digits) else { return .none }
+            let tail = rest.dropFirst(digits.count)
+            guard tail.isEmpty || tail.first == "/" else { return .none }
+            return .some(map(old).map { prefix + String($0) + tail })
+        }
+        var renamed: [String: String] = [:]
+        for (key, name) in names {
+            switch remap(key) {
+            case .none: renamed[key] = name
+            case .some(.none): break
+            case .some(.some(let next)): renamed[next] = name
+            }
+        }
+        replaceNames(renamed)
+        if let selected = selectionID, case .some(let next) = remap(selected) {
+            selectionID = next ?? String(prefix.dropLast(prefix.hasSuffix("/") ? 1 : 0))
+        }
+    }
+
+    func renumberHidden(_ kind: (Int) -> VisibilityKey, _ index: (VisibilityKey) -> Int?, _ map: (Int) -> Int?) {
+        var shown: Set<VisibilityKey> = []
+        for key in hidden {
+            if let old = index(key) {
+                if let next = map(old) { shown.insert(kind(next)) }
+            } else {
+                shown.insert(key)
+            }
+        }
+        if shown != hidden { hidden = shown }
     }
 
     func addUvSet(_ particle: AvfxBlock) {
@@ -293,7 +340,9 @@ extension EffectDocument {
 
     func deleteClip(_ clip: AvfxBlock, from timeline: AvfxBlock) {
         guard let index = timeline.childrenNamed("Clip").firstIndex(where: { $0 === clip }) else { return }
+        let timelineID = nodeID(of: timeline)
         performStructural("Delete Clip") {
+            if let timelineID { renumberIDs(prefix: timelineID + "/Clip") { $0 == index ? nil : $0 > index ? $0 - 1 : $0 } }
             timeline.remove(clip)
             let records = timeline.ownRecords("Item")
             for record in records {
@@ -485,9 +534,11 @@ extension EffectDocument {
         if block.tag == "UvSt", let parent {
             actions.append(NodeAction(id: node.id + "!del", title: "Delete UV Set", symbol: "trash", destructive: true) { [weak self] in
                 let removed = parent.childrenNamed("UvSt").firstIndex { $0 === block } ?? -1
+                let particleID = self?.nodeID(of: parent)
                 self?.batch("Delete UV Set") {
                     self?.removeChild(block, from: parent, title: "Delete UV Set")
                     guard removed >= 0 else { return }
+                    if let particleID { self?.renumberIDs(prefix: particleID + "/UvSt") { $0 == removed ? nil : $0 > removed ? $0 - 1 : $0 } }
                     for tag in ["TC1", "TC2", "TC3", "TC4", "TD", "TN"] {
                         guard let field = parent.child(tag)?.child("UvSN"), field.data.count >= 4 else { continue }
                         let value = field.intValue
@@ -524,6 +575,19 @@ extension EffectDocument {
         ]
     }
 
+    func renumberJSON(_ elementID: String, array: JSONNode, _ map: (Int) -> Int?) {
+        guard let slash = elementID.lastIndex(of: "/") else { return }
+        renumberIDs(prefix: String(elementID[...slash]), map)
+        guard let root = jsonRoot else { return }
+        if root["timelines"] === array {
+            renumberHidden({ .timeline($0) }, { if case .timeline(let i) = $0 { return i }; return nil }, map)
+        } else if root["emitters"] === array {
+            renumberHidden({ .emitter($0) }, { if case .emitter(let i) = $0 { return i }; return nil }, map)
+        } else if root["particles"] === array {
+            renumberHidden({ .particle($0) }, { if case .particle(let i) = $0 { return i }; return nil }, map)
+        }
+    }
+
     func jsonArrayActions(_ node: OutlineNode, array: JSONNode, index: Int) -> [NodeAction] {
         [
             NodeAction(id: node.id + "!dup", title: "Duplicate", symbol: "plus.square.on.square") { [weak self] in
@@ -542,13 +606,24 @@ extension EffectDocument {
                     }
                     items.insert(copy, at: index + 1)
                     array.value = .array(items)
+                    self?.renumberJSON(node.id, array: array) { $0 > index ? $0 + 1 : $0 }
                 }
             },
             NodeAction(id: node.id + "!del", title: "Delete", symbol: "trash", destructive: true) { [weak self] in
                 self?.performStructural("Delete") {
                     guard var items = array.elements, index < items.count else { return }
+                    let gone = items[index]["id"]?.string
                     items.remove(at: index)
                     array.value = .array(items)
+                    self?.renumberJSON(node.id, array: array) { $0 == index ? nil : $0 > index ? $0 - 1 : $0 }
+                    guard let gone, let root = self?.jsonRoot else { return }
+                    let key = root["particles"] === array ? "particle" : root["emitters"] === array ? "emitter" : ""
+                    guard !key.isEmpty, !items.contains(where: { $0["id"]?.string == gone }) else { return }
+                    for owner in (root["emitters"]?.elements ?? []) + (root["timelines"]?.elements ?? []) {
+                        guard let list = owner["items"], let entries = list.elements else { continue }
+                        let kept = entries.filter { $0[key]?.string != gone }
+                        if kept.count != entries.count { list.value = .array(kept) }
+                    }
                 }
             },
         ]

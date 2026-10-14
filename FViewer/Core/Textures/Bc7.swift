@@ -1,6 +1,6 @@
 import Foundation
 
-enum Bc7 {
+nonisolated enum Bc7 {
     private static let modes: [[Int]] = [
         [3, 4, 0, 0, 4, 0, 1, 0, 3, 0], [2, 6, 0, 0, 6, 0, 0, 1, 3, 0], [3, 6, 0, 0, 5, 0, 0, 0, 2, 0], [2, 6, 0, 0, 7, 0, 1, 0, 2, 0],
         [1, 0, 2, 1, 5, 6, 0, 0, 2, 3], [1, 0, 2, 0, 7, 8, 0, 0, 2, 2], [1, 0, 0, 0, 7, 7, 1, 0, 4, 0], [2, 6, 0, 0, 5, 5, 1, 0, 2, 0],
@@ -16,16 +16,34 @@ enum Bc7 {
 
     private static func weights(_ bits: Int) -> [Int] { bits == 2 ? weights2 : bits == 3 ? weights3 : weights4 }
 
-    static func decode(_ b: [UInt8], _ o: Int, _ out: inout [UInt8]) {
+    static func decode(_ b: UnsafeBufferPointer<UInt8>, _ o: Int, _ out: UnsafeMutablePointer<UInt8>) {
+        withUnsafeTemporaryAllocation(of: SIMD4<Int>.self, capacity: 6) { endpoints in
+            withUnsafeTemporaryAllocation(of: Int.self, capacity: 32) { indices in
+                decode(b, o, out, endpoints, indices)
+            }
+        }
+    }
+
+    private static func decode(_ b: UnsafeBufferPointer<UInt8>, _ o: Int, _ out: UnsafeMutablePointer<UInt8>, _ endpoints: UnsafeMutableBufferPointer<SIMD4<Int>>,
+                               _ indices: UnsafeMutableBufferPointer<Int>) {
+        var low: UInt64 = 0, high: UInt64 = 0
+        for i in 0..<8 {
+            if o + i < b.count { low |= UInt64(b[o + i]) << UInt64(8 * i) }
+            if o + 8 + i < b.count { high |= UInt64(b[o + 8 + i]) << UInt64(8 * i) }
+        }
         var pos = 0
         func read(_ n: Int) -> Int {
-            var v = 0
-            for i in 0..<n {
-                let byte = o + (pos >> 3)
-                if byte < b.count { v |= Int((b[byte] >> UInt8(pos & 7)) & 1) << i }
-                pos += 1
+            guard n > 0 else { return 0 }
+            let v: UInt64
+            if pos >= 64 {
+                v = high >> UInt64(pos - 64)
+            } else if pos + n <= 64 {
+                v = low >> UInt64(pos)
+            } else {
+                v = (low >> UInt64(pos)) | (high << UInt64(64 - pos))
             }
-            return v
+            pos += n
+            return Int(v & ((1 << UInt64(n)) - 1))
         }
         var mode = -1
         for i in 0..<8 where mode < 0 {
@@ -41,7 +59,7 @@ enum Bc7 {
         let rotation = read(m[2])
         let indexSelection = read(m[3])
         let count = subsets * 2
-        var endpoints = [[Int]](repeating: [0, 0, 0, 0], count: count)
+        for e in 0..<count { endpoints[e] = .zero }
         for c in 0..<3 {
             for e in 0..<count { endpoints[e][c] = read(m[4]) }
         }
@@ -52,16 +70,14 @@ enum Bc7 {
         if m[6] > 0 {
             for e in 0..<count {
                 let p = read(1)
-                for c in 0..<4 { endpoints[e][c] = (endpoints[e][c] << 1) | p }
+                endpoints[e] = (endpoints[e] &<< 1) | SIMD4(repeating: p)
             }
             colorBits += 1
             if alphaBits > 0 { alphaBits += 1 }
         } else if m[7] > 0 {
             for s in 0..<subsets {
                 let p = read(1)
-                for e in [s * 2, s * 2 + 1] {
-                    for c in 0..<4 { endpoints[e][c] = (endpoints[e][c] << 1) | p }
-                }
+                for e in (s * 2)...(s * 2 + 1) { endpoints[e] = (endpoints[e] &<< 1) | SIMD4(repeating: p) }
             }
             colorBits += 1
         }
@@ -69,8 +85,9 @@ enum Bc7 {
             let v = value << (8 - bits)
             return (v | (v >> bits)) & 255
         }
-        let full = endpoints.map { e in
-            [expand(e[0], colorBits), expand(e[1], colorBits), expand(e[2], colorBits), alphaBits > 0 ? expand(e[3], alphaBits) : 255]
+        for e in 0..<count {
+            let v = endpoints[e]
+            endpoints[e] = SIMD4(expand(v.x, colorBits), expand(v.y, colorBits), expand(v.z, colorBits), alphaBits > 0 ? expand(v.w, alphaBits) : 255)
         }
         func subset(_ i: Int) -> Int {
             if subsets == 2 { return Int((partitions2[partition] >> UInt32(i)) & 1) }
@@ -80,25 +97,28 @@ enum Bc7 {
         func anchor(_ i: Int) -> Bool {
             i == 0 || (subsets == 2 && i == anchors2[partition]) || (subsets == 3 && (i == anchors3a[partition] || i == anchors3b[partition]))
         }
-        var first = [Int](repeating: 0, count: 16)
-        for i in 0..<16 { first[i] = read(anchor(i) ? indexBits - 1 : indexBits) }
-        var second = [Int](repeating: 0, count: 16)
+        for i in 0..<16 { indices[i] = read(anchor(i) ? indexBits - 1 : indexBits) }
+        for i in 16..<32 { indices[i] = 0 }
         if index2Bits > 0 {
-            for i in 0..<16 { second[i] = read(i == 0 ? index2Bits - 1 : index2Bits) }
+            for i in 0..<16 { indices[16 + i] = read(i == 0 ? index2Bits - 1 : index2Bits) }
         }
         let firstWeights = weights(indexBits), secondWeights = weights(index2Bits)
         for i in 0..<16 {
             let s = subset(i)
-            let e0 = full[s * 2], e1 = full[s * 2 + 1]
-            var colorWeight = firstWeights[first[i]]
+            let e0 = endpoints[s * 2], e1 = endpoints[s * 2 + 1]
+            var colorWeight = firstWeights[indices[i]]
             var alphaWeight = colorWeight
             if index2Bits > 0 {
-                if indexSelection == 0 { alphaWeight = secondWeights[second[i]] } else { colorWeight = secondWeights[second[i]] }
+                if indexSelection == 0 { alphaWeight = secondWeights[indices[16 + i]] } else { colorWeight = secondWeights[indices[16 + i]] }
             }
-            var px = [0, 0, 0, 0]
+            var px = SIMD4<Int>.zero
             for c in 0..<3 { px[c] = ((64 - colorWeight) * e0[c] + colorWeight * e1[c] + 32) >> 6 }
             px[3] = ((64 - alphaWeight) * e0[3] + alphaWeight * e1[3] + 32) >> 6
-            if rotation >= 1 && rotation <= 3 { px.swapAt(rotation - 1, 3) }
+            if rotation >= 1 && rotation <= 3 {
+                let swapped = px[rotation - 1]
+                px[rotation - 1] = px[3]
+                px[3] = swapped
+            }
             for c in 0..<4 { out[i * 4 + c] = UInt8(truncatingIfNeeded: px[c]) }
         }
     }

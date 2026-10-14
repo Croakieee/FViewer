@@ -121,6 +121,7 @@ struct NodeLibraryView: View {
 struct EffectListSheet: View {
     @EnvironmentObject var app: AppModel
     let list: EffectList
+    @State private var present: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -135,7 +136,7 @@ struct EffectListSheet: View {
             ScrollView {
                 VStack(spacing: 2) {
                     ForEach(list.paths, id: \.self) { path in
-                        let available = app.game?.contains(path) ?? false
+                        let available = present.contains(path)
                         HStack(spacing: 6) {
                             Text(path).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.head).textSelection(.enabled)
                             Spacer(minLength: 4)
@@ -169,6 +170,14 @@ struct EffectListSheet: View {
         .frame(width: 560)
         .background(Theme.panel)
         .preferredColorScheme(Theme.scheme)
+        .task(id: list.paths) {
+            guard let game = app.game else {
+                present = []
+                return
+            }
+            let paths = list.paths
+            present = await Task.detached { game.available(paths) }.value
+        }
     }
 }
 
@@ -459,7 +468,7 @@ struct SettingsView: View {
                 rules
             }
             .padding(.vertical, 8)
-            .id(refresh)
+            .background(Color.clear.opacity(refresh >= 0 ? 0 : 0))
         }
         .frame(width: 520, height: 620)
         .background(Theme.panel)

@@ -154,7 +154,7 @@ struct CheckBox: View {
         .frame(height: 20)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { action(!isOn) }
+        .pressable { action(!isOn) }
     }
 }
 
@@ -289,7 +289,7 @@ struct ColorField: View {
             .frame(height: 20)
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .contentShape(Rectangle())
-            .onTapGesture {
+            .pressable {
                 guard !editing else { return }
                 text = ""
                 editing = true
@@ -483,7 +483,7 @@ struct CurveValueRows: View {
             .frame(height: 16)
             .background(RoundedRectangle(cornerRadius: 3).fill(active ? Theme.accent : Theme.gray(0.2)))
             .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+            .pressable(perform: action)
             .help(help)
     }
 
@@ -519,7 +519,7 @@ struct CurveValueRows: View {
         } else {
             HStack(spacing: 4) {
                 if let title { Text(title).font(Theme.small).foregroundStyle(Theme.dim).frame(width: 30, alignment: .leading) }
-                CurveSparkline(keys: keys, color: channel.color).frame(height: 18).contentShape(Rectangle()).onTapGesture { float(owner ?? group) }
+                CurveSparkline(keys: keys, color: channel.color).frame(height: 18).contentShape(Rectangle()).pressable { float(owner ?? group) }
                     .help("\(keys.count) keys, \(String(format: "%.3g", keys.map(\.value).min() ?? 0)) … \(String(format: "%.3g", keys.map(\.value).max() ?? 0)). Click to edit here; the Curve switch opens the Graph Editor")
             }
         }
@@ -531,11 +531,11 @@ struct CurveValueRows: View {
                 if channel.read().count == 1 { constantField(channel, "± Random", in: random) } else { editor(channel, title: "±", in: random) }
                 if channel.read().count == 1 {
                     Image(systemName: "waveform.path").font(.system(size: 9)).foregroundStyle(Theme.dim).frame(width: 14, height: 18).contentShape(Rectangle())
-                        .onTapGesture { makeCurve(random.channels) }.help("Turn the random range into a curve")
+                        .pressable { makeCurve(random.channels) }.help("Turn the random range into a curve")
                 }
                 if let remove = random.remove {
                     Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim).frame(width: 14, height: 18)
-                        .contentShape(Rectangle()).onTapGesture(perform: remove).help("Remove the random range from the file")
+                        .contentShape(Rectangle()).pressable(perform: remove).help("Remove the random range from the file")
                 }
             }
             .padding(.leading, 24)
@@ -550,7 +550,7 @@ struct CurveValueRows: View {
             .padding(.leading, 30)
             .frame(height: 14)
             .contentShape(Rectangle())
-            .onTapGesture { addRandom.create() }
+            .pressable { addRandom.create() }
             .help("Add a random range: each particle or emitter gets its own value within ± this amount")
         }
     }
@@ -573,14 +573,14 @@ struct CurveValueRows: View {
             if let remove = group.remove {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.dim)
                     .frame(width: 14, height: 20).contentShape(Rectangle())
-                    .onTapGesture(perform: remove).help("Remove this curve from the file")
+                    .pressable(perform: remove).help("Remove this curve from the file")
             }
         }
         .padding(.horizontal, 6)
         .frame(height: 22)
         .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.selection : Theme.field.opacity(0.45)))
         .contentShape(Rectangle())
-        .onTapGesture(perform: open)
+        .pressable(perform: open)
     }
 
     var body: some View {
@@ -598,7 +598,7 @@ struct CurveValueRows: View {
                     if colorChannels.count == 3 {
                         HStack(spacing: 4) {
                             Text("RGB").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 30, alignment: .leading)
-                            CurveGradientStrip(group: group).frame(height: 16).contentShape(Rectangle()).onTapGesture { float(group) }
+                            CurveGradientStrip(group: group).frame(height: 16).contentShape(Rectangle()).pressable { float(group) }
                                 .help("Colour over time. Click to edit here")
                         }
                     }
@@ -615,7 +615,7 @@ struct CurveValueRows: View {
         .popover(isPresented: $floating, arrowEdge: .leading) {
             CurveEditorView(document: document, clock: document.clock)
                 .environmentObject(app)
-                .frame(width: 760, height: 420)
+                .frame(width: 820, height: 420)
                 .background(Theme.panel)
                 .preferredColorScheme(Theme.scheme)
         }
@@ -637,7 +637,7 @@ struct UnsetRows: View {
                 .frame(height: 18)
                 .background(RoundedRectangle(cornerRadius: 4).stroke(Theme.dim.opacity(0.45), lineWidth: 1))
                 .contentShape(Rectangle())
-                .onTapGesture { item.create() }
+                .pressable { item.create() }
                 .help("Not in the file yet. Click to add it with its default value")
             }
         }
@@ -744,7 +744,7 @@ struct RecipeRows: View {
                     .frame(height: 18)
                     .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : Theme.gray(0.22)))
                     .contentShape(Rectangle())
-                    .onTapGesture { apply(recipe) }
+                    .pressable { apply(recipe) }
                     .help(recipe.help)
             }
             HelpBadge(text: "A recipe sets several fields of this node at once. A highlighted recipe already matches the node. Fields that are not in the file are left alone.")
@@ -776,7 +776,7 @@ struct HelpBadge: View {
             .foregroundStyle(shown ? Theme.text : tint)
             .frame(width: 20, height: 20)
             .contentShape(Rectangle())
-            .onTapGesture { shown.toggle() }
+            .pressable { shown.toggle() }
             .popover(isPresented: $shown, arrowEdge: .bottom) {
                 Text(text).font(Theme.font).foregroundStyle(Theme.text).lineSpacing(2)
                     .frame(width: 280, alignment: .leading).fixedSize(horizontal: false, vertical: true).padding(12)
@@ -798,7 +798,7 @@ struct SegmentButton: View {
             .frame(height: 20)
             .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : Theme.gray(0.22)))
             .contentShape(Rectangle())
-            .onTapGesture(perform: action)
+            .pressable(perform: action)
     }
 }
 
@@ -829,7 +829,7 @@ struct Panel<Content: View>: View {
             .padding(.horizontal, 8)
             .frame(height: 24)
             .contentShape(Rectangle())
-            .onTapGesture {
+            .pressable {
                 open.toggle()
                 if !memory.isEmpty { UserDefaults.standard.set(!open, forKey: key) }
             }
@@ -881,8 +881,9 @@ struct HeaderButton: View {
             .background(RoundedRectangle(cornerRadius: 4).fill(active ? Theme.accent : hovering ? Theme.field : Theme.gray(0.22)))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
-            .onTapGesture(perform: action)
+            .pressable(perform: action)
             .help(help)
+            .accessibilityLabel(help.isEmpty ? symbol : help)
     }
 }
 

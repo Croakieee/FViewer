@@ -344,7 +344,29 @@ extension EffectDocument {
     }
 
     func canRetarget(_ edge: GraphEdge, to target: String) -> Bool {
-        edge.retarget != nil && target != edge.to && target != edge.from && edge.accepts.contains { target.hasPrefix($0) }
+        edge.retarget != nil && target != edge.to && target != edge.from && edge.accepts.contains { target.hasPrefix($0) } && !emitterLoop(from: edge.from, to: target)
+    }
+
+    func emitterLoop(from: String, to: String) -> Bool {
+        let prefix = from.hasPrefix("avfx/Emit/") ? "avfx/Emit/" : from.hasPrefix("json/emitters/") ? "json/emitters/" : nil
+        guard let prefix, to.hasPrefix(prefix), let start = index(to, prefix), let goal = index(from, prefix) else { return false }
+        var children: [[Int]] = []
+        if let root = avfxRoot {
+            children = root.childrenNamed("Emit").map { emitter in emitter.ownRecords("ItEm").compactMap { $0.first { $0.tag == "TgtB" }?.intValue } }
+        } else if let root = jsonRoot {
+            let emitters = root["emitters"]?.elements ?? []
+            var byID: [String: Int] = [:]
+            for (i, emitter) in emitters.enumerated() { if let id = emitter["id"]?.string { byID[id] = i } }
+            children = emitters.map { emitter in (emitter["items"]?.elements ?? []).compactMap { $0["emitter"]?.string.flatMap { byID[$0] } } }
+        }
+        var seen = Set<Int>()
+        var stack = [start]
+        while let next = stack.popLast() {
+            if next == goal { return true }
+            guard next >= 0, next < children.count, seen.insert(next).inserted else { continue }
+            stack.append(contentsOf: children[next])
+        }
+        return false
     }
 
     func retarget(_ edge: GraphEdge, to target: String) {
@@ -382,6 +404,10 @@ extension EffectDocument {
         guard a != b else { return ([], nil) }
         guard let pair = linkDirection(a, b) else {
             return ([], "\(EffectDocument.linkKind(a)) and \(EffectDocument.linkKind(b)) cannot be linked")
+        }
+        if emitterLoop(from: pair.from, to: pair.to) {
+            let child = pair.to.split(separator: "/").last ?? "", parent = pair.from.split(separator: "/").last ?? ""
+            return ([], "Emitter \(child) already creates Emitter \(parent), directly or through other emitters. This link would make them create each other endlessly")
         }
         if let root = avfxRoot { return avfxLinkOptions(root, from: pair.from, to: pair.to) }
         return ([LinkOption(title: "Link") { [weak self] in
@@ -474,7 +500,6 @@ extension EffectDocument {
         if let p = index(from, "avfx/Ptcl/"), p < root.childrenNamed("Ptcl").count {
             let particle = root.childrenNamed("Ptcl")[p]
             if let texture = index(to, "avfx/Tex/") {
-                let cls = ownerClass(from)
                 let layers = [("TC1", "Color 1"), ("TC2", "Color 2"), ("TC3", "Color 3"), ("TC4", "Color 4"), ("TN", "Normal"), ("TR", "Reflection"),
                               ("TD", "Distortion"), ("TP", "Palette")]
                 var options: [LinkOption] = []

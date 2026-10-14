@@ -59,6 +59,7 @@ struct MaterialEditorView: View {
     @State private var pan = CGSize(width: 30, height: 20)
     @State private var zoom: CGFloat = 1
     @State private var selection: Set<String> = []
+    @State private var shaderTick = 0
     @State private var moving: (origins: [String: CGPoint], before: Any)?
     @State private var wire: (from: String, out: String, end: CGPoint)?
     @State private var box: (start: CGPoint, end: CGPoint)?
@@ -170,7 +171,7 @@ struct MaterialEditorView: View {
     }
 
     private func freeSpot(_ type: String, _ graph: MaterialGraph) -> CGPoint {
-        let size = CGSize(width: MaterialLook.nodeWidth, height: MaterialGraph.kind(of: type).map(MaterialLook.height) ?? 80)
+        let size = CGSize(width: MaterialLook.nodeWidth, height: MaterialGraph.kind(of: type).map { MaterialLook.height($0) } ?? 80)
         let taken = graph.nodes.compactMap { node -> CGRect? in
             guard let kind = MaterialGraph.kind(of: node.type) else { return nil }
             return CGRect(x: CGFloat(node.x ?? 0), y: CGFloat(node.y ?? 0), width: MaterialLook.nodeWidth, height: MaterialLook.height(kind)).insetBy(dx: -14, dy: -14)
@@ -626,9 +627,15 @@ struct MaterialEditorView: View {
         .background(Theme.panel)
     }
 
+    private static let device = MTLCreateSystemDefaultDevice()
+
     private func status(_ graph: MaterialGraph?, _ resolved: MaterialGraph?) -> some View {
+        let _ = shaderTick
         let compiled = resolved?.compile()
-        let shader = resolved.flatMap { graph in MTLCreateSystemDefaultDevice().flatMap { MetalRenderer.shaderProblem(graph, device: $0) } }
+        let check = compiled.flatMap { code in MaterialEditorView.device.map { MetalRenderer.checkShader(code, device: $0) { shaderTick += 1 } } }
+        var shader: String?
+        if case .failed(let text)? = check { shader = text }
+        let pending: Bool = { if case .pending? = check { return true }; return false }()
         let problem = compiled?.problems.first ?? shader.map { "Shader: " + $0 }
         return HStack(spacing: 14) {
             if let graph, let compiled {
@@ -644,6 +651,8 @@ struct MaterialEditorView: View {
                     Text(problem).lineLimit(1).truncationMode(.tail)
                 }
                 .foregroundStyle(Color.orange)
+            } else if graph != nil, pending {
+                Text("compiling…").foregroundStyle(Theme.dim)
             } else if graph != nil {
                 HStack(spacing: 4) {
                     Circle().fill(Color.green.opacity(0.85)).frame(width: 6, height: 6)
@@ -660,7 +669,7 @@ struct MaterialEditorView: View {
     var body: some View {
         let _ = document.revision
         if let particle = document.materialParticleID {
-            let graph = document.materialGraph(particle)
+            let graph = document.shownMaterialGraph(particle)
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
                     palette(particle, graph)
@@ -697,7 +706,7 @@ struct MaterialEditorView: View {
                     Rectangle().fill(Theme.line).frame(width: 1)
                     MaterialInspector(document: document, particle: particle, graph: graph, selection: $selection, previewPin: $previewPin)
                 }
-                status(graph, document.resolvedMaterial(particle))
+                status(graph, document.shownResolvedMaterial(particle))
             }
             .onChange(of: particle) { _, _ in
                 selection = []

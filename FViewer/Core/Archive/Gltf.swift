@@ -12,22 +12,6 @@ struct GltfMesh {
 }
 
 enum Gltf {
-    static func floatToHalf(_ value: Float) -> UInt16 {
-        let bits = value.bitPattern
-        let sign = UInt16((bits >> 16) & 0x8000)
-        let exponent = Int((bits >> 23) & 0xff) - 127 + 15
-        let mantissa = bits & 0x7f_ffff
-        if value.isNaN { return sign | 0x7e00 }
-        if exponent >= 31 { return sign | 0x7c00 }
-        if exponent <= 0 {
-            if exponent < -10 { return sign }
-            let shifted = (mantissa | 0x80_0000) >> UInt32(1 - exponent)
-            return sign | UInt16((shifted + 0x1000) >> 13)
-        }
-        let rounded = UInt32(exponent) << 10 + (mantissa + 0x1000) >> 13
-        return sign | UInt16(min(rounded, 0x7bff + 1))
-    }
-
     static func mesh(from model: AvfxBlock) -> GltfMesh {
         var mesh = GltfMesh()
         if let v = model.child("VDrw")?.data {
@@ -55,7 +39,7 @@ enum Gltf {
         func signedByte(_ value: Float) -> UInt8 { UInt8(max(0, min(255, Int(value * 127) + 128))) }
         for i in mesh.positions.indices {
             let p = mesh.positions[i]
-            for value in [p.x, p.y, p.z, 1] { vertices.appendU16(floatToHalf(value)) }
+            for value in [p.x, p.y, p.z, 1] { vertices.appendU16(CurveMath.floatToHalf(value)) }
             let n = i < mesh.normals.count ? mesh.normals[i] : SIMD3<Float>(0, 1, 0)
             vertices.append(contentsOf: [signedByte(n.x), signedByte(n.y), signedByte(n.z), 127])
             let t = i < mesh.tangents.count ? mesh.tangents[i] : SIMD4<Float>(1, 0, 0, 1)
@@ -64,8 +48,8 @@ enum Gltf {
             for value in [c.x, c.y, c.z, c.w] { vertices.append(UInt8(max(0, min(255, (value * 255).rounded())))) }
             for set in 0..<4 {
                 let source = i < mesh.uvs[set].count ? mesh.uvs[set][i] : (i < mesh.uvs[0].count ? mesh.uvs[0][i] : .zero)
-                vertices.appendU16(floatToHalf(source.x))
-                vertices.appendU16(floatToHalf(source.y))
+                vertices.appendU16(CurveMath.floatToHalf(source.x))
+                vertices.appendU16(CurveMath.floatToHalf(source.y))
             }
         }
         var indices: [UInt8] = []
@@ -152,7 +136,12 @@ enum Gltf {
                     buffers.append([UInt8](data))
                 } else {
                     let name = uri.removingPercentEncoding ?? uri
-                    buffers.append([UInt8](try Data(contentsOf: url.deletingLastPathComponent().appendingPathComponent(name))))
+                    guard !name.contains(".."), !name.hasPrefix("/") else { throw AvfxError.malformed("Buffer \(i) points outside the model's folder") }
+                    do {
+                        buffers.append([UInt8](try Data(contentsOf: url.deletingLastPathComponent().appendingPathComponent(name))))
+                    } catch {
+                        throw AvfxError.malformed("\(name) next to the .gltf could not be read. macOS only lets the app open the file you picked: export a .glb (one file) or open the model's folder with File → Open Folder first")
+                    }
                 }
             } else if i == 0, let embedded {
                 buffers.append(embedded)

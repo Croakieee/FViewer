@@ -35,7 +35,11 @@ struct ModelViewport3D: View {
     @ObservedObject var document: EffectDocument
     @ObservedObject var session: ModelEditSession
     @State private var size = CGSize(width: 1, height: 1)
-    @State private var mouse = CGPoint.zero
+    @State private var pointer = HoverPoint()
+    private var mouse: CGPoint {
+        get { pointer.location }
+        nonmutating set { pointer.location = newValue }
+    }
     @State private var dragStart: CGPoint?
     @State private var dragNow: CGPoint?
     @State private var dragMode = 0
@@ -187,7 +191,17 @@ struct ModelViewport3D: View {
         modal = ModelModal(kind: kind, start: mouse, before: session.capture(), axis: nil)
         session.status = hint(kind, nil)
         session.modalConfirm = { confirm() }
+        session.modalAbandon = { abandon() }
         session.modalOwner = "3d"
+        session.modalRevision = document.revision
+    }
+
+    private func abandon() {
+        modal = nil
+        session.status = ""
+        session.modalOwner = nil
+        session.modalConfirm = nil
+        session.modalAbandon = nil
     }
 
     private func hint(_ kind: Character, _ axis: Int?) -> String {
@@ -250,6 +264,7 @@ struct ModelViewport3D: View {
             if let turnNormal { session.setEmitNormal(index, turnNormal(session.emitNormal(index))) }
         }
         document.liveDrag()
+        session.modalRevision = document.revision
     }
 
     private func confirm() {
@@ -260,6 +275,7 @@ struct ModelViewport3D: View {
         session.status = ""
         session.modalOwner = nil
         session.modalConfirm = nil
+        session.modalAbandon = nil
     }
 
     private func cancel() {
@@ -269,6 +285,7 @@ struct ModelViewport3D: View {
         session.status = ""
         session.modalOwner = nil
         session.modalConfirm = nil
+        session.modalAbandon = nil
     }
 
     private func drawGrid(_ context: inout GraphicsContext, _ cam: ModelCamera) {

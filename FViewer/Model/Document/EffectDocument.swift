@@ -16,7 +16,9 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published var isolateSelection = false
     @Published private(set) var revision = 0 { didSet { if !dragging { previewRevision = revision } } }
     @Published private(set) var previewRevision = 0
+    var materialViewCache: (revision: Int, root: ObjectIdentifier?, values: [String: Any]) = (-1, nil, [:])
     private var dragging = false
+    var isDragging: Bool { dragging }
     @Published var density: [String: [Float]] = [:]
     var densityRevision = -1
     var densityJob: DensityJob?
@@ -59,11 +61,18 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     private var savedNames: [String: String] = [:]
 
+    private(set) var metaError: String?
+
     func saveMeta() {
-        if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty {
-            try? FileManager.default.removeItem(at: metaURL)
-        } else if let data = try? JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath)) {
-            try? data.write(to: metaURL, options: .atomic)
+        do {
+            if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty {
+                if FileManager.default.fileExists(atPath: metaURL.path) { try FileManager.default.removeItem(at: metaURL) }
+            } else {
+                try JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath)).write(to: metaURL, options: .atomic)
+            }
+            metaError = nil
+        } catch {
+            metaError = error.localizedDescription
         }
     }
 
@@ -172,6 +181,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     var originalFields: [String: [String: FieldValue]] = [:] { didSet { if originalFields.isEmpty { originalKeyCache = [:] } } }
     var originalKeyCache: [String: [CurveKeyPoint]?] = [:]
     var origins: [String: [Int]] = [:]
+    var graphLayout: [String: CGPoint] = [:]
 
     func originalID(_ id: String) -> String? {
         let parts = id.split(separator: "/", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
@@ -252,6 +262,13 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     var selectedNode: OutlineNode? { node(selectionID) }
 
+    func nodeID(of block: AvfxBlock) -> String? {
+        index.first { entry in
+            if case .avfx(let held, _, let record) = entry.value.payload, record == nil { return held === block }
+            return false
+        }?.key
+    }
+
     func visibilityKey(forNodeID id: String?) -> VisibilityKey? {
         guard var path = id else { return nil }
         while true {
@@ -298,7 +315,7 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     func amendLastUndo() {
         guard let lastRedo else { return }
-        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins)
+        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins, hidden: hidden)
         rebuildOutline()
         revision += 1
     }
@@ -315,6 +332,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         let selection: String?
         let names: [String: String]
         let origins: [String: [Int]]
+        let hidden: Set<VisibilityKey>
     }
 
     private final class SnapshotBox {
@@ -322,9 +340,9 @@ final class EffectDocument: ObservableObject, Identifiable {
         init(_ state: Snapshot) { self.state = state }
     }
 
-    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins) }
+    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins, hidden: hidden) }
 
-    private func restore(_ state: Snapshot) {
+    private func restore(_ state: Snapshot, other: Snapshot? = nil) {
         if let avfx = state.avfx { avfxRoot = avfx.deepCopy() }
         if let json = state.json { jsonRoot = json.deepCopy() }
         if origins != state.origins {
@@ -335,33 +353,48 @@ final class EffectDocument: ObservableObject, Identifiable {
             names = state.names
             saveMeta()
         }
+        if let other, other.hidden != state.hidden, hidden != state.hidden { hidden = state.hidden }
     }
 
     func registerUndo(_ title: String, undo: () -> Void, redo: () -> Void) {
         undo()
-        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins)
+        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins, hidden: hidden)
         redo()
-        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins))
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins, hidden: hidden))
     }
 
     func registerUndo(_ title: String, since before: Any) {
         guard let before = before as? Snapshot else { return }
-        if before.names == names, before.avfx?.serialized() == avfxRoot?.serialized(), before.json?.serialized() == jsonRoot?.serialized() { return }
-        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins))
+        if before.names == names, EffectDocument.same(before.avfx, avfxRoot, { $0.sameContent(as: $1) }), EffectDocument.same(before.json, jsonRoot, { $0.sameContent(as: $1) }) { return }
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins, hidden: hidden))
     }
 
     private var undoSuspended = false
 
     @discardableResult func batch<T>(_ title: String, _ body: () throws -> T) rethrows -> T {
         if undoSuspended { return try body() }
+        normalize()
         let before = snapshot()
-        let data = serializedData()
         undoSuspended = true
         defer {
             undoSuspended = false
-            if serializedData() != data { registerUndo(title, since: before) }
+            normalize()
+            registerUndo(title, since: before)
         }
         return try body()
+    }
+
+    private func normalize() {
+        avfxRoot?.updateCounts()
+        avfxRoot?.syncCumulativeLists()
+    }
+
+    private static func same<T>(_ a: T?, _ b: T?, _ equal: (T, T) -> Bool) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (x?, y?): return equal(x, y)
+        default: return false
+        }
     }
 
     static let undoLimit = 200
@@ -396,7 +429,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         lastRedo = grouped ? box : nil
         if grouped { undoManager.beginUndoGrouping() }
         undoManager.registerUndo(withTarget: self) { document in
-            document.restore(from)
+            document.restore(from, other: box.state)
             document.pushUndo(title, from: box.state, to: from)
             if let selection = from.selection, document.node(selection) != nil { document.selectionID = selection }
         }

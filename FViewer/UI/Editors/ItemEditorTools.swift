@@ -25,14 +25,6 @@ struct ItemTools: View {
     }
 }
 
-private func layerTexturePath(_ fields: [PropField], _ document: EffectDocument) -> String? {
-    let slots = document.textureSlots
-    for field in fields where field.tag == "TxNo" || field.tag.hasPrefix("TLst") || field.label.hasPrefix("Mask Texture") {
-        if case .int(let index) = field.read(), index >= 0, index < slots.count { return slots[index].path }
-    }
-    return nil
-}
-
 struct LifeGradientPanel: View {
     @ObservedObject var document: EffectDocument
     let particle: AvfxBlock
@@ -220,6 +212,7 @@ struct LayerStackPanel: View {
     @State private var target: String?
 
     static let order = ["TC1", "TC2", "TC3", "TC4", "TN", "TR", "TD", "TP"]
+    private static let memo = ViewMemo<CGImage?>()
 
     private var layers: [(node: OutlineNode, tag: String, fields: [PropField])] {
         var result: [(OutlineNode, String, [PropField])] = []
@@ -242,10 +235,20 @@ struct LayerStackPanel: View {
         let size = 96
         var out = [Float](repeating: 1, count: size * size * 4)
         var any = false
-        for layer in list where ["TC1", "TC2", "TC3", "TC4"].contains(layer.tag) {
-            guard field(layer.fields, "bEna")?.read() == .bool(true), let path = layerTexturePath(layer.fields, document),
+        var plainUv = false
+        if case .avfx(let particle, _, _) = particleNode.payload, PreviewRules.isOn("plainUv") {
+            let type = particle.int("PrVT")
+            plainUv = type == 2 || (type == 1 && !(particle.child("bSCt").map { $0.data.first == 1 } ?? false))
+        }
+        for layer in list where (plainUv ? ["TC1"] : ["TC1", "TC2", "TC3", "TC4"]).contains(layer.tag) {
+            guard field(layer.fields, "bEna")?.read() == .bool(true), let path = document.texturePath(fields: layer.fields),
                   let texture = app.decodedTexture(for: path), texture.width > 0, texture.height > 0 else { continue }
-            let colorMode = Int(field(layer.fields, "TCCT")?.read().number ?? 0), alphaMode = Int(field(layer.fields, "TCAT")?.read().number ?? 0)
+            var colorMode = Int(field(layer.fields, "TCCT")?.read().number ?? 0)
+            let alphaMode = Int(field(layer.fields, "TCAT")?.read().number ?? 0)
+            if layer.tag != "TC1", (colorMode == 1 && texture.alphaOnly && PreviewRules.isOn("addAlphaOnly")) || (colorMode == 5 && PreviewRules.isOn("calcColorFive")) {
+                colorMode = 9
+            }
+            let luminance = layer.tag == "TC1" && colorMode == 0 && PreviewRules.isOn("tc1Luminance")
             let toAlpha = field(layer.fields, "bC2A")?.read() == .bool(true)
             for y in 0..<size {
                 for x in 0..<size {
@@ -253,6 +256,10 @@ struct LayerStackPanel: View {
                     let o = (sy * texture.width + sx) * 4
                     var t = SIMD4<Float>(Float(texture.rgba[o]), Float(texture.rgba[o + 1]), Float(texture.rgba[o + 2]), Float(texture.rgba[o + 3])) / 255
                     if toAlpha { t = SIMD4(1, 1, 1, t.x * 0.299 + t.y * 0.587 + t.z * 0.114) }
+                    if luminance {
+                        let grey = t.x * 0.299 + t.y * 0.587 + t.z * 0.114
+                        t = SIMD4(grey, grey, grey, t.w)
+                    }
                     let at = (y * size + x) * 4
                     if !any {
                         out[at] = t.x; out[at + 1] = t.y; out[at + 2] = t.z; out[at + 3] = t.w
@@ -261,6 +268,7 @@ struct LayerStackPanel: View {
                     for c in 0..<3 {
                         let base = out[at + c], top = t[c]
                         switch colorMode {
+                        case 9: out[at + c] = base
                         case 1: out[at + c] = base + top
                         case 2: out[at + c] = base - top
                         case 3: out[at + c] = max(base, top)
@@ -324,7 +332,7 @@ struct LayerStackPanel: View {
         let enabled = field(layer.fields, "bEna")
         let on = enabled?.read() == .bool(true)
         return HStack(spacing: 6) {
-            thumbnail(layerTexturePath(layer.fields, document))
+            thumbnail(document.texturePath(fields: layer.fields))
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     if let enabled { FieldControl(document: document, field: enabled, label: "").frame(width: 22) }
@@ -360,7 +368,7 @@ struct LayerStackPanel: View {
                     VStack(spacing: 4) {
                         ZStack {
                             CheckerBackground()
-                            if let image = composite(list) {
+                            if let image = LayerStackPanel.memo.value("\(document.id)|\(document.revision)|\(PreviewRules.token)|\(app.textureRevision)|\(app.libraryToken)|\(particleNode.id)", { composite(list) }) {
                                 Image(decorative: image, scale: 1).resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
                             }
                         }
@@ -385,7 +393,7 @@ struct SimpleGridPanel: View {
         guard let particle = document.node(parts) else { return nil }
         for child in particle.children {
             if case .avfx(let block, _, let record) = child.payload, record == nil, block.tag == "TC1" {
-                return layerTexturePath(document.sections(for: child).flatMap(\.fields), document)
+                return document.texturePath(fields: document.sections(for: child).flatMap(\.fields))
             }
         }
         return nil
@@ -524,8 +532,10 @@ struct CreationRibbonPanel: View {
         return (rows, life)
     }
 
+    private static let memo = ViewMemo<(rows: [Row], life: Float)>()
+
     var body: some View {
-        let data = build()
+        let data = CreationRibbonPanel.memo.value("\(document.id)|\(document.revision)|\(ObjectIdentifier(emitter).hashValue)") { build() }
         if !data.rows.isEmpty {
             Panel(title: "Creation over Life", trailing: "\(Int(data.life)) frames") {
                 ForEach(Array(data.rows.enumerated()), id: \.offset) { _, row in

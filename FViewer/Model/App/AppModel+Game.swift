@@ -34,15 +34,19 @@ extension AppModel {
     func restoreGameFolder() {
         let arguments = CommandLine.arguments
         if let flag = arguments.firstIndex(of: "--game"), flag + 1 < arguments.count {
-            try? setGameFolder(URL(fileURLWithPath: arguments[flag + 1]))
+            do { try setGameFolder(URL(fileURLWithPath: arguments[flag + 1])) } catch { notice = "The game folder could not be opened: \(error.localizedDescription)" }
             return
         }
         guard let bookmark = UserDefaults.standard.data(forKey: AppModel.gameBookmarkKey) else { return }
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, bookmarkDataIsStale: &stale) else { return }
         _ = url.startAccessingSecurityScopedResource()
-        try? setGameFolder(url)
-        notice = nil
+        do {
+            try setGameFolder(url)
+            notice = nil
+        } catch {
+            notice = "The game folder \(url.lastPathComponent) could not be opened again: \(error.localizedDescription). Choose it once more in the Game Catalog"
+        }
     }
 
     var gameExtractFolder: URL? {
@@ -349,7 +353,12 @@ extension AppModel {
         panel.title = "Export Sound"
         panel.nameFieldStringValue = file.url.deletingPathExtension().lastPathComponent + "_\(audio.id)." + (wave != nil ? "wav" : audio.format == 0x06 ? "ogg" : "bin")
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? Data(data).write(to: url, options: .atomic)
+        do {
+            try Data(data).write(to: url, options: .atomic)
+            notice = "Exported \(url.lastPathComponent)"
+        } catch {
+            errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
+        }
     }
 
     func replaceScdSound(_ file: GameFileDocument, _ audio: ScdAudio) {
@@ -482,6 +491,22 @@ extension AppModel {
         return (skeleton.names.count, points.count)
     }
 
+    private func grantFolder(of file: URL, purpose: String) -> URL? {
+        let folder = file.deletingLastPathComponent()
+        if (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) != nil { return folder }
+        let panel = NSOpenPanel()
+        panel.title = "Allow Access to the Folder"
+        panel.message = "To read the \(purpose) next to \(file.lastPathComponent), allow FViewer to open its folder or a folder above it."
+        panel.directoryURL = folder
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Allow"
+        guard panel.runModal() == .OK, let granted = panel.url else { return nil }
+        _ = granted.startAccessingSecurityScopedResource()
+        return granted
+    }
+
     func loadSkeletonPanel() {
         let panel = NSOpenPanel()
         panel.title = "Load Skeleton"
@@ -490,10 +515,12 @@ extension AppModel {
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
         panel.prompt = "Load"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let picked = panel.url else { return }
+        let folder = grantFolder(of: picked, purpose: "bind points (.eid)")
+        let url = folder.map { $0.appendingPathComponent(picked.lastPathComponent) } ?? picked
         do {
             let result = try loadSkeleton(url)
-            if let bookmark = try? url.deletingLastPathComponent().bookmarkData(options: .withSecurityScope) {
+            if let bookmark = try? (folder ?? url.deletingLastPathComponent()).bookmarkData(options: .withSecurityScope) {
                 UserDefaults.standard.set(bookmark, forKey: "skeletonBookmark")
                 UserDefaults.standard.set(url.lastPathComponent, forKey: "skeletonFile")
             }
@@ -606,7 +633,9 @@ extension AppModel {
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
         panel.prompt = "Load"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let picked = panel.url else { return }
+        let folder = grantFolder(of: picked, purpose: "materials and textures")
+        let url = folder.map { $0.appendingPathComponent(picked.lastPathComponent) } ?? picked
         do {
             let result = try loadReferenceModel(url)
             notice = "Model \(url.lastPathComponent): \(result.meshes) meshes, \(result.triangles) triangles, \(referenceTextured) textured"
@@ -739,7 +768,7 @@ extension AppModel {
     }
 
     func findTimelines(using document: EffectDocument) {
-        if !gameFiles.isEmpty {
+        if gameFiles.contains(where: { ["tmb", "pap"].contains($0.url.pathExtension.lowercased()) }) {
             var base = document.url.deletingPathExtension().lastPathComponent.lowercased()
             if document.isEditedCopy, base.hasSuffix(EffectDocument.editSuffix.lowercased()) { base.removeLast(EffectDocument.editSuffix.count) }
             timelineHitsTitle = "Timelines Using This Effect"

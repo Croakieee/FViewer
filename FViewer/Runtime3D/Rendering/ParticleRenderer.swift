@@ -53,7 +53,7 @@ private final class GeometryBuffers {
     weak var owner: RenderGeometry?
     let vertexFloats: Int
 
-    func matches(_ g: RenderGeometry) -> Bool { owner === g && g.indices.count == indexCount && g.vertices.count == vertexFloats }
+    func matches(_ g: RenderGeometry) -> Bool { owner === g && g.indices.count == indexCount && g.vertices.count == vertexFloats && g.version == version }
 
     init?(_ device: MTLDevice, _ g: RenderGeometry) {
         owner = g

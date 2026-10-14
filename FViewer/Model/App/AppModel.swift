@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 
-struct LibraryFile: Identifiable, Hashable {
+nonisolated struct LibraryFile: Identifiable, Hashable, Sendable {
     let url: URL
     let folder: String
     var id: URL { url }
@@ -55,6 +55,11 @@ final class AppModel: ObservableObject {
     private var textureInfo: [URL: String] = [:]
     private var meshCache: [URL: MeshData] = [:]
     private var decodedCache: [URL: DecodedTexture] = [:]
+    private var pendingTextures: Set<URL> = []
+    private var failedTextures: Set<URL> = []
+    @Published private(set) var textureRevision = 0
+    private var textureBumpQueued = false
+    private static let textureQueue = DispatchQueue(label: "croakie.FViewer.textures", qos: .userInitiated, attributes: .concurrent)
     private var textureAddress: [String: (u: String, v: String)] = [:]
     private(set) var libraryToken = 0
     private var documentSink: AnyCancellable?
@@ -71,6 +76,9 @@ final class AppModel: ObservableObject {
         if let flag = arguments.firstIndex(of: "--open"), flag + 1 < arguments.count {
             open(URL(fileURLWithPath: arguments[flag + 1]))
         }
+        #if FV_UITEST
+        DebugSnapshot.schedule(self)
+        #endif
         AppDelegate.model = self
         restoreGameFolder()
         restoreSkeleton()
@@ -97,86 +105,44 @@ final class AppModel: ObservableObject {
         var stale = false
         guard let url = try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope, bookmarkDataIsStale: &stale) else { return }
         _ = url.startAccessingSecurityScopedResource()
+        if stale, let fresh = try? url.bookmarkData(options: .withSecurityScope) { UserDefaults.standard.set(fresh, forKey: AppModel.bookmarkKey) }
         setLibrary(url)
     }
 
-    private var jsonKinds: [String: (size: Int, date: Date, effect: Bool)] = [:]
-
-    private func isEffectJSON(_ url: URL) -> Bool {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        let size = values?.fileSize ?? 0, date = values?.contentModificationDate ?? .distantPast
-        guard size > 0, size < 2_000_000 else { return false }
-        if let known = jsonKinds[url.path], known.size == size, known.date == date { return known.effect }
-        var effect = false
-        if let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) {
-            effect = text.contains("\"emitters\"") && text.contains("\"particles\"")
-        }
-        jsonKinds[url.path] = (size, date, effect)
-        return effect
-    }
+    private var jsonKinds: [String: JsonKind] = [:]
+    private var libraryTicket = 0
+    @Published private(set) var libraryScanning = false
 
     func setLibrary(_ root: URL) {
         libraryRoot = root
-        textureFiles = [:]
-        texturePaths = [:]
-        modelFiles = [:]
-        textureAddress = [:]
-        var found: [LibraryFile] = []
-        var others: [LibraryFile] = []
-        let skipped: Set<String> = ["node_modules", ".git", ".idea", "reference", "Dalamud-VFXEditor-main"]
-        let rootPath = root.standardizedFileURL.path
-        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return }
-        for case let url as URL in walker {
-            if skipped.contains(url.lastPathComponent) {
-                walker.skipDescendants()
-                continue
-            }
-            let ext = url.pathExtension.lowercased()
-            let relative = String(url.standardizedFileURL.path.dropFirst(rootPath.count + 1))
-            let folder = (relative as NSString).deletingLastPathComponent
-            let base = url.deletingPathExtension().lastPathComponent.lowercased()
-            switch ext {
-            case "avfx":
-                found.append(LibraryFile(url: url, folder: folder))
-            case "atex", "tex":
-                textureFiles[url.lastPathComponent.lowercased()] = url
-                texturePaths[relative.lowercased()] = url
-            case "png":
-                if textureFiles[base] == nil { textureFiles[base] = url }
-            case "json":
-                if url.lastPathComponent == "game-textures.json" {
-                    readTextureManifest(url)
-                } else if url.deletingLastPathComponent().lastPathComponent == "models" {
-                    modelFiles[base] = url
-                } else if isEffectJSON(url) {
-                    found.append(LibraryFile(url: url, folder: folder))
-                }
-            case "tmb", "pap", "eid", "scd", "mdl", "mtrl", "sklb", "skp", "phyb", "kdb", "pbd", "atch", "shpk", "shcd", "uld", "imc":
-                others.append(LibraryFile(url: url, folder: folder))
-            default:
-                let name = url.lastPathComponent.lowercased()
-                if name.hasPrefix("~"), name.count >= 9, textureFiles[name] == nil { textureFiles[name] = url }
+        libraryTicket += 1
+        let ticket = libraryTicket, known = jsonKinds
+        libraryScanning = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let scan = LibraryScan.run(root, known: known)
+            DispatchQueue.main.async {
+                guard let self, ticket == self.libraryTicket else { return }
+                self.apply(scan)
             }
         }
-        files = found.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
-        gameFiles = others.sorted { ($0.folder, $0.name) < ($1.folder, $1.name) }
+    }
+
+    private func apply(_ scan: LibraryScan) {
+        textureFiles = scan.textureFiles
+        texturePaths = scan.texturePaths
+        modelFiles = scan.modelFiles
+        textureAddress = scan.textureAddress
+        jsonKinds = scan.jsonKinds
+        files = scan.files
+        gameFiles = scan.others
         MaterialPixels.shared.reset()
         imageCache = [:]
         meshCache = [:]
         decodedCache = [:]
+        failedTextures = []
+        libraryScanning = false
         libraryToken += 1
         objectWillChange.send()
-    }
-
-    private func readTextureManifest(_ url: URL) {
-        guard let data = try? Data(contentsOf: url), let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else { return }
-        for (name, entry) in manifest {
-            if let mode = entry["address"] as? String {
-                textureAddress[name.lowercased()] = (mode, mode)
-            } else if let modes = entry["address"] as? [String: String] {
-                textureAddress[name.lowercased()] = (modes["u"] ?? "repeat", modes["v"] ?? "repeat")
-            }
-        }
     }
 
     func openFilePanel() {
@@ -196,11 +162,35 @@ final class AppModel: ObservableObject {
             documents[url] = opened
             remember(url)
             document = opened
+            documentOrder.removeAll { $0 == url }
+            documentOrder.append(url)
+            evictDocuments()
             scheduleThumbnail(for: url)
-            documentSink = opened.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+            let relevant: [AnyPublisher<Void, Never>] = [
+                opened.$url.map { _ in () }.eraseToAnyPublisher(), opened.$revision.map { _ in () }.eraseToAnyPublisher(),
+                opened.$isDirty.map { _ in () }.eraseToAnyPublisher(), opened.$undoTitles.map { _ in () }.eraseToAnyPublisher(),
+                opened.$redoTitles.map { _ in () }.eraseToAnyPublisher(), opened.$exportRequest.map { _ in () }.eraseToAnyPublisher(),
+                opened.$names.map { _ in () }.eraseToAnyPublisher(), opened.$showOriginal.map { _ in () }.eraseToAnyPublisher(),
+            ]
+            documentSink = Publishers.MergeMany(relevant).dropFirst(relevant.count).sink { [weak self, weak opened] _ in
+                if opened?.isDragging != true { self?.objectWillChange.send() }
+            }
         } catch {
             errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
         }
+    }
+
+    static let keptDocuments = 8
+    private var documentOrder: [URL] = []
+
+    private func evictDocuments() {
+        var excess = documents.count - AppModel.keptDocuments
+        for url in documentOrder where excess > 0 {
+            guard let kept = documents[url], kept !== document, !kept.isDirty else { continue }
+            documents[url] = nil
+            excess -= 1
+        }
+        documentOrder.removeAll { documents[$0] == nil }
     }
 
     var dirtyDocuments: [EffectDocument] { documents.values.filter(\.isDirty).sorted { $0.title < $1.title } }
@@ -466,7 +456,7 @@ final class AppModel: ObservableObject {
     func transformedTexture(_ block: AvfxBlock, _ operation: TextureOperation) throws -> TextureImage {
         let path = block.stringValue
         var source: TextureImage?
-        if let decoded = decodedTexture(for: path) {
+        if let decoded = decodedTexture(for: path, wait: true) {
             var rgba = decoded.rgba
             if decoded.alphaOnly {
                 for i in stride(from: 0, to: rgba.count, by: 4) {
@@ -572,8 +562,10 @@ final class AppModel: ObservableObject {
         recentCache = nil
     }
 
+    private static var scoped: Set<URL> = []
+
     func openRecent(_ url: URL) {
-        _ = url.startAccessingSecurityScopedResource()
+        if !AppModel.scoped.contains(url), url.startAccessingSecurityScopedResource() { AppModel.scoped.insert(url) }
         open(url)
     }
 
@@ -774,6 +766,12 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private static var autosaveFailedFlag = false
+    private var autosaveFailed: Bool {
+        get { AppModel.autosaveFailedFlag }
+        set { AppModel.autosaveFailedFlag = newValue }
+    }
+
     @discardableResult func autosaveNow() -> Int {
         guard let folder = autosaveFolder else { return 0 }
         let formatter = DateFormatter()
@@ -783,7 +781,14 @@ final class AppModel: ObservableObject {
             let folderMark = String(format: "%04x", ZipWriter.crc32(Array(document.url.deletingLastPathComponent().path.utf8)) & 0xffff)
             let base = document.url.deletingPathExtension().lastPathComponent + "~" + folderMark
             let name = "\(base)-\(formatter.string(from: Date())).\(document.url.pathExtension)"
-            if (try? document.serializedData().write(to: folder.appendingPathComponent(name), options: .atomic)) != nil { written += 1 }
+            do {
+                try document.serializedData().write(to: folder.appendingPathComponent(name), options: .atomic)
+                written += 1
+                autosaveFailed = false
+            } catch {
+                if !autosaveFailed { notice = "Autosave of \(document.title) failed: \(error.localizedDescription)" }
+                autosaveFailed = true
+            }
             let older = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
                 .filter { url in
                     let stem = url.deletingPathExtension().lastPathComponent
@@ -1059,10 +1064,19 @@ final class AppModel: ObservableObject {
         do {
             try document.save()
             moved(document, from: old)
+            reportMeta(document)
         } catch {
-            notice = "Could not save next to the file (\(error.localizedDescription)). Choose where to save it"
-            saveAs()
+            let alert = NSAlert()
+            alert.messageText = "Could not save \(document.saveDestination.lastPathComponent)"
+            alert.informativeText = error.localizedDescription + "\n\nThe app may not have permission to write in this folder. Choose another place to save the effect."
+            alert.addButton(withTitle: "Save As…")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn { saveAs() }
         }
+    }
+
+    private func reportMeta(_ document: EffectDocument) {
+        if let problem = document.metaError { notice = "Saved \(document.title), but its node names file could not be written: \(problem)" }
     }
 
     private func moved(_ document: EffectDocument, from old: URL) {
@@ -1088,6 +1102,7 @@ final class AppModel: ObservableObject {
             let old = document.url
             try document.save(to: url)
             moved(document, from: old)
+            reportMeta(document)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -1161,40 +1176,82 @@ final class AppModel: ObservableObject {
         return textureFiles[hashed] ?? textureFiles.filter { ($0.key as NSString).deletingPathExtension == hashed }.min { $0.key < $1.key }?.value
     }
 
-    func image(for path: String) -> CGImage? {
+    func image(for path: String, wait: Bool = false) -> CGImage? {
         guard let url = textureURL(path) else { return nil }
         if let cached = imageCache[url] { return cached }
-        var image: CGImage?
         if url.pathExtension.lowercased() == "png" {
-            if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
-                image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-                if let image { textureInfo[url] = "PNG · \(image.width)×\(image.height)" }
-            }
-        } else if let data = try? Data(contentsOf: url) {
-            do {
-                let decoded = try Atex.decode([UInt8](data))
-                image = decoded.makeImage()
-                textureInfo[url] = "\(decoded.formatName) · \(decoded.width)×\(decoded.height) · mip \(decoded.mipLevels)"
-            } catch {
-                textureInfo[url] = error.localizedDescription
-            }
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+            textureInfo[url] = "PNG · \(image.width)×\(image.height)"
+            remember(image, for: url)
+            return image
         }
-        if let image {
-            if imageCache.count >= 600 { imageCache.removeAll() }
-            imageCache[url] = image
+        if let decoded = decodedCache[url], let image = decoded.makeImage() {
+            remember(image, for: url)
+            return image
         }
-        return image
+        if wait {
+            store(url, AppModel.decode(url))
+            return imageCache[url]
+        }
+        loadTexture(url)
+        return nil
     }
 
-    func decodedTexture(for path: String) -> DecodedTexture? {
-        guard let url = textureURL(path) else { return nil }
+    func decodedTexture(for path: String, wait: Bool = false) -> DecodedTexture? {
+        guard let url = textureURL(path), url.pathExtension.lowercased() != "png" else { return nil }
         if let cached = decodedCache[url] { return cached }
-        guard url.pathExtension.lowercased() != "png", let data = try? Data(contentsOf: url), let decoded = try? Atex.decode([UInt8](data)) else {
-            return nil
+        if wait {
+            store(url, AppModel.decode(url))
+            return decodedCache[url]
         }
-        if decodedCache.count >= 48 { decodedCache.removeAll() }
-        decodedCache[url] = decoded
-        return decoded
+        loadTexture(url)
+        return nil
+    }
+
+    private func remember(_ image: CGImage, for url: URL) {
+        if imageCache.count >= 600 { imageCache.removeAll() }
+        imageCache[url] = image
+    }
+
+    private nonisolated static func decode(_ url: URL) -> Result<(DecodedTexture, CGImage?), Error> {
+        Result {
+            let decoded = try Atex.decode([UInt8](try Data(contentsOf: url)))
+            return (decoded, decoded.makeImage())
+        }
+    }
+
+    private func store(_ url: URL, _ result: Result<(DecodedTexture, CGImage?), Error>) {
+        switch result {
+        case .success(let (decoded, image)):
+            if decodedCache.count >= 48 { decodedCache.removeAll() }
+            decodedCache[url] = decoded
+            if let image { remember(image, for: url) }
+            textureInfo[url] = "\(decoded.formatName) · \(decoded.width)×\(decoded.height) · mip \(decoded.mipLevels)"
+            failedTextures.remove(url)
+        case .failure(let error):
+            textureInfo[url] = error.localizedDescription
+            failedTextures.insert(url)
+        }
+    }
+
+    private func loadTexture(_ url: URL) {
+        guard !failedTextures.contains(url), pendingTextures.insert(url).inserted else { return }
+        let token = libraryToken
+        AppModel.textureQueue.async { [weak self] in
+            let result = AppModel.decode(url)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.pendingTextures.remove(url)
+                guard token == self.libraryToken else { return }
+                self.store(url, result)
+                guard !self.textureBumpQueued else { return }
+                self.textureBumpQueued = true
+                DispatchQueue.main.async {
+                    self.textureBumpQueued = false
+                    self.textureRevision += 1
+                }
+            }
+        }
     }
 
     func addressModes(for name: String) -> (u: String, v: String) {

@@ -115,11 +115,10 @@ final class GeometryBuffers {
 public final class MetalRenderer: ViewFactory {
     public let device: MTLDevice
     private var pipelines: [BlendMode: MTLRenderPipelineState] = [:]
-    private var materialPipelines: [String: [BlendMode: MTLRenderPipelineState]] = [:]
-    private var failedMaterials: Set<String> = []
+    private var materialPipelines: [Int: [BlendMode: MTLRenderPipelineState]] = [:]
+    private var failedMaterials: Set<Int> = []
     private let pixelFormat: MTLPixelFormat
     private let vertexFunction: MTLFunction?
-    public static var lastMaterialError: String?
     private var textures: [String: VfxTexture] = [:]
     private let white: VfxTexture
     private var shared: [ObjectIdentifier: GeometryBuffers] = [:]
@@ -177,50 +176,84 @@ public final class MetalRenderer: ViewFactory {
     }
 
     private static var checked: [String: String] = [:]
+    private static var checking: Set<String> = []
+    private static var libraries: [String: MTLLibrary] = [:]
+
+    private static func describe(_ error: Error) -> String {
+        let text = String(describing: error)
+        return text.components(separatedBy: "error: ").dropFirst().first?.components(separatedBy: "\n").first ?? text
+    }
+
+    private static func remember(_ body: String, problem: String, library: MTLLibrary?) {
+        if checked.count > 200 { checked = [:] }
+        checked[body] = problem
+        if let library {
+            if libraries.count > 32 { libraries = [:] }
+            libraries[body] = library
+        }
+    }
 
     public static func shaderProblem(_ graph: MaterialGraph, device: MTLDevice) -> String? {
         let body = graph.compile().code
         guard !body.isEmpty else { return nil }
         if let known = checked[body] { return known.isEmpty ? nil : known }
-        var problem = ""
         do {
-            _ = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
+            let library = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
+            remember(body, problem: "", library: library)
+            return nil
         } catch {
-            let text = String(describing: error)
-            problem = text.components(separatedBy: "error: ").dropFirst().first?.components(separatedBy: "\n").first ?? text
+            let problem = describe(error)
+            remember(body, problem: problem, library: nil)
+            return problem
         }
-        if checked.count > 200 { checked = [:] }
-        checked[body] = problem
-        return problem.isEmpty ? nil : problem
     }
 
-    func materialKey(_ compiled: MaterialGraph.Compiled) -> String? {
+    public enum ShaderCheck {
+        case ready
+        case failed(String)
+        case pending
+    }
+
+    public static func checkShader(_ compiled: MaterialGraph.Compiled, device: MTLDevice, done: @escaping () -> Void) -> ShaderCheck {
         let body = compiled.code
-        guard !body.isEmpty else { return nil }
-        if materialPipelines[body] != nil { return body }
-        if failedMaterials.contains(body) { return nil }
-        return buildMaterial(body) ? body : nil
+        guard !body.isEmpty else { return .ready }
+        if let known = checked[body] { return known.isEmpty ? .ready : .failed(known) }
+        guard checking.insert(body).inserted else { return .pending }
+        device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil) { library, error in
+            DispatchQueue.main.async {
+                checking.remove(body)
+                remember(body, problem: library == nil ? error.map(describe) ?? "Shader did not compile" : "", library: library)
+                done()
+            }
+        }
+        return .pending
     }
 
-    private func buildMaterial(_ body: String) -> Bool {
+    func materialKey(_ compiled: MaterialGraph.Compiled, key: Int) -> Int? {
+        guard !compiled.code.isEmpty else { return nil }
+        if materialPipelines[key] != nil { return key }
+        if failedMaterials.contains(key) { return nil }
+        return buildMaterial(key, compiled.code) ? key : nil
+    }
+
+    private func buildMaterial(_ key: Int, _ body: String) -> Bool {
         if materialPipelines.count >= 48 { materialPipelines.removeAll() }
         if failedMaterials.count >= 256 { failedMaterials.removeAll() }
         do {
-            let library = try device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
-            materialPipelines[body] = try makePipelines(vertex: library.makeFunction(name: "particleVertex"),
+            let library = try MetalRenderer.libraries[body] ?? device.makeLibrary(source: particleShaderHeader + particleFragmentSource(name: "materialFragment", body: body), options: nil)
+            MetalRenderer.remember(body, problem: "", library: library)
+            materialPipelines[key] = try makePipelines(vertex: library.makeFunction(name: "particleVertex"),
                                                         fragment: library.makeFunction(name: "materialFragment"))
-            MetalRenderer.lastMaterialError = nil
             return true
         } catch {
-            failedMaterials.insert(body)
-            MetalRenderer.lastMaterialError = String(describing: error)
+            failedMaterials.insert(key)
             return false
         }
     }
 
-    func pipeline(_ blend: BlendMode, material: String?) -> MTLRenderPipelineState {
+    func pipeline(_ blend: BlendMode, material: Int?, code: String) -> MTLRenderPipelineState {
         if let material {
-            if materialPipelines[material] == nil, !failedMaterials.contains(material) { _ = buildMaterial(material) }
+            if materialPipelines[material] == nil, !failedMaterials.contains(material) { _ = buildMaterial(material, code) }
             if let pipeline = materialPipelines[material]?[blend] { return pipeline }
         }
         return pipelines[blend]!
@@ -312,7 +345,7 @@ public final class MetalRenderer: ViewFactory {
         encoder.setFrontFacing(.counterClockwise)
         let ordered = views.sorted { $0.priority != $1.priority ? $0.priority < $1.priority : $0.order < $1.order }
         for v in ordered {
-            v.encode(encoder, pipeline: pipeline(v.blend, material: v.materialKey), half: half, zoom: zoom, pan: pan)
+            v.encode(encoder, pipeline: pipeline(v.blend, material: v.materialKey, code: v.materialCode), half: half, zoom: zoom, pan: pan)
         }
     }
 }
@@ -329,7 +362,8 @@ final class MetalParticleView: ParticleView {
     private var perspective: Float = 0
     private var fragment = FragmentUniforms()
     private let textures: [VfxTexture]
-    let materialKey: String?
+    let materialKey: Int?
+    let materialCode: String
 
     init(_ spec: ParticleViewSpec, _ buffers: GeometryBuffers, renderer: MetalRenderer, order: Int) {
         blend = spec.blend
@@ -368,15 +402,18 @@ final class MetalParticleView: ParticleView {
             fragment.lightDir = SIMD4(direction.x, direction.y, direction.z, 0)
             fragment.lightColor = SIMD4(tint.x, tint.y, tint.z, 1)
             fragment.ambient = SIMD4(fill.x, fill.y, fill.z, 1)
-            let compiled = graph.compile()
+            let prepared = spec.compiled ?? { let made = graph.compile(); return (made, made.key) }()
+            let compiled = prepared.material
+            materialCode = compiled.code
             withUnsafeMutableBytes(of: &fragment.params) { raw in
                 let slots = raw.bindMemory(to: Float.self)
                 for (index, value) in compiled.values.prefix(slots.count).enumerated() { slots[index] = value }
             }
-            materialKey = renderer.materialKey(compiled)
+            materialKey = renderer.materialKey(compiled, key: prepared.key)
             for slot in 0..<MaterialGraph.maxTextures { bound.append(renderer.texture(slot < compiled.textures.count ? compiled.textures[slot] : nil)) }
         } else {
             materialKey = nil
+            materialCode = ""
             for _ in 0..<MaterialGraph.maxTextures { bound.append(renderer.texture(nil)) }
         }
         textures = bound
