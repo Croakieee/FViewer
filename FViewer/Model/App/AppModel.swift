@@ -1048,9 +1048,11 @@ final class AppModel: ObservableObject {
             files.append((effect.path, [UInt8](effect.document.serializedData()), option))
         }
         for path in Set(textures).sorted() {
+            let option = min(group?.textures[path] ?? 0, group?.options.count ?? 0)
+            guard seen.insert("\(option)|" + PenumbraExport.normalized(path)).inserted else { continue }
             guard let url = textureURL(path) else { throw AvfxError.malformed("\(path) was not found in the open folder") }
             if url.pathExtension.lowercased() == "png" { throw AvfxError.malformed("\(path) resolves to a PNG; convert it with Replace Image first") }
-            files.append((path, [UInt8](try Data(contentsOf: url)), min(group?.textures[path] ?? 0, group?.options.count ?? 0)))
+            files.append((path, [UInt8](try Data(contentsOf: url)), option))
         }
         return files
     }

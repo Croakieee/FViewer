@@ -241,8 +241,7 @@ enum GameFiles {
         guard header > 0, header + 0x20 <= b.count else { return [] }
         let soundCount = i16(b, header), trackCount = i16(b, header + 2), audioCount = i16(b, header + 4)
         guard soundCount >= 0, trackCount >= 0, audioCount >= 0, audioCount < 4096 else { return [] }
-        func padded(_ count: Int) -> Int { (count * 4 + 15) / 16 * 16 }
-        let table = header + 0x20 + padded(soundCount) + padded(trackCount)
+        let table = scdAudioTable(b, header: header, sounds: soundCount, tracks: trackCount)
         var result: [ScdAudio] = []
         for index in 0..<audioCount {
             let offset = i32(b, table + index * 4)

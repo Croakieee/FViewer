@@ -13,7 +13,7 @@ struct GameSkeleton {
 
     static func parse(_ bytes: [UInt8]) -> GameSkeleton? {
         guard bytes.count > 0x40, bytes[0] == 0x62, bytes[1] == 0x6C, bytes[2] == 0x6B, bytes[3] == 0x73 else { return nil }
-        let start = bytes.u32(4) == 0x3133_3030 ? Int(bytes.u32(12)) : Int(bytes.u16(10))
+        let start = bytes.u16(6) == 0x3133 ? Int(bytes.u32(12)) : Int(bytes.u16(10))
         guard start > 0, start < bytes.count - 48 else { return nil }
         let hk = Array(bytes[start...])
         let n = hk.count
@@ -30,22 +30,19 @@ struct GameSkeleton {
             }
             return true
         }
-        var count = 0, pose = 0
+        var runs: [(offset: Int, count: Int)] = []
         var o = 0
         while o < n - 48 {
             if isPose(o) {
                 var k = 0
                 while isPose(o + 48 * k) { k += 1 }
-                if k > count {
-                    count = k
-                    pose = o
-                }
+                runs.append((o, k))
                 o += k > 1 ? 48 * k : 1
             } else {
                 o += 1
             }
         }
-        guard count > 0 else { return nil }
+        guard let longest = runs.map(\.count).max(), longest > 0 else { return nil }
         func varint(_ at: inout Int) -> Int? {
             var value = 0, shift = 0
             while at < n, shift < 35 {
@@ -58,11 +55,13 @@ struct GameSkeleton {
             return nil
         }
         func signed(_ v: Int) -> Int { v & 1 != 0 ? -(v >> 1) : v >> 1 }
+        var best: GameSkeleton?
         var from = 0
-        while from < pose - 2 {
+        while from < n - 2 {
             defer { from += 1 }
             var at = from
-            guard let c = varint(&at), c == count * 2, at < n, hk[at] == 8 else { continue }
+            guard let c = varint(&at), c >= 2, c % 2 == 0, c / 2 <= longest, c / 2 > (best?.names.count ?? 0), at < n, hk[at] == 8 else { continue }
+            let count = c / 2
             at += 1
             var parents: [Int] = []
             var good = true
@@ -83,6 +82,9 @@ struct GameSkeleton {
                 at += length
             }
             guard good, names.count == count else { continue }
+            guard let pose = runs.first(where: { $0.offset > from && $0.count == count })?.offset
+                ?? runs.first(where: { $0.offset > from && $0.count >= count })?.offset
+                ?? runs.first(where: { $0.count == count })?.offset else { continue }
             var world: [simd_float4x4] = []
             for i in 0..<count {
                 let b = pose + i * 48
@@ -93,9 +95,9 @@ struct GameSkeleton {
                 local.columns.3 = SIMD4(t.x, t.y, t.z, 1)
                 world.append(parents[i] >= 0 ? world[parents[i]] * local : local)
             }
-            return GameSkeleton(names: names, parents: parents, world: world)
+            best = GameSkeleton(names: names, parents: parents, world: world)
         }
-        return nil
+        return best
     }
 
     func bindPoints(_ eid: [EidPoint]) -> [Int: SIMD3<Float>] {

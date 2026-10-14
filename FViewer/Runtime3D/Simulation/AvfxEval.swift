@@ -47,8 +47,11 @@ extension RCurve {
     }
 
     func eval3(_ time: CurveTime) -> Vec3 {
-        guard let first = keys.first, let last = keys.last else { return .zero }
-        if keys.count == 1 { return value(first) }
+        let count = keys.count
+        guard count > 0 else { return .zero }
+        let first = keys[0]
+        if count == 1 { return value(first) }
+        let last = keys[count - 1]
         var t = post == 2 && PreviewRules.isOn("periodicCurves") ? time.total : time.t
         let start = Float(first.time), end = Float(last.time)
         let duration = end - start
@@ -69,7 +72,7 @@ extension RCurve {
             out = value(last)
         } else {
             var i = 1
-            while i < keys.count - 1 && Float(keys[i].time) < t { i += 1 }
+            while i < count - 1 && Float(keys[i].time) < t { i += 1 }
             out = segment(i, t)
         }
         if cycles != 0 { out += cycles * (value(last) - value(first)) }

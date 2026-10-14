@@ -16,6 +16,7 @@ final class SpriteCloud {
         var scaleX: Float
         var scaleY: Float
         var rotation: Float
+        var tilt = SIMD2<Float>(0, 0)
         var cell: Int
         var world = false
     }
@@ -82,6 +83,12 @@ final class SpriteCloud {
         var direction = point?.normal ?? Vec3(random.range(-1, 1), random.range(-1, 1), random.range(-1, 1))
         if simd_length_squared(direction) < 1e-6 { direction = Vec3(0, 1, 0) }
         direction = simd_normalize(direction)
+        if point == nil, a.injectionDirection == 1, PreviewRules.isOn("spriteCone") {
+            let low = min(max(min(a.radialFrom, a.radialTo), 0), .pi), high = min(max(max(a.radialFrom, a.radialTo), 0), .pi)
+            let cosine = random.range(cos(high), cos(low)), turn = random.range(0, 2 * .pi)
+            let sine = max(0, 1 - cosine * cosine).squareRoot()
+            direction = Vec3(sine * cos(turn), cosine, sine * sin(turn))
+        }
         let kx = random.range(min(a.scaleRandomX.x, a.scaleRandomX.y), max(a.scaleRandomX.x, a.scaleRandomX.y))
         let ky = a.scaleRandomLink ? kx : random.range(min(a.scaleRandomY.x, a.scaleRandomY.y), max(a.scaleRandomY.x, a.scaleRandomY.y))
         let cells = a.uvCellsU * a.uvCellsV
@@ -90,7 +97,9 @@ final class SpriteCloud {
         let block = Float(Int(random.next() * Float(a.blockCount))) * 2 * .pi / Float(a.blockCount)
         let rotation = a.rotStart + random.range(-1, 1) * a.rotRandom + block
         let cell = cells > 1 && a.uvRandom > 0 ? Int(random.next() * Float(min(a.uvRandom, cells))) : 0
-        return Sprite(position: position, velocity: direction * speed, scaleX: kx, scaleY: ky, rotation: rotation, cell: cell)
+        var tilt = a.tiltStart
+        if a.tiltRandom != .zero, PreviewRules.isOn("spriteTilt") { tilt += SIMD2(random.range(-1, 1), random.range(-1, 1)) * a.tiltRandom }
+        return Sprite(position: position, velocity: direction * speed, scaleX: kx, scaleY: ky, rotation: rotation, tilt: tilt, cell: cell)
     }
 
     private func color(at age: Float) -> Vec4 {
@@ -124,6 +133,10 @@ final class SpriteCloud {
             var w = (a.scaleStart.x + (a.scaleEnd.x - a.scaleStart.x) * e) * s.scaleX * (a.scaleByParent ? particleScale.x : revisedScale.x)
             var h = (a.scaleStart.y + (a.scaleEnd.y - a.scaleStart.y) * e) * s.scaleY * (a.scaleByParent ? particleScale.y : revisedScale.y)
             var rotation = cameraRotation * simd_quatf(angle: s.rotation + a.rotVelocity * s.age, axis: Vec3(0, 0, 1))
+            if PreviewRules.isOn("spriteTilt") {
+                let tilt = s.tilt + a.tiltVelocity * s.age
+                if tilt != .zero { rotation = rotation * simd_quatf(angle: tilt.x, axis: Vec3(1, 0, 0)) * simd_quatf(angle: tilt.y, axis: Vec3(0, 1, 0)) }
+            }
             if lines {
                 h = a.lineLength.x * lineLength
                 w = pixelAngle > 0 ? pixelAngle * simd_distance(position, cameraPosition) : SpriteCloud.lineWidth

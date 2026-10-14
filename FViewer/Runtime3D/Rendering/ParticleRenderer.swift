@@ -324,6 +324,17 @@ final class ParticleRenderer {
         frameIndex += 1
         encoder.setFrontFacing(.counterClockwise)
         encoder.setTriangleFillMode(wire ? .lines : .fill)
+        let softDepthOffset: Float = PreviewRules.isOn("softDepthOffset") ? 1 : 0
+        let fallbackSampler = sampler(0, 0)
+        var boundPipeline: ObjectIdentifier?, boundDepth: ObjectIdentifier?, boundCull: MTLCullMode?, boundVertices: ObjectIdentifier?
+        var boundTextures = [ObjectIdentifier??](repeating: .none, count: 8), boundSamplers = [ObjectIdentifier??](repeating: .none, count: 6)
+        func bind(_ texture: MTLTexture?, _ slot: Int) {
+            let id = texture.map { ObjectIdentifier($0) }
+            if boundTextures[slot] != .some(id) {
+                encoder.setFragmentTexture(texture, index: slot)
+                boundTextures[slot] = .some(id)
+            }
+        }
         for draw in draws {
             guard draw.particle < particles.count else { continue }
             if materials[draw.particle] == nil { materials[draw.particle] = prepare(particles[draw.particle]) }
@@ -351,30 +362,43 @@ final class ParticleRenderer {
             u.cameraPosition = Vec4(camera.x, camera.y, camera.z, 1)
             let sceneReady = !wire && sceneColor != nil && sceneDepth != nil
             u.scene = Vec4(sceneReady && material.soft ? softDistance : 0, sceneReady ? material.screenCopy : 0, viewport.x, viewport.y)
-            u.scene2 = Vec4(clip.x, clip.y, PreviewRules.isOn("softDepthOffset") ? 1 : 0, orthographic ? 1 : 0)
+            u.scene2 = Vec4(clip.x, clip.y, softDepthOffset, orthographic ? 1 : 0)
             if material.screenCopy > 0, !sceneReady, !wire { u.color.w = 0 }
-            if wire {
-                u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle)
-                u.misc.w = 0
-                encoder.setRenderPipelineState(pipelines[0])
-                encoder.setDepthStencilState(depthStates[0])
-                encoder.setCullMode(.none)
-            } else {
-                encoder.setRenderPipelineState(pipelines[material.blend])
-                encoder.setDepthStencilState(depthStates[(material.depthTest ? 2 : 0) + (material.depthWrite ? 1 : 0)])
-                encoder.setCullMode(material.cull)
+            if wire { u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle); u.misc.w = 0 }
+            let pipeline = wire ? pipelines[0] : pipelines[material.blend]
+            let depth = wire ? depthStates[0] : depthStates[(material.depthTest ? 2 : 0) + (material.depthWrite ? 1 : 0)]
+            let cull: MTLCullMode = wire ? .none : material.cull
+            if boundPipeline != ObjectIdentifier(pipeline) {
+                encoder.setRenderPipelineState(pipeline)
+                boundPipeline = ObjectIdentifier(pipeline)
             }
-            encoder.setVertexBuffer(geometry.vertices, offset: 0, index: 0)
+            if boundDepth != ObjectIdentifier(depth) {
+                encoder.setDepthStencilState(depth)
+                boundDepth = ObjectIdentifier(depth)
+            }
+            if boundCull != cull {
+                encoder.setCullMode(cull)
+                boundCull = cull
+            }
+            if boundVertices != ObjectIdentifier(geometry.vertices) {
+                encoder.setVertexBuffer(geometry.vertices, offset: 0, index: 0)
+                boundVertices = ObjectIdentifier(geometry.vertices)
+            }
             encoder.setVertexBytes(&u, length: MemoryLayout<ParticleUniforms>.stride, index: 1)
             encoder.setFragmentBytes(&u, length: MemoryLayout<ParticleUniforms>.stride, index: 1)
             for slot in 0..<6 {
                 var texture = material.textures[slot]
                 if slot == 0, draw.frame > 0, draw.frame < material.frames.count, let frame = material.frames[draw.frame] { texture = frame }
-                encoder.setFragmentTexture(texture ?? white, index: slot)
-                encoder.setFragmentSamplerState(material.samplers[slot] ?? sampler(0, 0), index: slot)
+                bind(texture ?? white, slot)
+                let state = material.samplers[slot] ?? fallbackSampler
+                let id = state.map { ObjectIdentifier($0) }
+                if boundSamplers[slot] != .some(id) {
+                    encoder.setFragmentSamplerState(state, index: slot)
+                    boundSamplers[slot] = .some(id)
+                }
             }
-            encoder.setFragmentTexture(sceneColor ?? white, index: 6)
-            encoder.setFragmentTexture(sceneDepth ?? emptyDepth, index: 7)
+            bind(sceneColor ?? white, 6)
+            bind(sceneDepth ?? emptyDepth, 7)
             encoder.drawIndexedPrimitives(type: .triangle, indexCount: geometry.indexCount, indexType: .uint32, indexBuffer: geometry.indices,
                                           indexBufferOffset: 0)
         }

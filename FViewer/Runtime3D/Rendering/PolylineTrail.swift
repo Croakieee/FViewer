@@ -49,12 +49,23 @@ final class PolylineTrail {
         while history.count > 2, history[1].time <= time - keep { history.removeFirst() }
     }
 
+    var spline = false
+    var fixedSide: Vec3?
+
     private func at(_ t: Float) -> Vec3 {
         guard let first = history.first, let last = history.last else { return .zero }
         if t <= first.time { return first.position }
         for i in 1..<history.count where t <= history[i].time {
             let a = history[i - 1], b = history[i]
-            return a.position + (b.position - a.position) * ((t - a.time) / max(1e-6, b.time - a.time))
+            let f = (t - a.time) / max(1e-6, b.time - a.time)
+            guard spline else { return a.position + (b.position - a.position) * f }
+            let p0 = i >= 2 ? history[i - 2].position : a.position, p3 = i + 1 < history.count ? history[i + 1].position : b.position
+            let f2 = f * f, f3 = f2 * f
+            let c1: Vec3 = b.position - p0
+            let c2: Vec3 = 2 * p0 - 5 * a.position + 4 * b.position - p3
+            let c3: Vec3 = 3 * a.position - p0 - 3 * b.position + p3
+            let sum: Vec3 = 2 * a.position + c1 * f + c2 * f2 + c3 * f3
+            return 0.5 * sum
         }
         return last.position
     }
@@ -73,7 +84,7 @@ final class PolylineTrail {
             let t = now - step * Float(i)
             let p = at(t)
             let direction = at(t + max(step, 0.5)) - at(t - max(step, 0.5))
-            var side = simd_cross(direction, camera - p)
+            var side = fixedSide ?? simd_cross(direction, camera - p)
             side = simd_length_squared(side) < 1e-12 ? Vec3(0, 1, 0) : simd_normalize(side)
             let part = mix(k)
             let w = width * (part.first ? begin + (center - begin) * part.amount : center + (end - center) * part.amount)

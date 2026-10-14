@@ -63,6 +63,14 @@ enum PreviewRules {
         ("trailWholePath", "Trails keep the whole path", "A Position History trail of a particle with a finite life keeps its whole path since birth."),
         ("polylineAxisFromBase", "Polyline line along the rotation base", "An Axis Order line runs along the particle's Rotation Direction Base axis (X, Y or Z)."),
         ("polylineWidthRevised", "Polyline width by revised scale", "Polyline ribbon width is multiplied by the mean of the effect's Revised Scale X and Y."),
+        ("emitterPeriodicCurves", "Emitter adding curves ignore the loop", "Emitter curves that keep adding after their last key run on the emitter's total age while it is held in its loop."),
+        ("moveDirectionRotation", "Move direction keeps rotation", "Move Direction Billboard particles lie with Z along their motion and Y away from the camera, and their own Rotation turns them on top."),
+        ("auraTarget", "Aura target", "Model Skin particles are drawn only when their Aura Target includes the loaded model: Weapon or Off Hand for weapon models, Character or Summon for the others."),
+        ("startFrame", "Start frame", "A particle item with Start Frame is born as if it had already lived that many frames; with Start Frame Null Update those frames are simulated (motion, sprites), otherwise only its curves move on. Inferred from game files."),
+        ("binderOffset", "Binder offset", "The Position of a binder's start properties moves the bind point in its own space: X to the side, Y up, Z forward. Camera binders are not moved. Inferred from game files."),
+        ("spriteCone", "Sprite injection cone", "Simple Animation sprites with Injection Direction Type 1 fly out inside a cone around the particle's up axis, between the angles Injection Radial Direction 0 and 1. Inferred from game files."),
+        ("polylineShape", "Polyline spline and fixed ribbon", "Polylines with Is Spline follow a smooth curve through their points; with No Billboard the ribbon spreads along the particle's Not Billboard Base Axis instead of facing the camera."),
+        ("spriteTilt", "Sprite tilt", "Simple Animation sprites also turn about their X and Y axes: Rotation Start, Rotation Base (random) and Rotation Velocity X and Y, on top of facing the screen."),
         ("releasedEndlessEnd", "Released endless particles end", "Once released, a particle with endless life ends together with the emitter that made it. While held it stays. Inferred from game files, not checked in the game."),
     ]
 

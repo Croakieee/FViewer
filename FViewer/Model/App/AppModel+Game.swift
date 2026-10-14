@@ -556,6 +556,7 @@ extension AppModel {
         ViewportRenderer.referenceMesh = parsed.mesh
         ViewportRenderer.referenceToken += 1
         AvfxSimulation.skinMesh = parsed.mesh
+        AvfxSimulation.skinTargets = url.lastPathComponent.lowercased().hasPrefix("w") ? 2 | 4 : 1 | 8
         AvfxSimulation.skinToken += 1
         document?.liveChanged()
         referenceModelName = url.lastPathComponent

@@ -41,7 +41,8 @@ enum Math3D {
     static func euler(_ rotation: Vec3, order: Int) -> simd_quatf {
         let letters = orders[order >= 0 && order < orders.count ? order : 0]
         var q = simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
-        for axis in letters {
+        for k in 0..<letters.count {
+            let axis = letters[k]
             q = simd_quatf(angle: rotation[axis], axis: axes[axis]) * q
         }
         return q

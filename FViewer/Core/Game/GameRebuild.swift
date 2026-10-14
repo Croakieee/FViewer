@@ -480,7 +480,7 @@ struct SkpModel {
             end = at
         }
         if hasSlope {
-            guard slope == end, slope + 32 <= b.count else { return nil }
+            guard slope >= end, slope - end < 4, slope % 4 == 0, b[end..<slope].allSatisfy({ $0 == 0 }), slope + 32 <= b.count else { return nil }
             let count = Int(b.u32(slope + 28))
             guard count >= 0, slope + 32 + count * 12 <= b.count else { return nil }
             model.slopeHead = Array(b[slope..<slope + 28])
@@ -507,6 +507,7 @@ struct SkpModel {
             }
         }
         if hasSlope {
+            while out.count % 4 != 0 { out.append(0) }
             slope = out.count
             out.append(contentsOf: slopeHead)
             out.appendU32(UInt32(points.count))

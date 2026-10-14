@@ -89,10 +89,12 @@ struct REmitterItem {
     var generateDelay: Int
     var generateDelayByOne: Bool
     var injectionAngle: Vec3
+    var startFrame = 0
+    var startFrameUpdate = false
 }
 
-struct REmitter {
-    var coordOrder = 0
+nonisolated final class REmitter: @unchecked Sendable {
+    var coordOrder: Int
     var index: Int
     var type: Int
     var loopStart: Int
@@ -123,8 +125,44 @@ struct REmitter {
     var length: RCurve?
     var coneAngle: RCurve?
     var coneAngleRandom: RCurve?
-    var coneRotation: [RCurve?] = [nil, nil, nil]
-    var dataRotationOrder = 0
+    var coneRotation: [RCurve?]
+    var dataRotationOrder: Int
+
+    init(coordOrder: Int = 0, index: Int, type: Int, loopStart: Int, loopEnd: Int, childLimit: Int, rotationBase: Int, rotationOrder: Int, life: RLife, createCount: RCurve? = nil, createCountRandom: RCurve? = nil, createInterval: RCurve? = nil, createIntervalRandom: RCurve? = nil, gravity: RCurve? = nil, airResistance: RCurve? = nil, color: RColor, position: RCurve3, rotation: RCurve3, scale: RCurve3, particleItems: [REmitterItem], emitterItems: [REmitterItem], modelIndex: Int, generateMethod: Int, injectionSpeed: RCurve? = nil, injectionSpeedRandom: RCurve? = nil, divideX: Int, divideY: Int, radius: RCurve? = nil, length: RCurve? = nil, coneAngle: RCurve? = nil, coneAngleRandom: RCurve? = nil, coneRotation: [RCurve?] = [nil, nil, nil], dataRotationOrder: Int = 0) {
+        self.coordOrder = coordOrder
+        self.index = index
+        self.type = type
+        self.loopStart = loopStart
+        self.loopEnd = loopEnd
+        self.childLimit = childLimit
+        self.rotationBase = rotationBase
+        self.rotationOrder = rotationOrder
+        self.life = life
+        self.createCount = createCount
+        self.createCountRandom = createCountRandom
+        self.createInterval = createInterval
+        self.createIntervalRandom = createIntervalRandom
+        self.gravity = gravity
+        self.airResistance = airResistance
+        self.color = color
+        self.position = position
+        self.rotation = rotation
+        self.scale = scale
+        self.particleItems = particleItems
+        self.emitterItems = emitterItems
+        self.modelIndex = modelIndex
+        self.generateMethod = generateMethod
+        self.injectionSpeed = injectionSpeed
+        self.injectionSpeedRandom = injectionSpeedRandom
+        self.divideX = divideX
+        self.divideY = divideY
+        self.radius = radius
+        self.length = length
+        self.coneAngle = coneAngle
+        self.coneAngleRandom = coneAngleRandom
+        self.coneRotation = coneRotation
+        self.dataRotationOrder = dataRotationOrder
+    }
 }
 
 struct RUvSet {
@@ -194,6 +232,12 @@ struct RSimple {
     var life: Float
     var colors: [Vec4]
     var frames: [Float]
+    var injectionDirection = 0
+    var radialFrom: Float = 0
+    var radialTo: Float = .pi
+    var tiltStart = SIMD2<Float>(0, 0)
+    var tiltRandom = SIMD2<Float>(0, 0)
+    var tiltVelocity = SIMD2<Float>(0, 0)
 }
 
 struct RDisc {
@@ -220,9 +264,12 @@ struct RPolyline {
     var colorEdgeBegin: RColor?
     var colorEdgeCenter: RColor?
     var colorEdgeEnd: RColor?
+    var spline = false
+    var noBillboard = false
+    var noBillboardAxis = 0
 }
 
-struct RParticle {
+nonisolated final class RParticle: @unchecked Sendable {
     var index: Int
     var type: Int
     var loopStart: Int
@@ -262,6 +309,7 @@ struct RParticle {
     var laserWidth: RCurve?
     var laserWidthRandom: RCurve?
     var fresnelType: Int
+    var auraTarget: Int
     var windmillUvType: Int
     var ringWidth: RCurve?
     var ringWidthRandom: RCurve?
@@ -269,13 +317,70 @@ struct RParticle {
     var simple: RSimple?
     var disc: RDisc?
     var polyline: RPolyline?
-    var softParticle = false
+    var softParticle: Bool
     var dissolve: RDissolve?
-    var coordOrder = 0
-    var rotVelRandom: [RCurve?] = [nil, nil, nil]
-    var clipNear: (start: Float, end: Float)? = nil
-    var clipFar: (start: Float, end: Float)? = nil
-    var clipFromCaster = false
+    var coordOrder: Int
+    var rotVelRandom: [RCurve?]
+    var clipNear: (start: Float, end: Float)?
+    var clipFar: (start: Float, end: Float)?
+    var clipFromCaster: Bool
+
+    init(index: Int, type: Int, loopStart: Int, loopEnd: Int, rotationBase: Int, rotationOrder: Int, drawMode: Int, culling: Int, depthTest: Bool, depthWrite: Bool, depthOffset: Float, drawPriority: Int, life: RLife, gravity: RCurve? = nil, gravityRandom: RCurve? = nil, airResistance: RCurve? = nil, airResistanceRandom: RCurve? = nil, scale: RCurve3, rotation: RCurve3, position: RCurve3, rotVelX: RCurve? = nil, rotVelY: RCurve? = nil, rotVelZ: RCurve? = nil, color: RColor, uvSets: [RUvSet], tc1: RTextureLayer? = nil, tc2: RTextureLayer? = nil, tc3: RTextureLayer? = nil, tc4: RTextureLayer? = nil, palette: RPalette? = nil, distortion: RTextureLayer? = nil, modelIndex: Int, colorBegin: RColor? = nil, colorEnd: RColor? = nil, lineLength: RCurve? = nil, lineLengthRandom: RCurve? = nil, laserWidth: RCurve? = nil, laserWidthRandom: RCurve? = nil, fresnelType: Int, auraTarget: Int, windmillUvType: Int, ringWidth: RCurve? = nil, ringWidthRandom: RCurve? = nil, ringFan: Float, simple: RSimple? = nil, disc: RDisc? = nil, polyline: RPolyline? = nil, softParticle: Bool = false, dissolve: RDissolve? = nil, coordOrder: Int = 0, rotVelRandom: [RCurve?] = [nil, nil, nil], clipNear: (start: Float, end: Float)? = nil, clipFar: (start: Float, end: Float)? = nil, clipFromCaster: Bool = false) {
+        self.index = index
+        self.type = type
+        self.loopStart = loopStart
+        self.loopEnd = loopEnd
+        self.rotationBase = rotationBase
+        self.rotationOrder = rotationOrder
+        self.drawMode = drawMode
+        self.culling = culling
+        self.depthTest = depthTest
+        self.depthWrite = depthWrite
+        self.depthOffset = depthOffset
+        self.drawPriority = drawPriority
+        self.life = life
+        self.gravity = gravity
+        self.gravityRandom = gravityRandom
+        self.airResistance = airResistance
+        self.airResistanceRandom = airResistanceRandom
+        self.scale = scale
+        self.rotation = rotation
+        self.position = position
+        self.rotVelX = rotVelX
+        self.rotVelY = rotVelY
+        self.rotVelZ = rotVelZ
+        self.color = color
+        self.uvSets = uvSets
+        self.tc1 = tc1
+        self.tc2 = tc2
+        self.tc3 = tc3
+        self.tc4 = tc4
+        self.palette = palette
+        self.distortion = distortion
+        self.modelIndex = modelIndex
+        self.colorBegin = colorBegin
+        self.colorEnd = colorEnd
+        self.lineLength = lineLength
+        self.lineLengthRandom = lineLengthRandom
+        self.laserWidth = laserWidth
+        self.laserWidthRandom = laserWidthRandom
+        self.fresnelType = fresnelType
+        self.auraTarget = auraTarget
+        self.windmillUvType = windmillUvType
+        self.ringWidth = ringWidth
+        self.ringWidthRandom = ringWidthRandom
+        self.ringFan = ringFan
+        self.simple = simple
+        self.disc = disc
+        self.polyline = polyline
+        self.softParticle = softParticle
+        self.dissolve = dissolve
+        self.coordOrder = coordOrder
+        self.rotVelRandom = rotVelRandom
+        self.clipNear = clipNear
+        self.clipFar = clipFar
+        self.clipFromCaster = clipFromCaster
+    }
 }
 
 struct RBinder {
@@ -284,6 +389,7 @@ struct RBinder {
     var adjustToScreen = false
     var bindTargetPoint: Int
     var bindPointId: Int
+    var offset = RCurve3()
 }
 
 struct REffector {
@@ -375,7 +481,8 @@ enum AvfxSchemaReader {
                      probability: r.int("CrPr", 100), influenceCoord: r.int("PICd"), influenceColor: r.int("PICo"), inheritScale: r.bool("ICbS"),
                      inheritRotation: r.bool("ICbR"), inheritPosition: r.bool("ICbP"), overrideLife: r.bool("bOvr"),
                      overrideLifeValue: Float(r.int("OvrV")), overrideLifeRandom: Float(r.int("OvrR")), generateDelay: r.int("GenD"),
-                     generateDelayByOne: r.bool("bGD"), injectionAngle: Vec3(r.float("BIAX"), r.float("BIAY"), r.float("BIAZ")))
+                     generateDelayByOne: r.bool("bGD"), injectionAngle: Vec3(r.float("BIAX"), r.float("BIAY"), r.float("BIAZ")),
+                     startFrame: min(max(r.int("StFr"), 0), 3600), startFrameUpdate: r.bool("bStN"))
     }
 
     static func layer(_ block: AvfxBlock?) -> RTextureLayer? {
@@ -414,7 +521,9 @@ enum AvfxSchemaReader {
             rotVelocity: f("RVZ"), blockCount: max(1, i("BlkN", 1)), velocityMin: f("VMin"), velocityMax: f("VMax"),
             uvCellsU: max(1, i("UvCU", 1)), uvCellsV: max(1, i("UvCV", 1)), uvInterval: i("UvIv", 1), uvRandom: i("UvNR"),
             pivot: SIMD2(f("PvtX"), f("PvtY")), interval: i("CrI", 1), intervalRandom: i("CrIR"), intervalCount: max(1, i("CrIC", 1)),
-            life: Float(max(1, i("CrIL", 1))), colors: colors, frames: frames)
+            life: Float(max(1, i("CrIL", 1))), colors: colors, frames: frames, injectionDirection: i("SIDT"),
+            radialFrom: f("IRD0"), radialTo: f("IRD1", .pi), tiltStart: SIMD2(f("RIX"), f("RIY")), tiltRandom: SIMD2(f("RBX"), f("RBY")),
+            tiltVelocity: SIMD2(f("RVX"), f("RVY")))
     }
 
     static func disc(_ block: AvfxBlock?) -> RDisc? {
@@ -434,7 +543,8 @@ enum AvfxSchemaReader {
                          widthEnd: curve(block.child("WdE")), length: curve(block.child("Len")), colorBegin: optionalColor(block.child("ColB")),
                          colorCenter: optionalColor(block.child("ColC")), colorEnd: optionalColor(block.child("ColE")),
                          colorEdgeBegin: optionalColor(block.child("CoEB")), colorEdgeCenter: optionalColor(block.child("CoEC")),
-                         colorEdgeEnd: optionalColor(block.child("CoEE")))
+                         colorEdgeEnd: optionalColor(block.child("CoEE")), spline: block.bool("bSpl"), noBillboard: block.bool("bNtB"),
+                         noBillboardAxis: block.int("NBBA"))
     }
 
     static func read(_ root: AvfxBlock) -> REffectSchema {
@@ -500,6 +610,7 @@ enum AvfxSchemaReader {
                 palette: palette, distortion: layer(p.child("TD")), modelIndex: modelIndex, colorBegin: optionalColor(data?.child("ColB")),
                 colorEnd: optionalColor(data?.child("ColE")), lineLength: curve(data?.child("Len")), lineLengthRandom: curve(data?.child("LenR")),
                 laserWidth: curve(data?.child("Wdt")), laserWidthRandom: curve(data?.child("WdtR")), fresnelType: data?.int("FrsT") ?? 0,
+                auraTarget: data?.int("AuTT") ?? 1,
                 windmillUvType: data?.int("WUvT") ?? 0, ringWidth: curve(data?.child("WID")), ringWidthRandom: curve(data?.child("WIDR")),
                 ringFan: data?.float("RF", 1) ?? 1, simple: p.bool("bSCt") ? simple(p.child("Smpl")) : nil, disc: type == 12 ? disc(data) : nil,
                 polyline: type == 6 ? polyline(data) : nil, softParticle: p.bool("DsSp"),
@@ -510,7 +621,7 @@ enum AvfxSchemaReader {
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
             return RBinder(type: b.int("BnVr"), distance: curve(b.child("Data")?.child("Dst")), adjustToScreen: b.bool("bATS"),
-                           bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1)
+                           bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1, offset: curve3(props?.child("Pos")))
         }
         var result = REffectSchema(
             revisedPosition: Vec3(root.float("RvPx"), root.float("RvPy"), root.float("RvPz")),
