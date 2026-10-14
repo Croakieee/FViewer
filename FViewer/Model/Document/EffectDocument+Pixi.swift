@@ -172,7 +172,8 @@ extension EffectDocument {
                                         },
                                         write: {
                                             guard case .color(let r, let g, let b, _) = $0 else { return }
-                                            value.value = .string(String(format: "#%02x%02x%02x", Int(safe: (r * 255).rounded()), Int(safe: (g * 255).rounded()), Int(safe: (b * 255).rounded())))
+                                            func byte(_ v: Double) -> Int { Int(safe: (v * 255).rounded(), in: 0...255) }
+                                            value.value = .string(String(format: "#%02x%02x%02x", byte(r), byte(g), byte(b)))
                                         }))
             case .string:
                 fields.append(PropField(id: id, label: member.key, tag: member.key, kind: .text, read: { .text(value.string ?? "") },

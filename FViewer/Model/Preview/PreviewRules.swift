@@ -57,6 +57,7 @@ enum PreviewRules {
         ("blendBeforeClamp", "Blend before clamping", "Blend and Opacity particles are weighted by alpha before bright colour is clamped, so colours above 1 keep their hue."),
         ("depthOffsetView", "Depth offset by distance", "Depth Offset is a share of the distance to the camera, not metres."),
         ("decalNoMipmaps", "Decals without mipmaps", "Decal and Decal Ring textures are read at full size."),
+        ("createIntervalWholeFrame", "Create interval at least a frame", "A Create Interval below one frame counts as one frame: an item creates at most once per frame."),
         ("createOnceOwnCount", "Create once ignores emitter count", "An item created once at the emitter start makes its own Create Count; the emitter's Create Count does not multiply it."),
         ("cylinderNoInjection", "Cylinder Model without injection speed", "Particles from a Cylinder Model emitter are not thrown; they move only by their own curves."),
         ("trailWholePath", "Trails keep the whole path", "A Position History trail of a particle with a finite life keeps its whole path since birth."),

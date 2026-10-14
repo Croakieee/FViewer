@@ -854,6 +854,8 @@ struct CurveEditorView: View {
                 return next
             }
         case .handle(let ref, let outgoing, _):
+            if hypot(gesture.translation.width, gesture.translation.height) > 2 { dragActive = true }
+            guard dragActive else { return }
             guard let channel = channel(ref.channel) else { return }
             var keys = channel.read()
             guard ref.index < keys.count else { return }
@@ -904,7 +906,7 @@ struct CurveEditorView: View {
                 document.registerUndo("Scale Keyframes", undo: { before.reversed().forEach { $0() } }, redo: { after.forEach { $0() } })
             }
         case .handle(let ref, _, let restore):
-            if let channel = channel(ref.channel) {
+            if dragActive, let channel = channel(ref.channel) {
                 document.registerUndo("Adjust Handle", undo: restore, redo: channel.snapshot())
             }
         case .box(let additive):

@@ -36,7 +36,7 @@ enum Gltf {
     static func vertexData(_ mesh: GltfMesh) -> (vertices: [UInt8], indices: [UInt8]) {
         var vertices: [UInt8] = []
         vertices.reserveCapacity(mesh.positions.count * 36)
-        func signedByte(_ value: Float) -> UInt8 { UInt8(max(0, min(255, Int(value * 127) + 128))) }
+        func signedByte(_ value: Float) -> UInt8 { UInt8(max(0, min(255, Int(safe: value * 127, in: -128...127) + 128))) }
         for i in mesh.positions.indices {
             let p = mesh.positions[i]
             for value in [p.x, p.y, p.z, 1] { vertices.appendU16(CurveMath.floatToHalf(value)) }

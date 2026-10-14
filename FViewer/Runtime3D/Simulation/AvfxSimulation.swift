@@ -220,7 +220,8 @@ final class EmitterInstance {
                 if count > 0 { out.append((item, count)) }
                 let interval = Eval.curve(schema.createInterval, at, 0)
                     + Eval.randomOffset(schema.createIntervalRandom, type: schema.createInterval?.random ?? schema.createIntervalRandom?.random ?? 0, at, random.next())
-                next[i] = interval > 0 && item.createTime == 0 ? next[i] + interval : .infinity
+                let step = PreviewRules.isOn("createIntervalWholeFrame") ? max(interval, 1) : interval
+                next[i] = interval > 0 && item.createTime == 0 ? next[i] + step : .infinity
             }
         }
         if particles { nextSpawn = next } else { nextChild = next }
@@ -598,6 +599,7 @@ final class AvfxSimulation {
     private func step(_ frames: Float) {
         if emitters.contains(where: { $0.dying != nil }) || particles.contains(where: { $0.dying != nil }) {
             emitters.removeAll { $0.dying != nil && fade($0.dying) <= 0 }
+            for p in particles where p.dying != nil && fade(p.dying) <= 0 { p.emitter.liveChildren -= 1 }
             particles.removeAll { $0.dying != nil && fade($0.dying) <= 0 }
         }
         for (index, s) in schema.scheduler.enumerated() where s.enabled && s.timeline >= 0 && !startedItems.contains(index) && time - epoch >= Float(s.start) {
@@ -605,7 +607,7 @@ final class AvfxSimulation {
             timelineStarts.append(TimelineStart(index: s.timeline, at: epoch + Float(s.start), source: .scheduler(index)))
         }
         for start in Array(timelineStarts) {
-            guard start.index >= 0, start.index < schema.timelines.count else { continue }
+            guard start.index >= 0, start.index < schema.timelines.count, timelineStarts.contains(where: { $0 === start }) else { continue }
             let timeline = schema.timelines[start.index]
             let local = time - start.at
             for (i, item) in timeline.items.enumerated() where item.clip >= 0 && item.emitter < 0 {

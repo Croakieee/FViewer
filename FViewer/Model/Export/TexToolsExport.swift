@@ -145,7 +145,7 @@ enum TexToolsExport {
         for file in files {
             let path = PenumbraExport.normalized(file.gamePath)
             guard let dat = datFile(path) else { throw AvfxError.malformed("\(path) does not belong to a known game archive") }
-            let entry = path.hasSuffix(".tex") ? (textureEntry(file.data) ?? standardEntry(file.data)) : standardEntry(file.data)
+            let entry = path.hasSuffix(".tex") || path.hasSuffix(".atex") ? (textureEntry(file.data) ?? standardEntry(file.data)) : standardEntry(file.data)
             list.append(JSONNode(.object([
                 JSONMember(key: "Name", node: text((path as NSString).lastPathComponent)),
                 JSONMember(key: "Category", node: text("Raw File Import")),

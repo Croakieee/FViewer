@@ -49,6 +49,7 @@ final class AppModel: ObservableObject {
 
     private var documents: [URL: EffectDocument] = [:]
     private var textureFiles: [String: URL] = [:]
+    private var resolvedTextures: (token: Int, map: [String: URL?]) = (-1, [:])
     private var texturePaths: [String: URL] = [:]
     private var modelFiles: [String: URL] = [:]
     private var imageCache: [URL: CGImage] = [:]
@@ -1172,6 +1173,14 @@ final class AppModel: ObservableObject {
 
     func textureURL(_ path: String) -> URL? {
         let lower = path.lowercased()
+        if resolvedTextures.token != libraryToken { resolvedTextures = (libraryToken, [:]) }
+        if let known = resolvedTextures.map[lower] { return known }
+        let found = searchTexture(lower)
+        resolvedTextures.map[lower] = .some(found)
+        return found
+    }
+
+    private func searchTexture(_ lower: String) -> URL? {
         let parts = lower.split(separator: "/").map(String.init)
         for start in 0..<max(parts.count, 1) {
             let suffix = parts[start...].joined(separator: "/")
