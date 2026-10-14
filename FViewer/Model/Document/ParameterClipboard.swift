@@ -170,6 +170,7 @@ enum ParameterClipboard {
             curves[key] = list.filter { $0.count == 5 }.map { CurveKeyPoint(time: $0[0], value: $0[1], interpolation: Int($0[2]), tangentOut: $0[3], tangentIn: $0[4]) }
         }
         let before = document.serializedData()
+        kind = kind(of: node)
         paste(into: node, in: document)
         (kind, fields, curves) = keep
         return document.serializedData() != before
