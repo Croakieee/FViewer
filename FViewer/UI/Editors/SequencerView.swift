@@ -17,6 +17,9 @@ struct SequencerView: View {
 
     private let rowHeight: CGFloat = 20
     private let rulerHeight: CGFloat = 18
+    private let eventsHeight: CGFloat = 24
+    private var bodyTop: CGFloat { rulerHeight + eventsHeight }
+    @State private var eventDrag: (id: UUID, frame: Double)?
     @State private var labelWidth: CGFloat = 170
 
     @State private var frozenSpan: Double?
@@ -78,31 +81,161 @@ struct SequencerView: View {
     private func x(_ t: Double, _ width: CGFloat, _ span: Double) -> CGFloat { CGFloat((t + 2 / viewZoom - viewStart) / (span / viewZoom)) * width }
     private func time(_ px: CGFloat, _ width: CGFloat, _ span: Double) -> Double { Double(px / max(width, 1)) * (span / viewZoom) - 2 / viewZoom + viewStart }
 
-    private var triggerMenu: some View {
-        Menu {
-            ForEach(0..<max(document.triggerCount, 1), id: \.self) { index in
-                Button("Trigger \(index)") { clock.trigger(index) }
-            }
-        } label: {
-            Image(systemName: "bolt").font(.system(size: 11)).foregroundStyle(Theme.text).frame(width: 24, height: 20)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.22)))
+    private var triggerTitles: [(index: Int, title: String, usable: Bool)] {
+        if document.avfxRoot != nil {
+            return document.triggerSlots.enumerated().map { index, slot in (index, document.slotTitle(slot), slot.enabled && slot.timeline >= 0) }
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
+        return (0..<max(document.triggerCount, 1)).map { ($0, "Trigger \($0)", true) }
+    }
+
+    private func eventTitle(_ kind: PreviewEvent.Kind) -> String {
+        switch kind {
+        case .trigger(let index): return "T\(index)"
+        case .release: return "Release"
+        case .stop: return "Stop"
+        }
+    }
+
+    private func eventHelp(_ event: PreviewEvent) -> String {
+        let frame = Int(safe: event.frame)
+        switch event.kind {
+        case .trigger(let index):
+            let title = triggerTitles.first { $0.index == index }?.title ?? "Trigger \(index)"
+            return "\(title), fired at frame \(frame) like a game event (end of a cast, an object changing state). Drag to move, click to jump to it, right-click to change or delete"
+        case .release:
+            return "Release at frame \(frame): every loop and every open-ended item is let go and plays to the end, as when the game stops holding the effect. Drag to move, right-click to delete"
+        case .stop:
+            return "Stop at frame \(frame): the game removes the effect at once, as when its object is gone or the effect is cancelled. Drag to move, right-click to delete"
+        }
+    }
+
+    private static func eventColor(_ kind: PreviewEvent.Kind) -> Color {
+        switch kind {
+        case .trigger: return Color(red: 0.42, green: 0.66, blue: 1)
+        case .release: return Color(red: 1, green: 0.8, blue: 0.3)
+        case .stop: return Color(red: 0.95, green: 0.42, blue: 0.38)
+        }
+    }
+
+    @ViewBuilder private func eventKindButtons(_ choose: @escaping (PreviewEvent.Kind) -> Void, current: PreviewEvent.Kind?) -> some View {
+        ForEach(triggerTitles, id: \.index) { entry in
+            Button {
+                choose(.trigger(entry.index))
+            } label: {
+                if current == .trigger(entry.index) { Label(entry.title, systemImage: "checkmark") } else { Text(entry.title) }
+            }
+            .disabled(!entry.usable && current != .trigger(entry.index))
+        }
+        Divider()
+        Button {
+            choose(.release)
+        } label: {
+            if current == .release { Label("Release", systemImage: "checkmark") } else { Text("Release") }
+        }
+        Button {
+            choose(.stop)
+        } label: {
+            if current == .stop { Label("Stop", systemImage: "checkmark") } else { Text("Stop") }
+        }
+    }
+
+    private var eventsLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "flag.fill").font(.system(size: 9)).foregroundStyle(Theme.dim)
+            Text("Events").font(Theme.font).foregroundStyle(Theme.text)
+            Spacer(minLength: 0)
+            HoldEndSwitch(document: document, clock: clock)
+            Menu {
+                Section("Add at frame \(Int(safe: clock.time.rounded(.down)))") {
+                    eventKindButtons({ kind in
+                        clock.addEvent(kind)
+                        clock.playing = true
+                    }, current: nil)
+                }
+                if !clock.events.isEmpty {
+                    Divider()
+                    Button("Remove All Events", role: .destructive) { clock.events = [] }
+                }
+            } label: {
+                Image(systemName: "plus").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.text).frame(width: 16, height: rowHeight)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Add a game event at the playhead: a trigger (end of a cast, an object changing state) or a release of the loops. Events replay on every loop of the preview and are kept with the file")
+        }
+        .padding(.horizontal, 6)
+        .frame(height: eventsHeight)
+        .background(Color.black.opacity(0.12))
+        .help("Events are what the game sends to a running effect. They are stored next to the file, never inside it")
+    }
+
+    private func eventMarker(_ event: PreviewEvent, width: CGFloat, span: Double) -> some View {
+        let frame = eventDrag?.id == event.id ? eventDrag?.frame ?? event.frame : event.frame
+        let tint = SequencerView.eventColor(event.kind)
+        let played = clock.isPlayed(event)
+        return HStack(spacing: 3) {
+            Image(systemName: { switch event.kind { case .trigger: return "bolt.fill"; case .release: return "lock.open.fill"; case .stop: return "stop.fill" } }())
+                .font(.system(size: 8, weight: .bold))
+            Text(eventTitle(event.kind)).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+        }
+        .foregroundStyle(Color.black.opacity(0.85))
+        .padding(.horizontal, 5)
+        .frame(height: 16)
+        .background(Capsule().fill(tint))
+        .overlay(Capsule().stroke(Color.white.opacity(eventDrag?.id == event.id ? 0.9 : 0), lineWidth: 1))
+        .opacity(played ? 1 : 0.35)
         .fixedSize()
-        .help("Fire a scheduler trigger, as the game does on events such as the end of a cast")
+        .contentShape(Capsule())
+        .help((event.muted ? "Muted. " : played ? "" : "Not played while Hold is on. ") + eventHelp(event))
+        .onTapGesture {
+            clock.playing = false
+            clock.time = event.frame
+        }
+        .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("sequencerCanvas"))
+            .onChanged { drag in eventDrag = (event.id, max(0, time(drag.location.x, width, span).rounded())) }
+            .onEnded { _ in
+                if let drag = eventDrag { clock.moveEvent(drag.id, to: drag.frame) }
+                eventDrag = nil
+            })
+        .contextMenu {
+            Section("Frame \(Int(safe: event.frame))") {
+                eventKindButtons({ clock.setEventKind(event.id, $0) }, current: event.kind)
+            }
+            Divider()
+            Button(event.muted ? "Unmute" : "Mute") { clock.setMuted(event.id, !event.muted) }
+            Button("Delete Event", role: .destructive) { clock.removeEvent(event.id) }
+        }
+        .offset(x: x(frame, width, span) - 1, y: rulerHeight + (eventsHeight - 16) / 2)
     }
 
     private func rowLabel(_ index: Int, _ row: SequencerRow) -> some View {
         let changes = document.changes
         return HStack(spacing: 5) {
             Color.clear.frame(width: CGFloat(row.depth) * 12)
-            RoundedRectangle(cornerRadius: 2).fill(row.tint.color).frame(width: 8, height: 8)
+            if let clip = row.clip {
+                Image(systemName: ClipStyle.symbol(clip.code)).font(.system(size: 8)).foregroundStyle(ClipStyle.color(clip.code)).frame(width: 8, height: 8)
+                    .help(EffectDocument.clipHelp(clip.code))
+            } else {
+                RoundedRectangle(cornerRadius: 2).fill(row.tint.color).frame(width: 8, height: 8)
+            }
             Text(row.label).font(Theme.font).foregroundStyle(document.selectionID == row.nodeID ? .white : Theme.text).lineLimit(1)
                 .onTapGesture(count: 2) { if let target = renameTarget(row) { AppDelegate.model?.renameNode(target) } }
-                .help("Double-click to rename")
+                .help(row.clip.map { row.label + "\n" + EffectDocument.clipHelp($0.code) + ". Double-click to rename" } ?? "Double-click to rename")
             if let id = row.nodeID, changes.contains(id) { ChangeDot(added: changes.added.contains(id)) }
+            if row.depth == 0, let timeline = row.timeline {
+                if !row.sources.isEmpty {
+                    Text(row.sources.map(\.short).joined(separator: " ")).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
+                        .help("Started by " + row.sources.map(\.name).joined(separator: ", ") + ". S = scheduler item, T = trigger slot")
+                }
+                if !row.started {
+                    Text("not started").font(Theme.small).foregroundStyle(Theme.changed).lineLimit(1)
+                        .help(row.sources.isEmpty ? "Nothing starts this timeline" : "Started only by a trigger. Add it on the Events track to play it")
+                } else if let state = clock.timelineStates[timeline] {
+                    LifecycleBadge(state: state)
+                }
+            }
             Spacer(minLength: 0)
             if let enabled = row.enabledField {
                 let value = enabled.read()
@@ -152,7 +285,7 @@ struct SequencerView: View {
                     .help("Add an item to this timeline at the playhead")
             }
         }
-        .opacity(row.enabledField.map { $0.read() == .bool(true) ? 1 : 0.55 } ?? 1)
+        .opacity((row.enabledField.map { $0.read() == .bool(true) ? 1 : 0.55 } ?? 1) * (row.started ? 1 : 0.6))
         .contextMenu {
             if let id = row.nodeID, let node = document.node(id) {
                 if let target = renameTarget(row) { Button("Rename…") { AppDelegate.model?.renameNode(target) } }
@@ -175,8 +308,10 @@ struct SequencerView: View {
     var body: some View {
         let rows = document.sequencerRows
         let densityPeak = document.density.mapValues { $0.max() ?? 0 }
-        let duration = max(30, (rows.map(\.end).max() ?? 30).rounded(.up))
+        let duration = max(30, (rows.map(\.end).max() ?? 30).rounded(.up), (clock.lastEventFrame + 10).rounded(.up))
         let end = clock.endFrame ?? duration
+        let selectedRow = rows.first { $0.nodeID != nil && $0.nodeID == document.selectionID }
+        let highlighted = highlightedTimelines(selectedRow)
         let span = currentSpan(max(end, duration))
         VStack(spacing: 0) {
             FlowLayout(spacing: 6) {
@@ -194,8 +329,6 @@ struct SequencerView: View {
                     HeaderButton(symbol: "forward.end.fill", help: "Jump to end") { clock.time = end }
                     HeaderButton(symbol: "repeat", active: clock.loop, help: "Loop playback") { clock.loop.toggle() }
                     SoloButton(document: document)
-                    HeaderButton(symbol: "lock.open", help: "Release loop points: held particles and emitters play out") { clock.release() }
-                    triggerMenu
                 }
                 .fixedSize()
                 HStack(spacing: 6) {
@@ -234,18 +367,19 @@ struct SequencerView: View {
                     .onChange(of: document.id) { _, _ in if showDensity { document.scheduleDensity() } }
                     HeaderButton(symbol: "dot.squareshape.split.2x2", active: snapping,
                                  help: "Snap: a dragged strip sticks to the playhead, the playback range and the edges of other strips") { snapping.toggle() }
-                    Slider(value: $viewZoom, in: 1...40).controlSize(.mini).frame(width: 70).help("Timeline zoom")
-                        .onChange(of: viewZoom) { _, next in if next <= 1.001 { viewStart = 0 } }
-                        .onChange(of: document.id) { _, _ in locked = [] }
-                        .onChange(of: document.sequencerRows.count) { _, _ in locked = [] }
-                    HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001, help: "Fit To Contents: reset the timeline zoom") {
+                    HeaderButton(symbol: "arrow.left.and.right.square", active: viewZoom > 1.001,
+                                 help: "Fit To Contents. Zoom the timeline with a pinch on the trackpad (or ⌘ + scroll), move along it with a two-finger swipe") {
                         viewZoom = 1
                         viewStart = 0
                     }
                 }
                 .fixedSize()
-                Text(clock.status.isEmpty ? "30 fps" : clock.status + " · 30 fps").font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
-                    .frame(height: 20)
+                .onChange(of: document.id) { _, _ in locked = [] }
+                .onChange(of: document.sequencerRows.count) { _, _ in locked = [] }
+                .onChange(of: clock.events) { _, _ in
+                    document.densityRevision = -1
+                    if showDensity { document.scheduleDensity() }
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -255,8 +389,10 @@ struct SequencerView: View {
                 HStack(alignment: .top, spacing: 0) {
                     VStack(spacing: 0) {
                         Color.clear.frame(height: rulerHeight)
+                        eventsLabel
                         ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                             rowLabel(index, row)
+                                .background(row.timeline.map { highlighted.contains($0) } == true ? ClipStyle.color(selectedRow?.clip?.code ?? "").opacity(0.16) : Color.clear)
                         }
                     }
                     .frame(width: labelWidth)
@@ -276,23 +412,52 @@ struct SequencerView: View {
                                 t += step
                             }
                             context.fill(Path(CGRect(x: 0, y: 0, width: width, height: rulerHeight)), with: .color(Color.black.opacity(0.25)))
+                            context.fill(Path(CGRect(x: 0, y: rulerHeight, width: width, height: eventsHeight)), with: .color(Color.black.opacity(0.12)))
+                            context.fill(Path(CGRect(x: 0, y: bodyTop - 1, width: width, height: 1)), with: .color(Theme.line))
                             for (index, row) in rows.enumerated() {
-                                let top = rulerHeight + CGFloat(index) * rowHeight
+                                let top = bodyTop + CGFloat(index) * rowHeight
                                 if index % 2 == 1 {
                                     context.fill(Path(CGRect(x: 0, y: top, width: width, height: rowHeight)), with: .color(Color.white.opacity(0.025)))
+                                }
+                                if let timeline = row.timeline, highlighted.contains(timeline) {
+                                    context.fill(Path(CGRect(x: 0, y: top, width: width, height: rowHeight)),
+                                                 with: .color(ClipStyle.color(selectedRow?.clip?.code ?? "").opacity(0.14)))
+                                }
+                                if let clip = row.clip {
+                                    let cx = x(row.start, width, span), cy = top + rowHeight / 2
+                                    if clip.code == "KILL", clip.fade > 0 {
+                                        var wedge = Path()
+                                        let fx = x(row.start + Double(clip.fade), width, span)
+                                        wedge.move(to: CGPoint(x: cx, y: top + 3))
+                                        wedge.addLine(to: CGPoint(x: fx, y: cy))
+                                        wedge.addLine(to: CGPoint(x: cx, y: top + rowHeight - 3))
+                                        wedge.closeSubpath()
+                                        context.fill(wedge, with: .color(ClipStyle.color(clip.code).opacity(row.started ? 0.35 : 0.15)))
+                                    }
+                                    var diamond = Path()
+                                    diamond.move(to: CGPoint(x: cx, y: top + 3))
+                                    diamond.addLine(to: CGPoint(x: cx + 7, y: cy))
+                                    diamond.addLine(to: CGPoint(x: cx, y: top + rowHeight - 3))
+                                    diamond.addLine(to: CGPoint(x: cx - 7, y: cy))
+                                    diamond.closeSubpath()
+                                    context.fill(diamond, with: .color(ClipStyle.color(clip.code).opacity(row.started ? 1 : 0.4)))
+                                    if document.selectionID == row.nodeID { context.stroke(diamond, with: .color(Appearance.barSelectedColor), lineWidth: 1.5) }
+                                    if let id = row.nodeID, locked.contains(id) { context.fill(diamond, with: .color(Color.black.opacity(0.3))) }
+                                    continue
                                 }
                                 let bar = CGRect(x: x(row.start, width, span), y: top + (row.depth == 0 ? 7 : 3), width: max(x(row.end, width, span) - x(row.start, width, span), 3),
                                                  height: row.depth == 0 ? 6 : rowHeight - 6)
                                 let selected = document.selectionID == row.nodeID
                                 let shape = Path(roundedRect: bar, cornerRadius: 3)
                                 let barTint = row.depth > 0 ? (Appearance.barColor ?? row.tint.color) : row.tint.color
+                                let dim = row.started ? 1.0 : 0.35
                                 if row.openEnded {
-                                    context.fill(shape, with: .linearGradient(Gradient(colors: [barTint.opacity(0.85), barTint.opacity(0.1)]),
+                                    context.fill(shape, with: .linearGradient(Gradient(colors: [barTint.opacity(0.85 * dim), barTint.opacity(0.1 * dim)]),
                                                                               startPoint: CGPoint(x: bar.minX, y: 0), endPoint: CGPoint(x: bar.maxX, y: 0)))
                                 } else {
-                                    context.fill(shape, with: .color(barTint.opacity(row.depth == 0 ? 0.55 : 0.8)))
+                                    context.fill(shape, with: .color(barTint.opacity((row.depth == 0 ? 0.55 : 0.8) * dim)))
                                 }
-                                if showDensity, let values = document.density[row.densityKey], let peak = densityPeak[row.densityKey], peak > 0 {
+                                if showDensity, row.started, let values = document.density[row.densityKey], let peak = densityPeak[row.densityKey], peak > 0 {
                                     let area = row.depth == 0 ? CGRect(x: bar.minX, y: top + 2, width: bar.width, height: rowHeight - 4) : bar.insetBy(dx: 0, dy: 1)
                                     let first = max(0, Int(safe: row.start.rounded(.down))), last = min(values.count - 1, Int(safe: row.end.rounded(.up)))
                                     if last > first {
@@ -333,6 +498,14 @@ struct SequencerView: View {
                                     context.fill(Path(CGRect(x: bar.minX + 2, y: bar.minY + 2, width: 2, height: bar.height - 4)), with: .color(Color.black.opacity(0.35)))
                                 }
                                 if selected { context.stroke(shape, with: .color(Appearance.barSelectedColor), lineWidth: 1.5) }
+                            }
+                            for event in clock.events {
+                                let frame = eventDrag?.id == event.id ? eventDrag?.frame ?? event.frame : event.frame
+                                var line = Path()
+                                line.move(to: CGPoint(x: x(frame, width, span), y: rulerHeight + eventsHeight - 4))
+                                line.addLine(to: CGPoint(x: x(frame, width, span), y: canvasSize.height))
+                                context.stroke(line, with: .color(SequencerView.eventColor(event.kind).opacity(clock.isPlayed(event) ? 0.45 : 0.15)),
+                                               style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                             }
                             let endX = x(end, width, span)
                             context.fill(Path(CGRect(x: endX, y: rulerHeight, width: max(width - endX, 0), height: canvasSize.height - rulerHeight)),
@@ -377,8 +550,16 @@ struct SequencerView: View {
                             .onChanged { drag in handleDrag(drag, rows: rows, width: geometry.size.width, span: span) }
                             .onEnded { _ in endDrag() })
                         .onChange(of: pressing) { _, now in if !now { endDrag() } }
+                        .overlay {
+                            ZStack(alignment: .topLeading) {
+                                ForEach(clock.events) { event in eventMarker(event, width: geometry.size.width, span: span) }
+                            }
+                            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                        }
+                        .clipped()
+                        .coordinateSpace(name: "sequencerCanvas")
                     }
-                    .frame(height: rulerHeight + CGFloat(rows.count) * rowHeight + 8)
+                    .frame(height: bodyTop + CGFloat(rows.count) * rowHeight + 8)
                 }
             }
             .background(Theme.gray(0.157))
@@ -388,6 +569,19 @@ struct SequencerView: View {
                 .onAppear { labelWidth = min(max(geometry.size.width * 0.2, 200), 320) }
                 .onChange(of: geometry.size.width) { _, width in labelWidth = min(max(width * 0.2, 200), 320) }
         })
+    }
+
+    private func highlightedTimelines(_ row: SequencerRow?) -> Set<Int> {
+        guard let clip = row?.clip else { return [] }
+        if clip.usesTargets {
+            let targets = Set(clip.targets)
+            guard !targets.isEmpty else { return [] }
+            return Set(document.sequencerRows.compactMap { $0.depth == 0 && $0.sources.contains(where: targets.contains) ? $0.timeline : nil })
+        }
+        let slots = document.triggerSlots
+        let range = clip.trigger.map { $0...$0 } ?? clip.range
+        guard let range else { return [] }
+        return Set(range.compactMap { $0 >= 0 && $0 < slots.count && slots[$0].timeline >= 0 ? slots[$0].timeline : nil })
     }
 
     private func zoomTimeline(_ factor: Double, at px: CGFloat, width: CGFloat, span: Double) {
@@ -402,7 +596,7 @@ struct SequencerView: View {
             dragMode = 1
             frozenSpan = liveValue
             liveSpan = liveValue
-            let index = Int((drag.startLocation.y - rulerHeight) / rowHeight)
+            let index = Int(floor((drag.startLocation.y - bodyTop) / rowHeight))
             if drag.startLocation.y <= rulerHeight {
                 let finish = clock.endFrame ?? max(30, (rows.map(\.end).max() ?? 30).rounded(.up))
                 if abs(drag.startLocation.x - x(finish, width, liveValue)) <= 5 {
@@ -411,7 +605,7 @@ struct SequencerView: View {
                     dragMode = 5
                 }
             }
-            if drag.startLocation.y > rulerHeight, index >= 0, index < rows.count {
+            if drag.startLocation.y > bodyTop, index >= 0, index < rows.count {
                 let row = rows[index]
                 document.selectionID = row.nodeID
                 if let id = row.nodeID, locked.contains(id) { return }
@@ -420,7 +614,7 @@ struct SequencerView: View {
                     dragRow = row
                     dragStart = row.startField?.read().number ?? 0
                     dragEnd = row.endField?.read().number ?? 0
-                    let resizable = row.endField != nil && !row.openEnded && dragEnd > dragStart
+                    let resizable = row.clip == nil && row.endField != nil && !row.openEnded && dragEnd > dragStart
                     let wide = right - left > 16
                     if resizable, drag.startLocation.x > right - 7 {
                         dragMode = 3

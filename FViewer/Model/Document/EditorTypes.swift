@@ -169,6 +169,10 @@ struct SequencerRow: Identifiable {
     var enabledField: PropField?
     var densityKey = "*"
     var loop: (start: Double, end: Double)? = nil
+    var clip: ClipSummary?
+    var timeline: Int?
+    var sources: [TimelineSource] = []
+    var started = true
 }
 
 struct TextureSlot: Identifiable {

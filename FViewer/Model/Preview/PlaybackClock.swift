@@ -2,6 +2,32 @@ import Combine
 import Foundation
 import QuartzCore
 
+nonisolated struct PreviewEvent: Identifiable, Codable, Equatable {
+    enum Kind: Codable, Hashable {
+        case trigger(Int)
+        case release
+        case stop
+    }
+
+    var id = UUID()
+    var frame: Double
+    var kind: Kind
+    var muted = false
+
+    init(frame: Double, kind: Kind) {
+        self.frame = frame
+        self.kind = kind
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        frame = try container.decode(Double.self, forKey: .frame)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        muted = try container.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+    }
+}
+
 final class PlaybackClock: ObservableObject {
     private var storedTime: Double = 0
     private var lastPublished: Double = 0
@@ -26,25 +52,73 @@ final class PlaybackClock: ObservableObject {
     @Published var frameMilliseconds: Double = 0
     @Published var framesPerSecond: Double = 0
     @Published var lockSeed = true
-    var releaseTime: Double?
-    var triggers: [(time: Double, index: Int)] = []
+    @Published var events: [PreviewEvent] = [] { didSet {
+        guard events != oldValue else { return }
+        eventsRevision += 1
+        if !loadingEvents { onEventsEdited?() }
+    } }
+    @Published var holding = false { didSet {
+        guard holding != oldValue else { return }
+        eventsRevision += 1
+        if !loadingEvents { onEventsEdited?() }
+    } }
+    private var loadingEvents = false
+    private(set) var eventsRevision = 0
+    var onEventsEdited: (() -> Void)?
+    var endingTest: ((PreviewEvent.Kind) -> Bool)?
+
+    func isEnding(_ kind: PreviewEvent.Kind) -> Bool { endingTest?(kind) ?? { if case .trigger = kind { return false }; return true }() }
+
+    func isPlayed(_ event: PreviewEvent) -> Bool { !event.muted && !(holding && isEnding(event.kind)) }
+
+    var playedEvents: [PreviewEvent] { events.filter(isPlayed) }
+    @Published var timelineStates: [Int: String] = [:]
     var restartToken = 0
     private var lastTick: Double = 0
 
     func rewind() {
         if !lockSeed { seed = Int.random(in: 1...9999) }
         time = startFrame
-        releaseTime = nil
-        triggers = []
         restartToken += 1
     }
 
-    func release() {
-        if releaseTime == nil { releaseTime = time }
+    var lastEventFrame: Double { events.map(\.frame).max() ?? 0 }
+
+    func hasEvents(after frame: Double) -> Bool { playedEvents.contains { $0.frame > frame } }
+
+    @discardableResult
+    func addEvent(_ kind: PreviewEvent.Kind, at frame: Double? = nil) -> PreviewEvent {
+        let event = PreviewEvent(frame: max(0, (frame ?? time).rounded(.down)), kind: kind)
+        events = (events + [event]).sorted { $0.frame < $1.frame }
+        if isEnding(kind) { holding = false }
+        return event
     }
 
-    func trigger(_ index: Int) {
-        triggers.append((time, index))
+    func setMuted(_ id: UUID, _ muted: Bool) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        events[index].muted = muted
+    }
+
+    func moveEvent(_ id: UUID, to frame: Double) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        var next = events
+        next[index].frame = max(0, frame.rounded())
+        next.sort { $0.frame < $1.frame }
+        events = next
+    }
+
+    func setEventKind(_ id: UUID, _ kind: PreviewEvent.Kind) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        events[index].kind = kind
+    }
+
+    func removeEvent(_ id: UUID) { events.removeAll { $0.id == id } }
+
+    func loadEvents(_ list: [PreviewEvent], holding hold: Bool) {
+        loadingEvents = true
+        events = list.sorted { $0.frame < $1.frame }
+        holding = hold
+        loadingEvents = false
     }
 
     func advance(_ seconds: Double, duration: Double, finished: Bool, held: Bool) {

@@ -10,9 +10,7 @@ final class AvfxPlayer {
     private var loadedRules = -1
     private var loggedClips = -1
     private var duration: Double = 30
-    private var appliedRelease = false
-    private var appliedTriggers = 0
-    private var chosenTrigger: Int?
+    private var appliedEvents = -1
     private var statusTick = 0
     private var workTime: Double = 0
     private var frameRate: Double = 0
@@ -44,15 +42,14 @@ final class AvfxPlayer {
         builtRoot = root.deepCopy()
         let schema = AvfxSchemaReader.read(root)
         simulation = AvfxSimulation(schema: schema)
-        simulation?.startTrigger = chosenTrigger
         rewindSimulation()
         Log.simulation.debug("Rebuilt for revision \(loadedRevision): \(schema.emitters.count) emitters, \(schema.particles.count) particles, \(Log.milliseconds(since: started))")
     }
 
     private func rewindSimulation() {
+        simulation?.events = document.clock.playedEvents
+        appliedEvents = document.clock.eventsRevision
         simulation?.restart()
-        appliedRelease = false
-        appliedTriggers = 0
     }
 
     func frame(elapsed: Double, camera: CameraState, filter: VisibilityFilter) -> [ParticleDraw] {
@@ -65,7 +62,8 @@ final class AvfxPlayer {
             simulation.seed = seed
             rewindSimulation()
         }
-        clock.advance(elapsed, duration: duration, finished: simulation.finished, held: simulation.held)
+        if appliedEvents != clock.eventsRevision { rewindSimulation() }
+        clock.advance(elapsed, duration: max(duration, clock.lastEventFrame + 1), finished: simulation.finished, held: simulation.held)
         let target = (Float(clock.time) / stepFrames + 0.001).rounded(.down) * stepFrames
         if target < simulation.time - 0.01 { rewindSimulation() }
         var guardCount = 0
@@ -73,34 +71,9 @@ final class AvfxPlayer {
             guardCount += 1
             let step = stepFrames
             if simulation.time + stepFrames > target + 0.001 { break }
-            if let release = clock.releaseTime, !appliedRelease, Double(simulation.time) >= release {
-                appliedRelease = true
-                simulation.release()
-            }
-            while appliedTriggers < clock.triggers.count, Double(simulation.time) >= clock.triggers[appliedTriggers].time {
-                if simulation.triggerOnly {
-                    chosenTrigger = clock.triggers[appliedTriggers].index
-                    simulation.startTrigger = chosenTrigger
-                }
-                simulation.trigger(clock.triggers[appliedTriggers].index)
-                appliedTriggers += 1
-            }
             simulation.advance(step)
         }
-        if !clock.playing {
-            if let release = clock.releaseTime, !appliedRelease, Double(simulation.time) >= release {
-                appliedRelease = true
-                simulation.release()
-            }
-            while appliedTriggers < clock.triggers.count, Double(simulation.time) >= clock.triggers[appliedTriggers].time {
-                if simulation.triggerOnly {
-                    chosenTrigger = clock.triggers[appliedTriggers].index
-                    simulation.startTrigger = chosenTrigger
-                }
-                simulation.trigger(clock.triggers[appliedTriggers].index)
-                appliedTriggers += 1
-            }
-        }
+        if !clock.playing { simulation.applyEvents() }
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1
         workTime = workTime * 0.9 + (CACurrentMediaTime() - began) * 100
@@ -120,6 +93,8 @@ final class AvfxPlayer {
         if statusTick % 12 == 0 {
             let status = "\(simulation.particles.count) particles · \(simulation.emitters.count) emitters" + (simulation.held ? " · held" : "")
             if clock.status != status { clock.status = status }
+            let states = simulation.timelineStates()
+            if clock.timelineStates != states { DispatchQueue.main.async { if clock.timelineStates != states { clock.timelineStates = states } } }
         }
         return draws
     }

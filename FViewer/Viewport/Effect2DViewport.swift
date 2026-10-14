@@ -17,8 +17,8 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     private var appliedPlane: SIMD3<Double>?
     private var appliedParams: [String: Double] = [:]
     private var hasLoops = false
-    private var appliedRelease = false
-    private var appliedTriggers = 0
+    private var appliedEvents: Set<UUID> = []
+    private var eventsRevision = -1
     private var lastFrame = CACurrentMediaTime()
     private var lastActivity = CACurrentMediaTime()
     private var idleSignature: [Double] = []
@@ -119,14 +119,25 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
             document.clock.status = "Effect error: \(error)"
             Log.document.error("2D effect \(document.title) failed to load: \(error)")
         }
-        appliedRelease = false
-        appliedTriggers = 0
+        appliedEvents = []
+        eventsRevision = document.clock.eventsRevision
     }
 
     private func rewind() {
         core?.restart(seed: UInt32(max(1, document?.clock.seed ?? 1)))
-        appliedRelease = false
-        appliedTriggers = 0
+        appliedEvents = []
+        eventsRevision = document?.clock.eventsRevision ?? -1
+    }
+
+    private func applyEvents(_ core: EffectCore, _ clock: PlaybackClock) {
+        for event in clock.playedEvents where !appliedEvents.contains(event.id) && core.time >= event.frame - 0.001 {
+            appliedEvents.insert(event.id)
+            switch event.kind {
+            case .trigger(let index): core.trigger(index)
+            case .release: core.release()
+            case .stop: core.stop()
+            }
+        }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -177,22 +188,20 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
                     appliedParams = document.paramOverrides
                 }
                 if core.fps > 0, clock.rate != core.fps { clock.rate = core.fps }
-                clock.advance(elapsed, duration: duration, finished: core.finished, held: hasLoops && !core.released && !core.killing)
+                if eventsRevision != clock.eventsRevision { rewind() }
+                clock.advance(elapsed, duration: max(duration, clock.lastEventFrame + 1), finished: core.finished && !clock.hasEvents(after: core.time),
+                              held: hasLoops && !core.released && !core.killing)
                 if clock.time < core.time - 0.01 { rewind() }
                 var steps = 0
                 while core.time + 0.01 < clock.time && steps < 4000 {
                     steps += 1
-                    if let release = clock.releaseTime, !appliedRelease, core.time >= release {
-                        appliedRelease = true
-                        core.release()
-                    }
-                    while appliedTriggers < clock.triggers.count, core.time >= clock.triggers[appliedTriggers].time {
-                        core.trigger(clock.triggers[appliedTriggers].index)
-                        appliedTriggers += 1
-                    }
+                    applyEvents(core, clock)
                     core.update(min(1.0 / 30.0, (clock.time - core.time) / core.fps))
                 }
-                if steps == 0 { core.update(0) }
+                if steps == 0 {
+                    applyEvents(core, clock)
+                    core.update(0)
+                }
                 statusTick += 1
                 if statusTick % 12 == 0 {
                     let missing = renderer?.missingTextures.count ?? 0

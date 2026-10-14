@@ -108,6 +108,7 @@ final class EmitterInstance {
     var points: [EmitPoint] = []
     var stopped = false
     var timeline = -1
+    var instance: TimelineStart?
     var dying: (from: Float, frames: Float)?
     var parent: EmitterInstance?
     var injected: [Int: Int] = [:]
@@ -283,14 +284,17 @@ final class ParticleInstance {
     var loops: Bool { schema.loopEnd > schema.loopStart && schema.loopStart >= 0 }
 }
 
-private final class TimelineStart {
+final class TimelineStart {
     let index: Int
     let at: Float
+    let source: TimelineSource?
     var spawned: Set<Int> = []
+    var released = false
 
-    init(index: Int, at: Float) {
+    init(index: Int, at: Float, source: TimelineSource?) {
         self.index = index
         self.at = at
+        self.source = source
     }
 }
 
@@ -319,12 +323,12 @@ final class AvfxSimulation {
     var maxParticles = 4000
 
     private var random = SeededRandom(seed: 1)
-    private var startedTimelines: Set<Int> = []
+    private var startedItems: Set<Int> = []
     private var timelineStarts: [TimelineStart] = []
-    private var autoTriggered = false
-    var startTrigger: Int?
-    var triggerOnly: Bool { !schema.scheduler.contains { $0.enabled } }
+    var events: [PreviewEvent] = []
+    private var appliedEvents: Set<UUID> = []
     private var pendingRestart = false
+    private var epoch: Float = 0
     private var sequence = 0
     private var cameraRotation: simd_quatf?
     private var cameraPosition = Vec3.zero
@@ -342,9 +346,10 @@ final class AvfxSimulation {
         emitters = []
         particles = []
         timelineStarts = []
-        startedTimelines = []
+        startedItems = []
+        appliedEvents = []
         released = false
-        autoTriggered = false
+        epoch = 0
         time = 0
         sequence = 0
         random = SeededRandom(seed: seed)
@@ -353,24 +358,51 @@ final class AvfxSimulation {
 
     func release() { released = true }
 
+    func stop() {
+        for e in emitters where e.dying == nil {
+            e.dying = (time, 0)
+            e.stopped = true
+        }
+        for p in particles where p.dying == nil { p.dying = (time, 0) }
+        timelineStarts = []
+        startedItems = Set(schema.scheduler.indices)
+        released = true
+    }
+
+    private func isReleased(_ e: EmitterInstance) -> Bool { released || (e.instance?.released ?? false) }
+
     @discardableResult
     func trigger(_ n: Int) -> Bool {
         guard n >= 0, n < schema.triggers.count else { return false }
         let t = schema.triggers[n]
-        guard t.enabled, t.timeline >= 0, t.timeline < schema.timelines.count else { return false }
-        startedTimelines.insert(t.timeline)
-        timelineStarts.append(TimelineStart(index: t.timeline, at: time + Float(t.start)))
+        guard t.enabled, t.timeline >= 0, t.timeline < schema.timelines.count, timelineStarts.count < 256 else { return false }
+        timelineStarts.append(TimelineStart(index: t.timeline, at: time + Float(t.start), source: .trigger(n)))
         return true
     }
 
+    func applyEvents() {
+        for event in events where !appliedEvents.contains(event.id) && Double(time) >= event.frame - 0.001 {
+            appliedEvents.insert(event.id)
+            switch event.kind {
+            case .trigger(let index): trigger(index)
+            case .release: release()
+            case .stop: stop()
+            }
+        }
+    }
+
     func advance(_ frames: Float) {
+        applyEvents()
         time += frames
         step(frames)
         if pendingRestart {
             pendingRestart = false
-            let kept = Array(clipLog.suffix(200))
-            restart()
-            clipLog = kept
+            emitters = []
+            particles = []
+            timelineStarts = []
+            startedItems = []
+            released = false
+            epoch = time
         }
     }
 
@@ -379,17 +411,9 @@ final class AvfxSimulation {
         return dying.frames > 0 ? max(0, 1 - (time - dying.from) / dying.frames) : 0
     }
 
-    var defaultTrigger: Int? {
-        var best: (index: Int, items: Int)?
-        for (index, entry) in schema.triggers.enumerated() where entry.enabled && entry.timeline >= 0 && entry.timeline < schema.timelines.count {
-            let items = schema.timelines[entry.timeline].items.filter { $0.enabled && $0.emitter >= 0 }.count
-            if items > (best?.items ?? 0) { best = (index, items) }
-        }
-        return best?.index
-    }
-
     private var emittersDone: Bool {
-        let allStarted = schema.scheduler.allSatisfy { !$0.enabled || startedTimelines.contains($0.timeline) }
+        let allStarted = schema.scheduler.enumerated().allSatisfy { !$0.element.enabled || $0.element.timeline < 0 || startedItems.contains($0.offset) }
+            && !events.contains { !appliedEvents.contains($0.id) }
         let allSpawned = timelineStarts.allSatisfy { start in
             guard start.index >= 0, start.index < schema.timelines.count else { return true }
             return schema.timelines[start.index].items.enumerated().allSatisfy { !$0.element.enabled || start.spawned.contains($0.offset) }
@@ -400,28 +424,82 @@ final class AvfxSimulation {
     var finished: Bool { emittersDone && particles.isEmpty }
 
     var held: Bool {
-        !released && (emitters.contains { $0.holdWhile != nil || $0.loops || $0.lifetime == .infinity }
-            || particles.contains { $0.loops || $0.lifetime == .infinity })
+        emitters.contains { !isReleased($0) && ($0.holdWhile != nil || $0.loops || $0.lifetime == .infinity) }
+            || particles.contains { !isReleased($0.emitter) && ($0.loops || $0.lifetime == .infinity) }
+    }
+
+    private func targets(_ clip: RClip) -> Set<Int>? {
+        let sources = clip.ints.dropFirst().compactMap(TimelineSource.init(target:))
+        guard !sources.isEmpty else { return nil }
+        return Set(sources.compactMap { source -> Int? in
+            switch source {
+            case .scheduler(let index): return index < schema.scheduler.count ? schema.scheduler[index].timeline : nil
+            case .trigger(let index): return index < schema.triggers.count ? schema.triggers[index].timeline : nil
+            }
+        }.filter { $0 >= 0 })
+    }
+
+    private func matches(_ instance: TimelineStart?, _ targets: Set<Int>?) -> Bool {
+        guard let targets else { return true }
+        return (instance?.index).map(targets.contains) == true
     }
 
     private func runKill(_ clip: RClip, from start: TimelineStart) {
         let frames = Float(max(0, clip.ints[0]))
-        let targets = Set(clip.ints.dropFirst().filter { $0 != 0 }.map { abs($0) - 1 })
-        for e in emitters where e.dying == nil && (targets.isEmpty || targets.contains(e.timeline)) {
+        let targets = targets(clip)
+        for e in emitters where e.dying == nil && matches(e.instance, targets) {
             e.dying = (time, frames)
             e.stopped = true
         }
-        for p in particles where p.dying == nil && (targets.isEmpty || targets.contains(p.emitter.timeline)) { p.dying = (time, frames) }
-        timelineStarts.removeAll { $0 !== start && (targets.isEmpty || targets.contains($0.index)) }
-        if targets.isEmpty, start.index >= 0, start.index < schema.timelines.count {
-            start.spawned = Set(schema.timelines[start.index].items.indices)
+        for p in particles where p.dying == nil && matches(p.emitter.instance, targets) { p.dying = (time, frames) }
+        timelineStarts.removeAll { $0 !== start && matches($0, targets) }
+    }
+
+    private func unlock(_ clip: RClip) {
+        guard let targets = targets(clip) else {
+            release()
+            return
         }
+        for start in timelineStarts where matches(start, targets) { start.released = true }
+        for e in emitters where matches(e.instance, targets) { e.instance?.released = true }
+    }
+
+    func timelineStates() -> [Int: String] {
+        var states: [Int: String] = [:]
+        func rank(_ state: String) -> Int { ["playing": 1, "released": 2, "held": 3, "fading": 4][state] ?? 0 }
+        func note(_ timeline: Int, _ state: String) {
+            guard timeline >= 0 else { return }
+            if rank(state) > rank(states[timeline] ?? "") { states[timeline] = state }
+        }
+        for start in timelineStarts where start.index >= 0 && start.index < schema.timelines.count {
+            let pending = schema.timelines[start.index].items.indices.contains { !start.spawned.contains($0) && schema.timelines[start.index].items[$0].enabled }
+            if pending { note(start.index, start.released || released ? "released" : "playing") }
+        }
+        for e in emitters {
+            if e.dying != nil {
+                note(e.timeline, "fading")
+            } else if !isReleased(e) && (e.holdWhile != nil || e.loops || e.lifetime == .infinity) {
+                note(e.timeline, "held")
+            } else {
+                note(e.timeline, isReleased(e) ? "released" : "playing")
+            }
+        }
+        for p in particles {
+            if p.dying != nil {
+                note(p.emitter.timeline, "fading")
+            } else if !isReleased(p.emitter) && (p.loops || p.lifetime == .infinity) {
+                note(p.emitter.timeline, "held")
+            } else {
+                note(p.emitter.timeline, "playing")
+            }
+        }
+        return states
     }
 
     private func runClip(_ clip: RClip, from start: TimelineStart) {
         clipLog.append((time, clip.type))
         switch clip.type {
-        case "ULLP": release()
+        case "ULLP": unlock(clip)
         case "END ":
             emitters.forEach { $0.stopped = true }
             release()
@@ -521,13 +599,9 @@ final class AvfxSimulation {
             emitters.removeAll { $0.dying != nil && fade($0.dying) <= 0 }
             particles.removeAll { $0.dying != nil && fade($0.dying) <= 0 }
         }
-        if !autoTriggered, timelineStarts.isEmpty, startedTimelines.isEmpty, !schema.scheduler.contains(where: { $0.enabled }) {
-            autoTriggered = true
-            if let index = startTrigger ?? defaultTrigger { trigger(index) }
-        }
-        for s in schema.scheduler where s.enabled && !startedTimelines.contains(s.timeline) && time >= Float(s.start) {
-            startedTimelines.insert(s.timeline)
-            timelineStarts.append(TimelineStart(index: s.timeline, at: Float(s.start)))
+        for (index, s) in schema.scheduler.enumerated() where s.enabled && s.timeline >= 0 && !startedItems.contains(index) && time - epoch >= Float(s.start) {
+            startedItems.insert(index)
+            timelineStarts.append(TimelineStart(index: s.timeline, at: epoch + Float(s.start), source: .scheduler(index)))
         }
         for start in Array(timelineStarts) {
             guard start.index >= 0, start.index < schema.timelines.count else { continue }
@@ -547,7 +621,8 @@ final class AvfxSimulation {
                 let end: Float = item.end > item.start ? Float(item.end - item.start) : 0
                 let e = spawnEmitter(schema.emitters[item.emitter], anchor: binderMatrix(binder), endFrames: end, startAge: local - Float(item.start))
                 e.timeline = start.index
-                if item.end < 0 { e.holdWhile = { [unowned self] in !self.released } }
+                e.instance = start
+                if item.end < 0 { e.holdWhile = { [unowned self] in !self.released && !start.released } }
             }
         }
 
@@ -556,7 +631,7 @@ final class AvfxSimulation {
         for e in emitters {
             e.age += frames
             let loopStart = Float(e.schema.loopStart), loopEnd = Float(e.schema.loopEnd)
-            if !released, e.loops, e.age >= loopEnd { e.wrap(loopEnd - loopStart) }
+            if !isReleased(e), e.loops, e.age >= loopEnd { e.wrap(loopEnd - loopStart) }
             if e.moving { moveEmitter(e, frames) }
             e.cameraRotation = cameraRotation
             e.updateTransform()
@@ -615,6 +690,7 @@ final class AvfxSimulation {
                     let c = EmitterInstance(schema: child, anchor: anchor, endFrames: 0, random: &random)
                     if item.generateDelayByOne && item.generateDelay > 0 { c.age = -Float(n * item.generateDelay) }
                     c.timeline = e.timeline
+                    c.instance = e.instance
                     c.parent = e
                     c.cameraRotation = cameraRotation
                     if let point {
@@ -660,7 +736,10 @@ final class AvfxSimulation {
             p.age += frames
             p.totalAge += frames
             let loopStart = Float(p.schema.loopStart), loopEnd = Float(p.schema.loopEnd)
-            if !released, p.loops, p.age >= loopEnd { p.age -= loopEnd - loopStart }
+            if !isReleased(p.emitter), p.loops, p.age >= loopEnd { p.age -= loopEnd - loopStart }
+        }
+        if PreviewRules.isOn("releasedEndlessEnd") {
+            for p in particles where p.dying == nil && p.lifetime == .infinity && isReleased(p.emitter) && !p.emitter.alive { p.dying = (time, 0) }
         }
         for p in particles where !p.alive { p.emitter.liveChildren -= 1 }
         particles.removeAll { !$0.alive }

@@ -45,6 +45,8 @@ final class EffectDocument: ObservableObject, Identifiable {
         var names: [String: String] = [:]
         var gamePath: String = ""
         var sourcePath: String? = nil
+        var events: [PreviewEvent]? = nil
+        var holding: Bool? = nil
     }
 
     private var metaURL: URL { url.deletingPathExtension().appendingPathExtension("fvmeta.json") }
@@ -55,20 +57,32 @@ final class EffectDocument: ObservableObject, Identifiable {
             savedNames = decoded.names
             gamePath = decoded.gamePath
             sourcePath = decoded.sourcePath ?? ""
+            savedEvents = decoded.events
+            savedHolding = decoded.holding
         }
         metaLoaded = true
+        clock.endingTest = { [weak self] in self?.isEnding($0) ?? false }
+        clock.loadEvents(savedEvents ?? defaultEvents, holding: savedHolding ?? false)
+        clock.onEventsEdited = { [weak self] in
+            guard let self else { return }
+            self.savedEvents = self.clock.events
+            self.savedHolding = self.clock.holding ? true : nil
+            self.saveMeta()
+        }
     }
 
     private var savedNames: [String: String] = [:]
+    private var savedEvents: [PreviewEvent]?
+    private var savedHolding: Bool?
 
     private(set) var metaError: String?
 
     func saveMeta() {
         do {
-            if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty {
+            if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty && savedEvents == nil && savedHolding == nil {
                 if FileManager.default.fileExists(atPath: metaURL.path) { try FileManager.default.removeItem(at: metaURL) }
             } else {
-                try JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath)).write(to: metaURL, options: .atomic)
+                try JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath, events: savedEvents, holding: savedHolding)).write(to: metaURL, options: .atomic)
             }
             metaError = nil
         } catch {
@@ -140,7 +154,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     }()
     let catalog = AvfxCatalog.shared
     private var index: [String: OutlineNode] = [:]
-    private var rowsCache: (revision: Int, rows: [SequencerRow])?
+    private var rowsCache: (revision: Int, events: Int, rows: [SequencerRow])?
 
     init(url: URL) throws {
         self.url = url
@@ -521,10 +535,10 @@ final class EffectDocument: ObservableObject, Identifiable {
     }
 
     var sequencerRows: [SequencerRow] {
-        if let cached = rowsCache, cached.revision == revision { return cached.rows }
+        if let cached = rowsCache, cached.revision == revision, cached.events == clock.eventsRevision { return cached.rows }
         var rows: [SequencerRow] = []
         if let avfxRoot { rows = avfxSequencerRows(avfxRoot) } else if let jsonRoot { rows = pixiSequencerRows(jsonRoot) }
-        rowsCache = (revision, rows)
+        rowsCache = (revision, clock.eventsRevision, rows)
         return rows
     }
 

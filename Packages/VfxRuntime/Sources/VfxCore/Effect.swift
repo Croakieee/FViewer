@@ -152,6 +152,8 @@ public final class EffectCore {
         particleList = []
     }
 
+    public func stop() { end() }
+
     private func end() {
         clear()
         kill = nil

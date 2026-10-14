@@ -47,6 +47,7 @@ enum PreviewRules {
         ("emitterMarkers", "Emitter shapes", "The selected emitter shows its shape and its create points."),
         ("bindPointNumbers", "Bind point numbers", "Bind points of the loaded skeleton show their numbers."),
         ("loopEffectors", "Effector loop", "Effectors repeat between Loop Start and Loop End until the effect is released."),
+        ("releasedEndlessEnd", "Released endless particles end", "Once released, a particle with endless life ends together with the emitter that made it. While held it stays. Inferred from game files, not checked in the game."),
     ]
 
     private static var cache: [String: Bool] = [:]

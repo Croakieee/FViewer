@@ -31,6 +31,7 @@ final class DensityJob {
         if let root = document.avfxRoot {
             simulation = AvfxSimulation(schema: AvfxSchemaReader.read(root))
             simulation?.seed = UInt64(max(0, document.clock.seed))
+            simulation?.events = document.clock.playedEvents
             simulation?.restart()
         } else if document.jsonRoot != nil {
             let data = document.pixiData(filter: VisibilityFilter())

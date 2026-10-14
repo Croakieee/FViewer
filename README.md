@@ -31,7 +31,7 @@ Originals are never overwritten. **Save** writes a copy next to the source with 
 | Viewport | Live preview. Drag to orbit, right-drag to pan, scroll to zoom; `1`, `3`, `7` switch to front, side and top views. The selected item gets move, rotate and scale handles. |
 | Properties | Every field of the selected item with its name from VFXEditor. A dot marks values that differ from the file on disk. |
 | File Browser | The open folder. Other tabs show the node library, history, texture and model assets, and the remaining game files of the folder. |
-| Bottom area | Timeline, Graph Editor, Node Editor, Item Editor. |
+| Bottom area | Timeline, Lifecycle, Node Editor, Item Editor, Material Editor. |
 
 ## Editors
 
@@ -39,7 +39,7 @@ Originals are never overwritten. **Save** writes a copy next to the source with 
 
 Strips show when each emitter of a timeline starts and ends. Drag a strip to move it, drag its edge to change its length. The curve inside a strip is the number of live particles on each frame. The timeline row shows the total.
 
-Playback controls set the frame, the end frame, speed, loop and the random seed. **Release** lets held particles and emitters play out, as when the game ends an effect.
+Playback controls set the frame, the end frame, speed, loop and the random seed. A **Release** event on the Events row lets held particles and emitters play out, as when the game ends an effect.
 
 ### Graph Editor
 
@@ -68,7 +68,7 @@ The viewport plays the effect: emitters, particles, texture layers with their bl
 - **Settings → Preview Rules** lists the rules the preview follows. Each can be switched off.
 - **Effect Info → Preview Notes** lists what the preview does not draw for the open effect.
 
-Not drawn: Dissolve particles, Black Hole effectors, normal and reflection textures.
+Not drawn: Black Hole effectors, normal and reflection textures.
 
 ## Textures
 

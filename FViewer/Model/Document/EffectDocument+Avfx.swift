@@ -222,8 +222,9 @@ extension EffectDocument {
                 title = "Emitter \(emitter)"
                 tint = .emitter
             } else if clip >= 0 {
-                title = "Clip \(clip)"
-                symbol = "scissors"
+                let clips = list.parent?.childrenNamed("Clip") ?? []
+                title = clip < clips.count ? (EffectDocument.clipSummary(clips[clip])?.name ?? "Clip \(clip)") : "Clip \(clip) · missing"
+                symbol = clip < clips.count ? ClipStyle.symbol(EffectDocument.clipSummary(clips[clip])?.code ?? "") : "scissors"
             } else {
                 title = "—"
             }
@@ -422,11 +423,22 @@ extension EffectDocument {
                                   write: { if case .text(let v) = $0 { block.stringValue = v } })
             return [PropSection(id: node.id + "/main", title: "Texture", fields: [field])]
         }
-        if block.tag == "Clip" { return [PropSection(id: node.id + "/main", title: node.title, fields: clipFields(block, id: node.id))] }
+        if block.tag == "Clip" {
+            let fields = clipFields(block, id: node.id)
+            return [PropSection(id: node.id + "/main", title: node.title, fields: fields.main), PropSection(id: node.id + "/raw", title: "Raw Values", fields: fields.raw)]
+        }
         if block.tag == "Modl" { return [PropSection(id: node.id + "/main", title: node.title, fields: modelFields(block, id: node.id))] }
         let source = record ?? block.children ?? []
         let list = record != nil ? block.tag : nil
         var sections = [PropSection(id: node.id + "/main", title: node.title, fields: avfxFields(source, cls: cls, id: node.id, list: list))]
+        if let record, block.tag == "Item", let timeline = block.parent, timeline.tag == "TmLn",
+           let index = record.first(where: { $0.tag == "ClNo" })?.intValue, index >= 0, index < timeline.childrenNamed("Clip").count,
+           let prefix = node.id.components(separatedBy: "/Item/").first {
+            let clip = timeline.childrenNamed("Clip")[index]
+            let fields = clipFields(clip, id: prefix + "/Clip\(index)")
+            sections.append(PropSection(id: prefix + "/Clip\(index)/main", title: "Clip \(index) · " + EffectDocument.clipName(String(decoding: clip.data.prefix(4).reversed(), as: UTF8.self)),
+                                        fields: fields.main))
+        }
         if block === avfxRoot, let x = block.child("RvSx"), let y = block.child("RvSy"), let z = block.child("RvSz") {
             let combined = PropField(id: node.id + "#RvSc", label: "Revised Scale (Combined)", tag: "RvSx", kind: .double,
                                      read: { .double(Double(x.floatValue)) },
@@ -473,14 +485,18 @@ extension EffectDocument {
         ("RTRG", "Random Trigger"),
     ]
 
-    private func clipFields(_ block: AvfxBlock, id: String) -> [PropField] {
-        guard block.data.count >= 36 else { return [] }
+    private func clipFields(_ block: AvfxBlock, id: String) -> (main: [PropField], raw: [PropField]) {
+        guard block.data.count >= 36 else { return ([], []) }
         func code() -> String { String(decoding: block.data.prefix(4).reversed(), as: UTF8.self) }
+        func int(_ i: Int) -> Int { Int(Int32(bitPattern: block.data.u32(4 + i * 4))) }
+        func setInt(_ i: Int, _ value: Int) { block.data.setU32(4 + i * 4, UInt32(bitPattern: Int32(truncatingIfNeeded: value))) }
         func intField(_ label: String, _ i: Int, suffix: String) -> PropField {
-            let at = 4 + i * 4
-            return PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .int,
-                             read: { .int(Int(Int32(bitPattern: block.data.u32(at)))) },
-                             write: { block.data.setU32(at, UInt32(bitPattern: Int32(truncatingIfNeeded: Int(safe: $0.number.rounded())))) })
+            PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .int, read: { .int(int(i)) },
+                      write: { setInt(i, Int(safe: $0.number.rounded())) })
+        }
+        func choiceField(_ label: String, _ i: Int, suffix: String, _ choices: [FieldChoice]) -> PropField {
+            PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .choice(choices), read: { .int(int(i)) },
+                      write: { if case .int(let v) = $0 { setInt(i, v) } })
         }
         func flagField(_ label: String, at: Int, suffix: String, isOn: @escaping () -> Bool, set: @escaping (Bool) -> UInt32) -> PropField {
             PropField(id: id + "#" + suffix, label: label, tag: "Clip", kind: .bool, read: { .bool(isOn()) },
@@ -494,27 +510,37 @@ extension EffectDocument {
                                     let bytes = Array(EffectDocument.clipTypes[v].code.utf8.reversed())
                                     for k in 0..<4 { block.data[k] = bytes[k] }
                                 })]
+        let help = EffectDocument.clipHelp(code())
+        if !help.isEmpty { fields.append(PropField(id: id + "#help", label: "Does", tag: "Clip", kind: .info, read: { .text(help) }, write: nil)) }
+        func targets() {
+            for k in 1...3 { fields.append(choiceField("Target \(k)", k, suffix: "target\(k)", clipTargetChoices(current: int(k)))) }
+        }
         switch code() {
         case "KILL":
             fields.append(intField("Fade Out Duration", 0, suffix: "fade"))
-            fields.append(flagField("Hide", at: 16, suffix: "hide", isOn: { block.data.u32(16) == 1 }, set: { $0 ? 1 : 0 }))
+            targets()
             fields.append(flagField("Allow Show", at: 20, suffix: "allow", isOn: { block.data.f32(20) != -1 },
                                     set: { $0 ? Float(0).bitPattern : Float(-1).bitPattern }))
             fields.append(flagField("Start Hidden", at: 24, suffix: "hidden", isOn: { block.data.f32(24) != -1 },
                                     set: { $0 ? Float(0).bitPattern : Float(-1).bitPattern }))
+        case "ULLP":
+            targets()
+        case "TRG ":
+            fields.append(choiceField("Trigger", 0, suffix: "trigger", triggerChoices(current: int(0))))
         case "RTRG":
-            fields.append(intField("Minimum Trigger", 0, suffix: "min"))
-            fields.append(intField("Maximum Trigger", 1, suffix: "max"))
+            fields.append(choiceField("Minimum Trigger", 0, suffix: "min", triggerChoices(current: int(0))))
+            fields.append(choiceField("Maximum Trigger", 1, suffix: "max", triggerChoices(current: int(1))))
         default: break
         }
-        for i in 0..<4 { fields.append(intField("Raw Integer \(i + 1)", i, suffix: "i\(i)")) }
+        var raw: [PropField] = []
+        for i in 0..<4 { raw.append(intField("Integer \(i + 1)", i, suffix: "i\(i)")) }
         for i in 0..<4 {
             let at = 20 + i * 4
-            fields.append(PropField(id: id + "#f\(i)", label: "Raw Float \(i + 1)", tag: "Clip", kind: .double,
-                                    read: { .double(Double(block.data.f32(at))) },
-                                    write: { block.data.setU32(at, Float($0.number).bitPattern) }))
+            raw.append(PropField(id: id + "#f\(i)", label: "Float \(i + 1)", tag: "Clip", kind: .double,
+                                 read: { .double(Double(block.data.f32(at))) },
+                                 write: { block.data.setU32(at, Float($0.number).bitPattern) }))
         }
-        return fields
+        return (fields, raw)
     }
 
     private func modelFields(_ block: AvfxBlock, id: String) -> [PropField] {
@@ -648,23 +674,37 @@ extension EffectDocument {
     }
 
     func avfxSequencerRows(_ root: AvfxBlock) -> [SequencerRow] {
+        let timelines = root.childrenNamed("TmLn")
+        let scheduled = schedulerSlots, slots = triggerSlots
         var starts: [Int: Double] = [:]
-        var triggered: Set<Int> = []
-        if let scheduler = root.child("Schd") {
-            let items = scheduler.children?.last { $0.tag == "Item" && $0.children != nil }?.records() ?? []
-            for record in items where recordInt(record, "bEna", 1) != 0 {
-                starts[recordInt(record, "TlNo")] = Double(recordInt(record, "StTm", 0))
-            }
-            let triggers = scheduler.children?.last { $0.tag == "Trgr" && $0.children != nil }?.records().dropFirst(items.count) ?? []
-            for record in triggers {
-                let timeline = recordInt(record, "TlNo")
-                if timeline >= 0 && starts[timeline] == nil { triggered.insert(timeline) }
+        var sources: [Int: [TimelineSource]] = [:]
+        func begin(_ timeline: Int, _ frame: Double) {
+            guard timeline >= 0, timeline < timelines.count else { return }
+            starts[timeline] = min(starts[timeline] ?? frame, frame)
+        }
+        for slot in scheduled + slots where slot.timeline >= 0 { sources[slot.timeline, default: []].append(slot.source) }
+        for slot in scheduled where slot.enabled { begin(slot.timeline, Double(slot.start)) }
+        for event in clock.playedEvents {
+            guard case .trigger(let index) = event.kind, index >= 0, index < slots.count, slots[index].enabled else { continue }
+            begin(slots[index].timeline, event.frame + Double(slots[index].start))
+        }
+        for _ in 0..<4 {
+            for (t, timeline) in timelines.enumerated() {
+                guard let base = starts[t] else { continue }
+                let clips = timeline.childrenNamed("Clip")
+                for record in timeline.ownRecords("Item") where recordInt(record, "bEna", 1) != 0 {
+                    let clip = recordInt(record, "ClNo")
+                    guard clip >= 0, clip < clips.count, let summary = EffectDocument.clipSummary(clips[clip]), let index = summary.trigger,
+                          index >= 0, index < slots.count, slots[index].enabled else { continue }
+                    begin(slots[index].timeline, base + Double(recordInt(record, "StTm", 0) + slots[index].start))
+                }
             }
         }
         let emitters = root.childrenNamed("Emit")
         var rows: [SequencerRow] = []
         for (t, timeline) in root.childrenNamed("TmLn").enumerated() {
             let base = starts[t] ?? 0
+            let clipBlocks = timeline.childrenNamed("Clip")
             let id = "avfx/TmLn/\(t)"
             var children: [SequencerRow] = []
             let records = timeline.children?.last { $0.tag == "Item" && $0.children != nil }?.records() ?? []
@@ -678,20 +718,26 @@ extension EffectDocument {
                     life = Double(value.floatValue)
                 }
                 let open = Double(endTime) + base <= start
-                let end = open ? start + (life > 0 ? life : (clip >= 0 && emitter < 0 ? 1 : 30)) : base + Double(endTime)
+                var end = open ? start + (life > 0 ? life : (clip >= 0 && emitter < 0 ? 1 : 30)) : base + Double(endTime)
+                if emitter < 0, clip >= 0, clip < clipBlocks.count, let summary = EffectDocument.clipSummary(clipBlocks[clip]), summary.code == "KILL" {
+                    end = max(end, start + Double(summary.fade))
+                }
                 let effector = recordInt(record, "EfNo")
                 let effectorCount = root.childrenNamed("Efct").count
                 var label = "[NONE]"
                 if emitter >= 0 {
                     label = names["avfx/Emit/\(emitter)"] ?? "Emitter \(emitter)"
                 } else if clip >= 0 {
-                    label = names["\(id)/Clip\(clip)"] ?? "Clip \(clip)"
+                    label = names["\(id)/Clip\(clip)"] ?? (clip < clipBlocks.count ? clipLabel(clipBlocks[clip]) : "Clip \(clip) · missing")
                 } else if effector >= 0, effector < effectorCount {
                     label = names["avfx/Efct/\(effector)"] ?? "Effector \(effector)"
                 }
                 var row = SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end, openEnded: open && life <= 0 && emitter >= 0,
                                        tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
                 row.base = base
+                row.started = starts[t] != nil
+                row.timeline = t
+                if emitter < 0, clip >= 0, clip < clipBlocks.count { row.clip = EffectDocument.clipSummary(clipBlocks[clip]) }
                 row.densityKey = emitter >= 0 ? "e\(emitter)" : "-"
                 if emitter >= 0, emitter < emitters.count {
                     let from = Double(emitters[emitter].int("LpSt")), to = Double(emitters[emitter].int("LpEd"))
@@ -703,9 +749,12 @@ extension EffectDocument {
                 children.append(row)
             }
             let end = children.map(\.end).max() ?? base + 30
-            let suffix = triggered.contains(t) ? " (trigger)" : ""
-            rows.append(SequencerRow(id: id, label: "Timeline \(t)" + suffix, start: base, end: end, openEnded: false, tint: .timeline,
-                                     depth: 0, nodeID: id))
+            var header = SequencerRow(id: id, label: timelineName(t), start: base, end: end, openEnded: false, tint: .timeline, depth: 0, nodeID: id)
+            header.timeline = t
+            header.sources = sources[t] ?? []
+            header.started = starts[t] != nil
+            header.base = base
+            rows.append(header)
             rows.append(contentsOf: children)
         }
         return rows

@@ -6,8 +6,7 @@ struct BottomEditors: View {
     @ObservedObject var document: EffectDocument
 
     private static let editors: [(title: String, symbol: String)] = [
-        ("Timeline", "timeline.selection"), ("Graph Editor", "point.topleft.down.to.point.bottomright.curvepath"),
-        ("Node Editor", "point.3.connected.trianglepath.dotted"), ("Item Editor", "slider.horizontal.below.rectangle"),
+        ("Timeline", "timeline.selection"), ("Lifecycle", "arrow.triangle.2.circlepath"), ("Node Editor", "point.3.connected.trianglepath.dotted"), ("Item Editor", "slider.horizontal.below.rectangle"),
         ("Material Editor", "circle.hexagongrid"),
     ]
 
@@ -29,7 +28,7 @@ struct BottomEditors: View {
             }
             switch current {
             case 0: SequencerView(document: document, clock: document.clock)
-            case 1: CurveEditorView(document: document, clock: document.clock)
+            case 1: LifecycleEditorView(document: document, clock: document.clock)
             case 2: NodeGraphView(document: document).coordinateSpace(name: "graph")
             case 4: MaterialEditorView(document: document)
             default: DockedItemEditor(document: document)
@@ -297,6 +296,7 @@ struct ContentView: View {
         }
         .background(Theme.window)
         .background(WindowConfigurator())
+        .background(PlaybackKeys(app: app))
         .onAppear {
             app.openModelWindow = { openWindow(id: "model") }
             app.openTextureWindow = { openWindow(id: "texture") }

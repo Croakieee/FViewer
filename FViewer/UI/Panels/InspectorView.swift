@@ -97,7 +97,8 @@ struct FieldControl: View {
                        })
         case .info:
             Text({ if case .text(let s) = value { return s }; return "\(value.number)" }())
-                .font(Theme.font).foregroundStyle(Theme.dim).frame(maxWidth: .infinity, alignment: .leading).frame(height: 20)
+                .font(Theme.font).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
         }
     }
 }
@@ -343,6 +344,9 @@ struct InspectorView: View {
                     RecipeRows(document: document, fields: sections.flatMap(\.fields), recipes: RecipeRows.recipes(for: block.tag))
                 }
             }
+            if case .timeline(let index) = node.visibility, document.avfxRoot != nil {
+                Panel(title: "Lifecycle", memory: "lifecycle") { TimelineLifecycleRows(document: document, clock: document.clock, timeline: index) }
+            }
             ForEach(sections) { section in
                 let edited = document.changes.contains(node.id) ? section.fields.filter { document.isChanged($0, in: node.id) }.count : 0
                 Panel(title: section.title, trailing: "\(section.fields.count)", badge: edited > 0 ? "\(edited) edited" : "",
@@ -359,10 +363,7 @@ struct InspectorView: View {
                       memory: "animation") {
                     let paired = CurveValueRows.pairs(curves, missing)
                     ForEach(paired.rows, id: \.group.id) { row in
-                        CurveValueRows(document: document, group: row.group, changed: document.curveChanged(row.group, in: document.selectionID), random: row.random, addRandom: row.add) {
-                            document.activeCurveID = row.group.id
-                            app.bottomTab = 1
-                        }
+                        CurveValueRows(document: document, group: row.group, changed: document.curveChanged(row.group, in: document.selectionID), random: row.random, addRandom: row.add)
                     }
                     if !paired.rest.isEmpty { UnsetRows(items: paired.rest) }
                 }

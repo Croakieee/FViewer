@@ -409,8 +409,13 @@ struct CurveValueRows: View {
     let changed: Bool
     var random: CurveGroup?
     var addRandom: MissingCurve?
-    let open: () -> Void
+    var floats = true
     @State private var floating = false
+
+    private func open() {
+        document.activeCurveID = group.id
+        if floats { floating = true }
+    }
 
     static func pairs(_ curves: [CurveGroup], _ missing: [MissingCurve]) -> (rows: [(group: CurveGroup, random: CurveGroup?, add: MissingCurve?)], rest: [MissingCurve]) {
         let titles = Set(curves.map(\.title))
@@ -428,7 +433,7 @@ struct CurveValueRows: View {
 
     private func float(_ target: CurveGroup) {
         document.activeCurveID = target.id
-        floating = true
+        if floats { floating = true }
     }
 
     private var colorChannels: [CurveChannel] { group.channels.filter { $0.colorComponent != nil } }
@@ -492,7 +497,7 @@ struct CurveValueRows: View {
         return HStack(spacing: 1) {
             modeChip("Constant", current == "Constant", "One value for the whole life. A curve becomes the value it has at the playhead") { makeConstant(channels) }
             modeChip(gradient ? "Gradient" : "Curve", current == "Curve" || current == "Gradient" || current == "Mixed",
-                     "A value that changes over time. Opens the Graph Editor") {
+                     "A value that changes over time. Opens the curve in the Graph Editor") {
                 if current == "Curve" || current == "Gradient" { open() } else { makeCurve(channels) }
             }
         }
@@ -520,7 +525,7 @@ struct CurveValueRows: View {
             HStack(spacing: 4) {
                 if let title { Text(title).font(Theme.small).foregroundStyle(Theme.dim).frame(width: 30, alignment: .leading) }
                 CurveSparkline(keys: keys, color: channel.color).frame(height: 18).contentShape(Rectangle()).pressable { float(owner ?? group) }
-                    .help("\(keys.count) keys, \(String(format: "%.3g", keys.map(\.value).min() ?? 0)) … \(String(format: "%.3g", keys.map(\.value).max() ?? 0)). Click to edit here; the Curve switch opens the Graph Editor")
+                    .help("\(keys.count) keys, \(String(format: "%.3g", keys.map(\.value).min() ?? 0)) … \(String(format: "%.3g", keys.map(\.value).max() ?? 0)). Click to edit the curve")
             }
         }
     }

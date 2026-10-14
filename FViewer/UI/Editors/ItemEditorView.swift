@@ -386,9 +386,7 @@ private struct ItemPage: View {
                                 let paired = CurveValueRows.pairs(curves, missingCurves)
                                 ForEach(paired.rows, id: \.group.id) { row in
                                     CurveValueRows(document: document, group: row.group, changed: document.curveChanged(row.group, in: node.id),
-                                                   random: row.random, addRandom: row.add) {
-                                        document.activeCurveID = row.group.id
-                                    }
+                                                   random: row.random, addRandom: row.add, floats: false)
                                 }
                                 if !paired.rest.isEmpty { UnsetRows(items: paired.rest) }
                             }
@@ -458,9 +456,9 @@ private struct RecordTable: View {
                         }
                         .frame(width: 30, alignment: .leading)
                         if group.id.hasSuffix("/Trgr") {
-                            HeaderButton(symbol: "bolt.fill", help: "Fire trigger \(index) in the preview now") {
+                            HeaderButton(symbol: "bolt.fill", help: "Add Trigger \(index) to the Events track at the playhead: it fires now and on every replay") {
+                                document.clock.addEvent(.trigger(index))
                                 document.clock.playing = true
-                                document.clock.trigger(index)
                             }
                         }
                         ForEach(row.fields) { field in
