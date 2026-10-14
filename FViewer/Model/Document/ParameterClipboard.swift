@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 
 enum ParameterClipboard {
     static var kind = ""
@@ -116,12 +117,17 @@ enum ParameterClipboard {
         kind(of: node).replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "#", with: "n")
     }
 
+    private static var presetCache: (at: Double, prefix: String, value: [(name: String, url: URL)])?
+
     static func presets(for node: OutlineNode) -> [(name: String, url: URL)] {
         guard let folder = presetFolder else { return [] }
         let prefix = presetKind(node) + "~"
-        return ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+        if let cached = presetCache, cached.prefix == prefix, CACurrentMediaTime() - cached.at < 1.5 { return cached.value }
+        let fresh = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" && $0.lastPathComponent.hasPrefix(prefix) }
             .map { (String($0.deletingPathExtension().lastPathComponent.dropFirst(prefix.count)), $0) }.sorted { $0.0 < $1.0 }
+        presetCache = (CACurrentMediaTime(), prefix, fresh)
+        return fresh
     }
 
     @discardableResult static func savePreset(_ name: String, from node: OutlineNode, in document: EffectDocument) -> URL? {
@@ -139,7 +145,13 @@ enum ParameterClipboard {
         (kind, fields, curves) = keep
         let url = folder.appendingPathComponent(presetKind(node) + "~" + clean + ".json")
         guard let data = try? JSONSerialization.data(withJSONObject: ["fields": fieldMap, "curves": curveMap], options: [.prettyPrinted, .sortedKeys]) else { return nil }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+            presetCache = nil
+        } catch {
+            AppDelegate.model?.errorMessage = "Preset \(clean): \(error.localizedDescription)"
+            return nil
+        }
         return url
     }
 

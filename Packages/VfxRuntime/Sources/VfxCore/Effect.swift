@@ -47,6 +47,7 @@ public final class EffectCore {
         defs = try EffectDefs(
             def, table: table, hasTexture: { [views = options.views] in views.hasTexture($0) }, models: options.models, params: options.params)
         fps = def.fps ?? 30
+        state.fps = fps > 0 ? fps : 30
         unit = def.unit ?? 100
         seed = options.seed
         maxParticles = options.maxParticles

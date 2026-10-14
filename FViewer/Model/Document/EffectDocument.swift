@@ -170,6 +170,21 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published private(set) var undoTitles: [String] = []
     @Published private(set) var redoTitles: [String] = []
     var originalFields: [String: [String: FieldValue]] = [:]
+    var origins: [String: [Int]] = [:]
+
+    func originalID(_ id: String) -> String? {
+        let parts = id.split(separator: "/", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 3, parts[0] == "avfx", let index = Int(parts[2]), let list = origins[parts[1]] else { return id }
+        guard index < list.count else { return nil }
+        return (["avfx", parts[1], String(list[index])] + parts.dropFirst(3)).joined(separator: "/")
+    }
+
+    func dropOrigin(_ tag: String, at index: Int) {
+        var list = origins[tag] ?? Array(0..<(original?.avfxRoot?.childrenNamed(tag).count ?? 0))
+        if index < list.count { list.remove(at: index) }
+        origins[tag] = list
+        originalFields = [:]
+    }
     private var changeCache: (revision: Int, set: ChangeSet)?
 
     var changes: ChangeSet {
@@ -282,7 +297,7 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     func amendLastUndo() {
         guard let lastRedo else { return }
-        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names)
+        lastRedo.state = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins)
         rebuildOutline()
         revision += 1
     }
@@ -298,6 +313,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         let json: JSONNode?
         let selection: String?
         let names: [String: String]
+        let origins: [String: [Int]]
     }
 
     private final class SnapshotBox {
@@ -305,11 +321,15 @@ final class EffectDocument: ObservableObject, Identifiable {
         init(_ state: Snapshot) { self.state = state }
     }
 
-    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names) }
+    func snapshot() -> Any { Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins) }
 
     private func restore(_ state: Snapshot) {
         if let avfx = state.avfx { avfxRoot = avfx.deepCopy() }
         if let json = state.json { jsonRoot = json.deepCopy() }
+        if origins != state.origins {
+            origins = state.origins
+            originalFields = [:]
+        }
         if names != state.names {
             names = state.names
             saveMeta()
@@ -318,15 +338,15 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     func registerUndo(_ title: String, undo: () -> Void, redo: () -> Void) {
         undo()
-        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names)
+        let before = Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins)
         redo()
-        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names))
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins))
     }
 
     func registerUndo(_ title: String, since before: Any) {
         guard let before = before as? Snapshot else { return }
         if before.names == names, before.avfx?.serialized() == avfxRoot?.serialized(), before.json?.serialized() == jsonRoot?.serialized() { return }
-        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names))
+        pushUndo(title, from: before, to: Snapshot(avfx: avfxRoot?.deepCopy(), json: jsonRoot?.deepCopy(), selection: selectionID, names: names, origins: origins))
     }
 
     private var undoSuspended = false

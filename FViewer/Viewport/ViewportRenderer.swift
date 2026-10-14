@@ -12,7 +12,7 @@ final class ViewportCamera: ObservableObject {
     @Published var fov: Float = 0.75
 
     var eye: SIMD3<Float> {
-        target + distance * SIMD3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
+        target + (ortho ? max(distance, 400) : distance) * SIMD3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch))
     }
 
     func orbit(dx: Float, dy: Float) {
@@ -285,7 +285,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             let forward = simd_normalize(camera.eye - camera.target)
             let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
             let up = simd_cross(forward, right)
-            let glyph = max(0.012, simd_distance(camera.eye, camera.target) * 0.004)
+            let glyph = max(0.012, camera.distance * 0.004)
             for (id, point) in AvfxSimulation.bindPoints {
                 let tint: SIMD4<Float> = used.contains(id) ? SIMD4(1, 0.63, 0.16, 1) : SIMD4(1, 1, 1, 0.3)
                 if !used.contains(id) {
@@ -667,12 +667,20 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        let mouse = NSEvent.mouseLocation
+        var mouse = CGPoint(x: -1, y: -1)
+        if let window = view.window {
+            let local = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            if view.bounds.contains(local) { mouse = local }
+        }
         var signature: [Double] = [Double(camera.yaw), Double(camera.pitch), Double(camera.distance), Double(camera.fov)]
         signature.append(contentsOf: [Double(camera.target.x), Double(camera.target.y), Double(camera.target.z), camera.ortho ? 1 : 0])
         signature.append(contentsOf: [Double(document?.previewRevision ?? 0), Double(document?.revision ?? 0), Double(document?.selectionID?.hashValue ?? 0)])
         signature.append(contentsOf: [Double(mouse.x), Double(mouse.y), Double(NSEvent.pressedMouseButtons), document?.clock.time ?? 0, Double(document?.clock.seed ?? 0)])
         signature.append(contentsOf: [Double(view.drawableSize.width), Double(view.drawableSize.height)])
+        signature.append(contentsOf: [Double(PreviewRules.token), Double(ViewportRenderer.bloom.on ? 1 : 0), Double(ViewportRenderer.bloom.threshold),
+                                      Double(ViewportRenderer.bloom.intensity), Double(ViewportRenderer.bloom.radius)])
+        signature.append(Double(String(describing: ViewportRenderer.backgroundColor).hashValue % 100_000))
+        signature.append(Double(String(describing: document?.visibilityFilter).hashValue % 100_000))
         if signature != idleSignature {
             idleSignature = signature
             lastActivity = CACurrentMediaTime()
@@ -800,6 +808,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         if let effect, let particleRenderer {
             particleRenderer.viewport = SIMD2(Float(view.drawableSize.width), Float(view.drawableSize.height))
             particleRenderer.clip = SIMD2(near, 2000)
+            particleRenderer.orthographic = camera.ortho
             particleRenderer.softDistance = player?.simulation?.schema.softFadeRange ?? 0.5
             particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: camera.eye,
                                   shading: effectShading)
@@ -810,7 +819,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentSamplerState(sampler, index: 0)
             encoder.setCullMode(.none)
-            for item in overlayItems() {
+            let capturing = captureRequest != nil
+            for item in capturing ? [] : overlayItems() {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
                                         options: SIMD4(0, 0, item.pointSize, 0))
                 encoder.setDepthStencilState(overlayDepthState)
@@ -820,7 +830,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 encoder.setFragmentTexture(white, index: 0)
                 encoder.drawPrimitives(type: item.primitive, vertexStart: 0, vertexCount: item.count)
             }
-            for item in gizmoItems() {
+            for item in capturing ? [] : gizmoItems() {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
                                         options: SIMD4(0, 0, item.pointSize, 0))
                 encoder.setDepthStencilState(alwaysDepthState ?? overlayDepthState)

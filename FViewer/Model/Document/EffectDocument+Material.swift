@@ -1,4 +1,5 @@
 import Foundation
+import QuartzCore
 import VfxCore
 
 extension EffectDocument {
@@ -328,10 +329,15 @@ enum MaterialLibrary {
         return folder
     }
 
+    private static var savedCache: (at: Double, value: [(name: String, url: URL)])?
+
     static var saved: [(name: String, url: URL)] {
         guard let folder else { return [] }
-        return ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+        if let cached = savedCache, CACurrentMediaTime() - cached.at < 1.5 { return cached.value }
+        let fresh = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "material" }.map { ($0.deletingPathExtension().lastPathComponent, $0) }.sorted { $0.0 < $1.0 }
+        savedCache = (CACurrentMediaTime(), fresh)
+        return fresh
     }
 
     static func save(_ graph: MaterialGraph, name: String) {
@@ -354,6 +360,7 @@ enum MaterialLibrary {
             copy += 1
         }
         try? data.write(to: target, options: .atomic)
+        savedCache = nil
     }
 
     static func load(_ url: URL) -> MaterialGraph? {

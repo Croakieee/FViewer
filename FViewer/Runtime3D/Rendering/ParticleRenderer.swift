@@ -50,8 +50,14 @@ private final class GeometryBuffers {
     let indexCount: Int
     var version: Int
     var usedFrame = 0
+    weak var owner: RenderGeometry?
+    let vertexFloats: Int
+
+    func matches(_ g: RenderGeometry) -> Bool { owner === g && g.indices.count == indexCount && g.vertices.count == vertexFloats }
 
     init?(_ device: MTLDevice, _ g: RenderGeometry) {
+        owner = g
+        vertexFloats = g.vertices.count
         guard !g.vertices.isEmpty, !g.indices.isEmpty,
               let vb = device.makeBuffer(bytes: g.vertices, length: g.vertices.count * 4),
               let ib = device.makeBuffer(bytes: g.indices, length: g.indices.count * 4) else { return nil }
@@ -74,10 +80,11 @@ final class ParticleRenderer {
     private var depthStates: [MTLDepthStencilState] = []
     private var samplers: [Int: MTLSamplerState] = [:]
     private var white: MTLTexture?
+    private var samples = 4
     private lazy var emptyDepth: MTLTexture? = {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: 1, height: 1, mipmapped: false)
         descriptor.textureType = .type2DMultisample
-        descriptor.sampleCount = 4
+        descriptor.sampleCount = samples
         descriptor.usage = [.shaderRead, .renderTarget]
         descriptor.storageMode = .private
         return device.makeTexture(descriptor: descriptor)
@@ -87,12 +94,14 @@ final class ParticleRenderer {
     var viewport = SIMD2<Float>(1, 1)
     var clip = SIMD2<Float>(0.1, 2000)
     var softDistance: Float = 0.5
+    var orthographic = false
     private var materials: [Int: PreparedMaterial] = [:]
     private var buffers: [ObjectIdentifier: GeometryBuffers] = [:]
     private var frameIndex = 0
     var textureProvider: (Int) -> LoadedTexture? = { _ in nil }
 
     init?(device: MTLDevice, pixelFormat: MTLPixelFormat, depthFormat: MTLPixelFormat, sampleCount: Int) {
+        samples = max(sampleCount, 1)
         self.device = device
         guard let library = try? device.makeLibrary(source: ParticleShader.source, options: nil) else { return nil }
         let layout = MTLVertexDescriptor()
@@ -108,8 +117,10 @@ final class ParticleRenderer {
             (.sourceAlpha, .one, .zero, .one),
             (.zero, .oneMinusSourceColor, .zero, .one),
             (.oneMinusDestinationColor, .one, .zero, .one),
+            (.one, .one, .zero, .one),
+            (.one, .one, .zero, .one),
         ]
-        for factor in factors {
+        for (slot, factor) in factors.enumerated() {
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = library.makeFunction(name: "particleVertex")
             d.fragmentFunction = library.makeFunction(name: "particleFragment")
@@ -123,6 +134,8 @@ final class ParticleRenderer {
             a.destinationRGBBlendFactor = factor.1
             a.sourceAlphaBlendFactor = factor.2
             a.destinationAlphaBlendFactor = factor.3
+            if slot == 5 { a.rgbBlendOperation = .min }
+            if slot == 6 { a.rgbBlendOperation = .max }
             guard let state = try? device.makeRenderPipelineState(descriptor: d) else { return nil }
             pipelines.append(state)
         }
@@ -230,9 +243,11 @@ final class ParticleRenderer {
         case 2: m.blend = 2
         case 3: m.blend = 3
         case 4: m.blend = 4
+        case 6: m.blend = 5
+        case 7: m.blend = 6
         default: m.blend = 0
         }
-        let premultiply: Float = mode == 4 || mode == 3 ? 1 : mode == 1 ? 2 : 0
+        let premultiply: Float = mode == 4 || mode == 3 || mode == 7 ? 1 : mode == 1 || mode == 6 ? 2 : 0
         let fresnel = isModel && ps.fresnelType != 0 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("modelFresnel")
         let lineGradient = ps.type == 3 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("lineGradient")
         let sprites = ps.simple != nil && (ps.type == 1 || ps.type == 3)
@@ -300,7 +315,7 @@ final class ParticleRenderer {
             if materials[draw.particle] == nil { materials[draw.particle] = prepare(particles[draw.particle]) }
             guard let material = materials[draw.particle] else { continue }
             let key = ObjectIdentifier(draw.geometry)
-            if buffers[key] == nil, let created = GeometryBuffers(device, draw.geometry) { buffers[key] = created }
+            if buffers[key]?.matches(draw.geometry) != true { buffers[key] = GeometryBuffers(device, draw.geometry) }
             guard let geometry = buffers[key] else { continue }
             geometry.sync(draw.geometry)
             geometry.usedFrame = frameIndex
@@ -322,7 +337,7 @@ final class ParticleRenderer {
             u.cameraPosition = Vec4(camera.x, camera.y, camera.z, 1)
             let sceneReady = !wire && sceneColor != nil && sceneDepth != nil
             u.scene = Vec4(sceneReady && material.soft ? softDistance : 0, sceneReady ? material.screenCopy : 0, viewport.x, viewport.y)
-            u.scene2 = Vec4(clip.x, clip.y, PreviewRules.isOn("softDepthOffset") ? 1 : 0, 0)
+            u.scene2 = Vec4(clip.x, clip.y, PreviewRules.isOn("softDepthOffset") ? 1 : 0, orthographic ? 1 : 0)
             if material.screenCopy > 0, !sceneReady, !wire { u.color.w = 0 }
             if wire {
                 u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle)

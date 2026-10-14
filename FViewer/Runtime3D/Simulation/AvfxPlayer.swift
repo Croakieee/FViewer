@@ -53,13 +53,13 @@ final class AvfxPlayer {
             rewindSimulation()
         }
         clock.advance(elapsed, duration: duration, finished: simulation.finished, held: simulation.held)
-        let target = Float(clock.time)
-        if target < simulation.time - 0.01 || (!clock.playing && abs(simulation.time - target) > 0.001) { rewindSimulation() }
+        let target = (Float(clock.time) / stepFrames + 0.001).rounded(.down) * stepFrames
+        if target < simulation.time - 0.01 { rewindSimulation() }
         var guardCount = 0
         while simulation.time < target - 0.001 && guardCount < 6000 {
             guardCount += 1
-            let step = clock.playing ? stepFrames : min(stepFrames, target - simulation.time)
-            if clock.playing && simulation.time + stepFrames > target + 0.001 { break }
+            let step = stepFrames
+            if simulation.time + stepFrames > target + 0.001 { break }
             if let release = clock.releaseTime, !appliedRelease, Double(simulation.time) >= release {
                 appliedRelease = true
                 simulation.release()

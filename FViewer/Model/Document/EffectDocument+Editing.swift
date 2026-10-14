@@ -62,6 +62,28 @@ extension EffectDocument {
             renamed[index > removed ? prefix + String(index - 1) + rest.dropFirst(digits.count) : key] = name
         }
         replaceNames(renamed)
+        dropOrigin(tag, at: removed)
+        var shown: Set<VisibilityKey> = []
+        for key in hidden {
+            switch key {
+            case .timeline(let index) where tag == "TmLn": if index != removed { shown.insert(.timeline(index > removed ? index - 1 : index)) }
+            case .emitter(let index) where tag == "Emit": if index != removed { shown.insert(.emitter(index > removed ? index - 1 : index)) }
+            case .particle(let index) where tag == "Ptcl": if index != removed { shown.insert(.particle(index > removed ? index - 1 : index)) }
+            default: shown.insert(key)
+            }
+        }
+        if shown != hidden { hidden = shown }
+        if let selected = selectionID, selected.hasPrefix(prefix) {
+            let rest = selected.dropFirst(prefix.count)
+            let digits = rest.prefix { $0.isNumber }
+            if let index = Int(digits) {
+                if index == removed {
+                    selectionID = "avfx"
+                } else if index > removed {
+                    selectionID = prefix + String(index - 1) + rest.dropFirst(digits.count)
+                }
+            }
+        }
         for reference in EffectDocument.referenceTable[tag] ?? [] {
             for owner in root.childrenNamed(reference.owner) {
                 if let list = reference.list {
@@ -508,7 +530,16 @@ extension EffectDocument {
                 self?.performStructural("Duplicate") {
                     guard var items = array.elements, index < items.count else { return }
                     let copy = items[index].deepCopy()
-                    if let id = copy["id"]?.string { copy["id"]?.value = .string(id + "_copy") }
+                    if let id = copy["id"]?.string {
+                        let taken = Set(items.compactMap { $0["id"]?.string })
+                        var candidate = id + "_copy"
+                        var counter = 2
+                        while taken.contains(candidate) {
+                            candidate = id + "_copy\(counter)"
+                            counter += 1
+                        }
+                        copy["id"]?.value = .string(candidate)
+                    }
                     items.insert(copy, at: index + 1)
                     array.value = .array(items)
                 }

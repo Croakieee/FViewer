@@ -749,8 +749,10 @@ private struct RecordsView: View {
 
     private func putDouble(_ at: Int, _ value: Double) {
         let bits = value.bitPattern
-        GameFiles.put32(&file.bytes, at, UInt32(bits & 0xFFFF_FFFF))
-        GameFiles.put32(&file.bytes, at + 4, UInt32(bits >> 32))
+        var edited = file.bytes
+        GameFiles.put32(&edited, at, UInt32(bits & 0xFFFF_FFFF))
+        GameFiles.put32(&edited, at + 4, UInt32(bits >> 32))
+        file.bytes = edited
     }
 
     private func apply(_ next: [UInt8]?, select: Int? = nil) {

@@ -230,12 +230,13 @@ struct TexturePreview: View {
             }
             .frame(height: height)
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .onChange(of: path) { _, _ in mip = 0 }
             if let levels = app.decodedTexture(for: path)?.mipLevels, levels > 1 {
-                HStack(spacing: 4) {
+                HStack(spacing: levels > 10 ? 1 : 4) {
                     Text("Mip").font(Theme.small).foregroundStyle(Theme.dim)
-                    ForEach(0..<min(levels, 10), id: \.self) { level in
+                    ForEach(0..<min(levels, 14), id: \.self) { level in
                         Text("\(level)").font(Theme.small).foregroundStyle(mip == level ? .white : Theme.text)
-                            .frame(width: 18, height: 16)
+                            .frame(width: levels > 10 ? 14 : 18, height: 16)
                             .background(RoundedRectangle(cornerRadius: 3).fill(mip == level ? Theme.accent : Theme.field.opacity(0.5)))
                             .contentShape(Rectangle())
                             .onTapGesture { mip = level }
@@ -473,7 +474,7 @@ struct InspectorView: View {
                         }
                     }
                 if let id = slot.nodeID, case .avfx(let block, _, _)? = document.node(id)?.payload,
-                   case .avfx(let before, _, _)? = document.original?.node(id)?.payload, before.stringValue != block.stringValue {
+                   case .avfx(let before, _, _)? = document.originalID(id).flatMap({ document.original?.node($0) })?.payload, before.stringValue != block.stringValue {
                     HStack(spacing: 6) {
                         ChangeDot()
                         Text("Replaced").font(Theme.font).foregroundStyle(Theme.changed)

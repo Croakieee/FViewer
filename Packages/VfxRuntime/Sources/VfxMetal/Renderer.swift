@@ -199,6 +199,10 @@ public final class MetalRenderer: ViewFactory {
         guard !body.isEmpty else { return nil }
         if materialPipelines[body] != nil { return body }
         if failedMaterials.contains(body) { return nil }
+        return buildMaterial(body) ? body : nil
+    }
+
+    private func buildMaterial(_ body: String) -> Bool {
         if materialPipelines.count >= 48 { materialPipelines.removeAll() }
         if failedMaterials.count >= 256 { failedMaterials.removeAll() }
         do {
@@ -206,16 +210,19 @@ public final class MetalRenderer: ViewFactory {
             materialPipelines[body] = try makePipelines(vertex: library.makeFunction(name: "particleVertex"),
                                                         fragment: library.makeFunction(name: "materialFragment"))
             MetalRenderer.lastMaterialError = nil
-            return body
+            return true
         } catch {
             failedMaterials.insert(body)
             MetalRenderer.lastMaterialError = String(describing: error)
-            return nil
+            return false
         }
     }
 
     func pipeline(_ blend: BlendMode, material: String?) -> MTLRenderPipelineState {
-        if let material, let set = materialPipelines[material], let pipeline = set[blend] { return pipeline }
+        if let material {
+            if materialPipelines[material] == nil, !failedMaterials.contains(material) { _ = buildMaterial(material) }
+            if let pipeline = materialPipelines[material]?[blend] { return pipeline }
+        }
         return pipelines[blend]!
     }
 
@@ -345,7 +352,7 @@ final class MetalParticleView: ParticleView {
         fragment.uvChannel = SIMD4(Float(t.baseChannel), Float(layers.count > 0 ? layers[0].channel : 1),
                                    Float(layers.count > 1 ? layers[1].channel : 1), Float(layers.count > 2 ? layers[2].channel : 1))
         fragment.misc0 = SIMD4(Float(t.distortion?.channel ?? 1), 0, t.distortion?.base == true ? 1 : 0, t.baseColorToAlpha ? 1 : 0)
-        fragment.misc1 = SIMD4(t.baseLuminance ? 1 : 0, Float(spec.edgeSoftness.inner), Float(spec.edgeSoftness.outer), 0)
+        fragment.misc1 = SIMD4(t.baseLuminance ? 1 : 0, Float(spec.edgeSoftness.inner), Float(spec.edgeSoftness.outer), spec.blend == .opaque ? 1 : 0)
         fragment.edgeInner = SIMD4(spec.edgeColor.inner)
         fragment.edgeOuter = SIMD4(spec.edgeColor.outer)
         var bound = [

@@ -559,12 +559,14 @@ struct TextureEditorView: View {
         let frame = CGRect(x: size.width / 2 + model.offset.width - width / 2, y: size.height / 2 + model.offset.height - height / 2,
                            width: width, height: height)
         let cell: CGFloat = 8
-        var y = frame.minY
-        var row = 0
-        while y < frame.maxY {
-            var x = frame.minX
-            var column = 0
-            while x < frame.maxX {
+        let firstRow = max(0, Int(safe: ((0 - frame.minY) / cell).rounded(.down))), firstColumn = max(0, Int(safe: ((0 - frame.minX) / cell).rounded(.down)))
+        let bottom = min(frame.maxY, size.height), right = min(frame.maxX, size.width)
+        var y = frame.minY + CGFloat(firstRow) * cell
+        var row = firstRow
+        while y < bottom {
+            var x = frame.minX + CGFloat(firstColumn) * cell
+            var column = firstColumn
+            while x < right {
                 let rect = CGRect(x: x, y: y, width: min(cell, frame.maxX - x), height: min(cell, frame.maxY - y))
                 context.fill(Path(rect), with: .color(Color(white: (row + column) % 2 == 0 ? 0.4 : 0.6)))
                 x += cell
@@ -737,6 +739,10 @@ struct TextureEditorView: View {
 
     private func applyToEffect() {
         guard let block, let document = app.document else { return }
+        guard model.loadedKey.hasPrefix("\(document.id)|"), block.stringValue == model.sourcePath, model.loadedTarget == app.textureEditorTarget else {
+            app.errorMessage = "The texture list changed since this image was opened. Open the texture again from the Outliner before applying"
+            return
+        }
         do {
             let name = ((block.stringValue as NSString).lastPathComponent as NSString).deletingPathExtension
             let written = try app.writeTexture(Data(app.encodeTexture(model.image)), name: name, ext: "atex", for: block, in: document, title: "Edit Texture")
@@ -750,7 +756,8 @@ struct TextureEditorView: View {
     }
 
     private func exportPNG() {
-        guard let image = model.display(), let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
+        guard let image = DecodedTexture(width: model.image.width, height: model.image.height, formatName: "", mipLevels: 1, alphaOnly: false, rgba: model.image.rgba).makeImage(),
+              let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { return }
         let panel = NSSavePanel()
         panel.title = "Export PNG"
         panel.nameFieldStringValue = ((model.sourcePath as NSString).lastPathComponent as NSString).deletingPathExtension + ".png"

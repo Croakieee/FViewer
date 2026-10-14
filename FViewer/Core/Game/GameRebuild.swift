@@ -201,8 +201,38 @@ enum PhybAddition: Hashable {
 }
 
 extension GameRecords {
+    private static let phybLinks: [Int: [(chain: Int, node: Int)]] = [3: [(0, 4), (2, 6)], 4: [(44, 46)], 5: [(44, 46)], 6: [(0, 4), (2, 6)], 7: [(32, 34)]]
+
+    private static func phybRelink(_ simulator: inout PhybSimulator, chain: Int, node: Int?, removed: Bool) {
+        for (list, pairs) in phybLinks where list < simulator.lists.count {
+            var kept: [[UInt8]] = []
+            for var item in simulator.lists[list] {
+                var dangling = false
+                for pair in pairs where pair.node + 1 < item.count {
+                    let c = Int(item.u16(pair.chain)), n = Int(item.u16(pair.node))
+                    func put(_ at: Int, _ value: Int) {
+                        item[at] = UInt8(value & 0xff)
+                        item[at + 1] = UInt8((value >> 8) & 0xff)
+                    }
+                    if let node {
+                        guard c == chain else { continue }
+                        if removed, n == node { dangling = true } else if n > node { put(pair.node, removed ? n - 1 : n + 1) }
+                    } else if removed, c == chain {
+                        dangling = true
+                    } else if c > chain {
+                        put(pair.chain, removed ? c - 1 : c + 1)
+                    }
+                }
+                if !dangling { kept.append(item) }
+            }
+            simulator.lists[list] = kept
+        }
+    }
+
     static func phybRemove(_ b: [UInt8], _ slot: RecordSlot) -> [UInt8]? {
         guard var model = PhybModel.parse(b) else { return nil }
+        if case .chain(let simulator, let index) = slot { phybRelink(&model.simulators[simulator], chain: index, node: nil, removed: true) }
+        if case .node(let simulator, let chain, let index) = slot { phybRelink(&model.simulators[simulator], chain: chain, node: index, removed: true) }
         switch slot {
         case .shape(let kind, let index): model.shapes[kind].remove(at: index)
         case .parameters(let simulator): model.simulators.remove(at: simulator)
@@ -217,6 +247,8 @@ extension GameRecords {
 
     static func phybDuplicate(_ b: [UInt8], _ slot: RecordSlot) -> [UInt8]? {
         guard var model = PhybModel.parse(b) else { return nil }
+        if case .chain(let simulator, let index) = slot { phybRelink(&model.simulators[simulator], chain: index, node: nil, removed: false) }
+        if case .node(let simulator, let chain, let index) = slot { phybRelink(&model.simulators[simulator], chain: chain, node: index, removed: false) }
         switch slot {
         case .shape(let kind, let index): model.shapes[kind].insert(model.shapes[kind][index], at: index + 1)
         case .parameters(let simulator): model.simulators.insert(model.simulators[simulator], at: simulator + 1)

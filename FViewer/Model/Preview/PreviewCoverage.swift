@@ -11,6 +11,7 @@ enum PreviewCoverage {
     static let note = "The preview does not use this value. It is saved to the file and the game reads it"
 
     static let unread: Set<String> = [
+        "AvfxTimelineItem.EfNo", "AvfxTimeline.LpSt", "AvfxTimeline.LpEd", "AvfxEmitter.VRX", "AvfxEmitter.VRY", "AvfxEmitter.VRZ", "AvfxEmitter.GraR", "AvfxEmitter.ARsR", "AvfxEffector.RoOT", "AvfxEffector.CCOT", "AvfxEmitterDataModel.AnX", "AvfxEmitterDataModel.AnY", "AvfxEmitterDataModel.AnZ", "AvfxEmitterDataSphereModel.AnX", "AvfxEmitterDataSphereModel.AnY", "AvfxEmitterDataSphereModel.AnZ", "AvfxEmitterDataCylinderModel.AnX", "AvfxEmitterDataCylinderModel.AnY", "AvfxEmitterDataCylinderModel.AnZ", "AvfxEmitterDataConeModel.Rad", "AvfxEmitterDataConeModel.DivX", "AvfxEmitterDataConeModel.DivY", "AvfxEmitterDataConeModel.GeMT", "AvfxEffectorDataRadialBlur.Gra", "AvfxEffectorDataRadialBlur.FaBP", "AvfxEffectorDataDirectionalBlur.FaBP", "AvfxEffectorDataGaussianBlur.Gra", "AvfxEffectorDataGaussianBlur.FaBP", "AvfxEffectorDataCameraQuake.Rot",
         "AvfxBinder.bStG", "AvfxBinder.bVSc", "AvfxBinder.bVSb", "AvfxBinder.bVSd", "AvfxBinder.bVSi", "AvfxBinder.bTSc", "AvfxBinder.bTSd",
         "AvfxBinder.bTSi", "AvfxBinder.bFTO", "AvfxBinder.bDSE", "AvfxBinder.bIFY", "AvfxBinder.bBET", "AvfxBinder.RoTp", "AvfxBinder.Prp1",
         "AvfxBinder.Prp2", "AvfxBinder.PrpG", "AvfxBinderDataCamera.DstR", "AvfxBinderDataLinear.COF", "AvfxBinderDataLinear.COFR",

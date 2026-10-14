@@ -30,6 +30,8 @@ final class DensityJob {
         self.frames = frames
         if let root = document.avfxRoot {
             simulation = AvfxSimulation(schema: AvfxSchemaReader.read(root))
+            simulation?.seed = UInt64(max(0, document.clock.seed))
+            simulation?.restart()
         } else if document.jsonRoot != nil {
             let data = document.pixiData(filter: VisibilityFilter())
             guard let created = try? EffectCore(json: data, options: EffectCoreOptions(views: factory, models: [:], seed: UInt32(max(1, document.clock.seed)))) else { return nil }
@@ -53,10 +55,10 @@ final class DensityJob {
         var done = 0
         while frame < frames, done < budget {
             if let simulation {
-                simulation.advance(1)
                 var counts: [String: Int] = [:]
                 for particle in simulation.particles { counts["e\(particle.emitter.schema.index)", default: 0] += 1 }
                 record(counts)
+                simulation.advance(1)
             } else if let core {
                 core.update(1.0 / core.fps)
                 record(core.particleCounts())

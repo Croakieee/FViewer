@@ -438,6 +438,7 @@ final class AppModel: ObservableObject {
         let path = folder.isEmpty ? destination.lastPathComponent : folder + "/" + destination.lastPathComponent
         document.perform(title, { block.stringValue = path }, revert: { block.stringValue = old })
         textureFiles[destination.lastPathComponent.lowercased()] = destination
+        texturePaths[path.lowercased()] = destination
         imageCache = [:]
         decodedCache = [:]
         libraryToken += 1
@@ -625,8 +626,8 @@ final class AppModel: ObservableObject {
 
     func exportModel(_ block: AvfxBlock, name: String) {
         let mesh = Gltf.mesh(from: block)
-        guard !mesh.positions.isEmpty else {
-            errorMessage = "This model has no vertices to export"
+        guard !mesh.positions.isEmpty, mesh.indices.count >= 3 else {
+            errorMessage = "This model has no triangles to export"
             return
         }
         let panel = NSSavePanel()
@@ -779,7 +780,8 @@ final class AppModel: ObservableObject {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         var written = 0
         for document in dirtyDocuments {
-            let base = document.url.deletingPathExtension().lastPathComponent
+            let folderMark = String(format: "%04x", ZipWriter.crc32(Array(document.url.deletingLastPathComponent().path.utf8)) & 0xffff)
+            let base = document.url.deletingPathExtension().lastPathComponent + "~" + folderMark
             let name = "\(base)-\(formatter.string(from: Date())).\(document.url.pathExtension)"
             if (try? document.serializedData().write(to: folder.appendingPathComponent(name), options: .atomic)) != nil { written += 1 }
             let older = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
@@ -1058,6 +1060,7 @@ final class AppModel: ObservableObject {
             try document.save()
             moved(document, from: old)
         } catch {
+            notice = "Could not save next to the file (\(error.localizedDescription)). Choose where to save it"
             saveAs()
         }
     }
@@ -1077,6 +1080,10 @@ final class AppModel: ObservableObject {
         panel.nameFieldStringValue = document.saveDestination.lastPathComponent
         panel.directoryURL = document.url.deletingLastPathComponent()
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let other = documents[url], other !== document, other.isDirty {
+            errorMessage = "\(url.lastPathComponent) is open with unsaved changes. Save or close it first, or choose another name"
+            return
+        }
         do {
             let old = document.url
             try document.save(to: url)
@@ -1145,6 +1152,7 @@ final class AppModel: ObservableObject {
         let parts = lower.split(separator: "/").map(String.init)
         for start in 0..<max(parts.count, 1) {
             let suffix = parts[start...].joined(separator: "/")
+            if let exact = texturePaths[suffix] { return exact }
             if let hit = texturePaths.filter({ $0.key == suffix || $0.key.hasSuffix("/" + suffix) }).min(by: { ($0.key.count, $0.key) < ($1.key.count, $1.key) })?.value { return hit }
         }
         let file = (lower as NSString).lastPathComponent

@@ -184,6 +184,16 @@ enum TextureCodec {
     static func surface(_ image: TextureImage, _ format: TexFormat) -> [UInt8] {
         switch format {
         case .a8:
+            let opaque = !stride(from: 3, to: image.rgba.count, by: 4).contains { image.rgba[$0] != 255 }
+            if opaque {
+                var gray: [UInt8] = []
+                gray.reserveCapacity(image.rgba.count / 4)
+                for at in stride(from: 0, to: image.rgba.count - 3, by: 4) {
+                    let red = Int(image.rgba[at]) * 77, green = Int(image.rgba[at + 1]) * 150, blue = Int(image.rgba[at + 2]) * 29
+                    gray.append(UInt8((red + green + blue) >> 8))
+                }
+                return gray
+            }
             return stride(from: 3, to: image.rgba.count, by: 4).map { image.rgba[$0] }
         case .bc1, .bc3:
             var out: [UInt8] = []

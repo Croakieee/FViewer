@@ -378,6 +378,7 @@ extension AppModel {
             let ext = url.pathExtension.lowercased()
             if isFolder.boolValue {
                 setLibrary(url)
+                if let bookmark = try? url.bookmarkData(options: .withSecurityScope) { UserDefaults.standard.set(bookmark, forKey: "libraryBookmark") }
                 handled = true
             } else if ext == "avfx" || ext == "json" {
                 open(url)

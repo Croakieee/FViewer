@@ -54,7 +54,7 @@ extension EffectDocument {
             }
         }
         @discardableResult func visit(_ node: OutlineNode) -> Bool {
-            guard let before = original.node(node.id) else {
+            guard let before = originalID(node.id).flatMap({ original.node($0) }) else {
                 result.added.insert(node.id)
                 node.children.forEach { visit($0) }
                 return true
@@ -76,8 +76,10 @@ extension EffectDocument {
         guard let original else { return nil }
         if originalFields[nodeID] == nil {
             var values: [String: FieldValue] = [:]
-            if let node = original.node(nodeID) {
-                for item in original.sections(for: node).flatMap(\.fields) { values[item.id] = item.read() }
+            if let source = originalID(nodeID), let node = original.node(source) {
+                for item in original.sections(for: node).flatMap(\.fields) {
+                    values[item.id.hasPrefix(source) ? nodeID + item.id.dropFirst(source.count) : item.id] = item.read()
+                }
             }
             originalFields[nodeID] = values
         }
@@ -91,8 +93,9 @@ extension EffectDocument {
     }
 
     func originalKeys(group: String, channel: String, in nodeID: String) -> [CurveKeyPoint]? {
-        guard let original, let node = original.node(nodeID) else { return nil }
-        return original.curveGroups(for: node).first { $0.id == group }?.channels.first { $0.id == channel }?.read()
+        guard let original, let source = originalID(nodeID), let node = original.node(source) else { return nil }
+        func mapped(_ id: String) -> String { id.hasPrefix(nodeID) ? source + id.dropFirst(nodeID.count) : id }
+        return original.curveGroups(for: node).first { $0.id == mapped(group) }?.channels.first { $0.id == mapped(channel) }?.read()
     }
 
     func describe(_ value: FieldValue) -> String {

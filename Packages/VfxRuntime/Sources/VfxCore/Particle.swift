@@ -31,6 +31,7 @@ final class ParticleInstance {
     private let color: ParsedColor
     private let colorSource: EmitterInstance?
     private let state: EffectState
+    private let materialSeed: Double
     private let perspectiveOf: () -> Double
     private let offset: Vec3
     private let vx: Double, vy: Double
@@ -53,6 +54,7 @@ final class ParticleInstance {
         perspectiveOf = spawn.perspective
         colorSource = spawn.inheritColor ? spawn.emitter : nil
         state = spawn.state
+        materialSeed = random01(spawn.seed, 47)
 
         life = spawn.life == nil && def.forever ? .infinity : drawRange(spawn.life ?? def.life, 1, seed, Slot.life)
         timeScale = (spawn.life != nil || def.stretchCurves == true) && !def.forever ? def.life.maxValue / life : 1
@@ -175,8 +177,7 @@ final class ParticleInstance {
         }
         view.setColor(rgb, brightness: evalParam(d.brightness, t, 1, total), alpha: alpha)
         if d.material != nil {
-            let scrambled = sin(born * 12.9898 + 78.233) * 43758.5453
-            view.setMaterial(age: age, life: life > 0 ? min(max(loopedAgeAt(time) / life, 0), 1) : 0, seed: scrambled - scrambled.rounded(.down))
+            view.setMaterial(age: age / state.fps, life: life > 0 ? min(max(loopedAgeAt(time) / life, 0), 1) : 0, seed: materialSeed)
         }
 
         switch d.shape {

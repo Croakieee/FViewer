@@ -155,6 +155,7 @@ MATERIAL_BODY
     if (u.misc1.y > 0.0) c.a *= smoothstep(0.0, u.misc1.y, i.band);
     if (u.misc1.z > 0.0) c.a *= smoothstep(0.0, u.misc1.z, 1.0 - i.band);
     c.a = clamp(c.a, 0.0, 1.0);
+    if (u.misc1.w > 0.5) return float4(c.rgb, 1.0);
     return float4(c.rgb * c.a, c.a);
 }
 """

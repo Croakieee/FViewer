@@ -177,7 +177,7 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
         float d = sceneDepth.read(uint2(in.position.xy), 0);
         if (d < 1.0) {
             float zc = u.scene2.y / (u.scene2.x - u.scene2.y);
-            float sceneDistance = zc * u.scene2.x / (d + zc);
+            float sceneDistance = u.scene2.w > 0.5 ? mix(u.scene2.x, u.scene2.y, d) : zc * u.scene2.x / (d + zc);
             c.a *= clamp((sceneDistance - in.viewDistance) / u.scene.x, 0.0, 1.0);
         }
     }

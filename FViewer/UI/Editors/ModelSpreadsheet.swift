@@ -42,7 +42,7 @@ struct ModelSpreadsheet: View {
             }
             .padding(.horizontal, 8)
             .frame(height: 28)
-            table.id(document.revision / 1_000_000)
+            table
         }
     }
 

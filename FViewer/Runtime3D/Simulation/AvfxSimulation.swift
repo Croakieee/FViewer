@@ -57,9 +57,15 @@ private enum Influence {
     static let initialPosition = 0, withOptions = 1, allAlways = 2, allAlwaysNoPosition = 4, withOptionsNoPosition = 7
 }
 
-private func lifeFrames(_ value: Float, _ random: Float, _ seed: Float) -> Float {
+private func unitVector(_ value: Vec3, _ fallback: Vec3) -> Vec3 {
+    let length = simd_length(value)
+    return length > 1e-6 && length.isFinite ? value / length : fallback
+}
+
+private func lifeFrames(_ value: Float, _ random: Float, _ seed: Float, type: Int = 0) -> Float {
     if value < 0 { return .infinity }
-    return max(1, value + random * (seed * 2 - 1))
+    let offset: Float = type == 1 || type == 4 ? random * seed : type == 2 || type == 5 ? -random * seed : random * (seed * 2 - 1)
+    return max(1, value + offset)
 }
 
 final class EmitterInstance {
@@ -90,7 +96,7 @@ final class EmitterInstance {
         self.schema = schema
         self.anchor = anchor
         seed = RandomSeed(&random)
-        let life = lifeFrames(schema.life.value, schema.life.random, seed.get(0))
+        let life = lifeFrames(schema.life.value, schema.life.random, seed.get(0), type: schema.life.randomType)
         lifetime = min(life, endFrames > 0 ? endFrames : .infinity)
         nextSpawn = schema.particleItems.map { Float(max(0, $0.generateDelay)) }
         nextChild = schema.emitterItems.map { Float(max(0, $0.generateDelay)) }
@@ -174,11 +180,11 @@ final class EmitterInstance {
                 let at = CurveTime(next[i])
                 let perItem = item.createTime == 1 ? max(0, item.createCount) : 1
                 let base = Eval.curve(schema.createCount, at, 1)
-                    + Eval.randomOffset(schema.createCountRandom, type: schema.createCountRandom?.random ?? 0, at, random.next())
+                    + Eval.randomOffset(schema.createCountRandom, type: schema.createCount?.random ?? schema.createCountRandom?.random ?? 0, at, random.next())
                 let count = min(Int(safe: base.rounded(), in: 0...4000) * perItem, 4000)
                 if count > 0 { out.append((item, count)) }
                 let interval = Eval.curve(schema.createInterval, at, 0)
-                    + Eval.randomOffset(schema.createIntervalRandom, type: schema.createIntervalRandom?.random ?? 0, at, random.next())
+                    + Eval.randomOffset(schema.createIntervalRandom, type: schema.createInterval?.random ?? schema.createIntervalRandom?.random ?? 0, at, random.next())
                 next[i] = interval > 0 && item.createTime == 0 ? next[i] + interval : .infinity
             }
         }
@@ -196,6 +202,7 @@ final class ParticleInstance {
     var trail: PolylineTrail?
     let seed: RandomSeed
     let emitterSeed: RandomSeed
+    var bornColor: Vec4?
     var age: Float = 0
     var totalAge: Float = 0
     var spawnMatrix: Mat4
@@ -228,7 +235,7 @@ final class ParticleInstance {
         emitterSeed = RandomSeed(&random)
         let life = item.overrideLife
             ? lifeFrames(item.overrideLifeValue, item.overrideLifeRandom, seed.get(0))
-            : lifeFrames(schema.life.value, schema.life.random, seed.get(0))
+            : lifeFrames(schema.life.value, schema.life.random, seed.get(0), type: schema.life.randomType)
         lifetime = life
         let own = schema.life.value
         timeScale = item.overrideLife && own > 0 && life.isFinite ? own / life : 1
@@ -713,7 +720,7 @@ final class AvfxSimulation {
             p.lastWorld = origin
             p.hasLastWorld = true
             let direction = simd_length_squared(p.moveDirection) > 0 ? p.moveDirection : simd_length_squared(p.velocity) > 0 ? p.velocity : cz
-            axis = simd_normalize(direction) * simd_length(cz)
+            axis = unitVector(direction, Vec3(0, 1, 0)) * simd_length(cz)
         }
         let along = axis * length
         let toCamera = camera - (origin + along * 0.5)
@@ -926,11 +933,11 @@ final class AvfxSimulation {
                 if simd_length_squared(p.moveDirection) == 0 { p.moveDirection = simd_length_squared(p.velocity) > 0 ? p.velocity : Vec3(0, 1, 0) }
                 p.lastWorld = parts.position
                 p.hasLastWorld = true
-                let zAxis = simd_normalize(camera.position - parts.position)
+                let zAxis = unitVector(camera.position - parts.position, Vec3(0, 0, 1))
                 var yAxis = p.moveDirection - zAxis * simd_dot(p.moveDirection, zAxis)
                 if simd_length_squared(yAxis) < 1e-12 { yAxis = camera.rotation.act(Vec3(0, 1, 0)) }
                 yAxis = simd_normalize(yAxis)
-                let xAxis = simd_normalize(simd_cross(yAxis, zAxis))
+                let xAxis = unitVector(simd_cross(yAxis, zAxis), Vec3(1, 0, 0))
                 m = Math3D.compose(parts.position, Math3D.quaternion(x: xAxis, y: yAxis, z: zAxis), parts.scale)
             } else if billboard {
                 let parts = Math3D.decompose(m)
@@ -992,7 +999,12 @@ final class AvfxSimulation {
                 color.y *= schema.revisedColor.y
                 color.z *= schema.revisedColor.z
             }
-            if p.item.influenceColor != 0 { color *= p.emitter.color }
+            if p.item.influenceColor == 1 {
+                if p.bornColor == nil { p.bornColor = p.emitter.color }
+                color *= p.bornColor ?? p.emitter.color
+            } else if p.item.influenceColor != 0 {
+                color *= p.emitter.color
+            }
             if PreviewRules.isOn("clipDistance"), s.clipNear != nil || s.clipFar != nil {
                 let place = Vec3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
                 let reach = simd_length(place - (s.clipFromCaster ? Vec3(0, 0, 0) : camera.position))

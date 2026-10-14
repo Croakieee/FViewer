@@ -268,6 +268,29 @@ enum TmbCatalog {
         while out.count % 4 != 0 { out.append(0) }
         GameFiles.put32(&out, trackStart + listAt, UInt32(listPosition - (trackStart + 8)))
         GameFiles.put32(&out, trackStart + listAt + 4, UInt32(ids.count))
+        if let type = types[entry.magic], type.size == entry.size {
+            for field in type.fields where field.isPointer {
+                let value = GameFiles.i32(b, entry.offset + field.at)
+                let source = entry.offset + 8 + value
+                guard value > 0, source >= 0, source < b.count else { continue }
+                var payload: [UInt8] = []
+                switch field.type {
+                case "OffsetString":
+                    var end = source
+                    while end < b.count, b[end] != 0 { end += 1 }
+                    payload = Array(b[source..<end]) + [0]
+                case "OffsetFloat3", "OffsetAngle3", "OffsetFloat4":
+                    let count = min(max(GameFiles.i32(b, entry.offset + field.at + 4), 0), 4)
+                    guard source + count * 4 <= b.count else { continue }
+                    payload = Array(b[source..<(source + count * 4)])
+                default:
+                    continue
+                }
+                GameFiles.put32(&out, position + field.at, UInt32(out.count - (position + 8)))
+                out.append(contentsOf: payload)
+                while out.count % 4 != 0 { out.append(0) }
+            }
+        }
         GameFiles.put32(&out, 4, UInt32(out.count))
         GameFiles.put32(&out, 8, UInt32(block.items.count + 1))
         return out

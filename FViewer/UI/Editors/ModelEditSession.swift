@@ -104,6 +104,17 @@ final class ModelEditSession: ObservableObject {
         for axis in 0..<3 { block.data[index * 36 + 8 + axis] = UInt8(min(max((value[axis] * 127 + 128).rounded(), 0), 255)) }
     }
 
+    func tangent(_ index: Int) -> SIMD3<Float> {
+        guard let data = draw?.data, index * 36 + 14 < data.count else { return SIMD3(1, 0, 0) }
+        let o = index * 36 + 12
+        return SIMD3((Float(data[o]) - 128) / 127, (Float(data[o + 1]) - 128) / 127, (Float(data[o + 2]) - 128) / 127)
+    }
+
+    func setTangent(_ index: Int, _ value: SIMD3<Float>) {
+        guard let block = draw, index * 36 + 14 < block.data.count else { return }
+        for axis in 0..<3 { block.data[index * 36 + 12 + axis] = UInt8(min(max((value[axis] * 127 + 128).rounded(), 0), 255)) }
+    }
+
     func color(_ index: Int) -> SIMD4<Double> {
         guard let data = draw?.data, index * 36 + 19 < data.count else { return SIMD4(1, 1, 1, 1) }
         let o = index * 36 + 16
@@ -432,9 +443,11 @@ final class ModelEditSession: ObservableObject {
     }
 
     func mergeSelection() {
-        guard let block = draw, let center = selectionCenter else { return }
+        guard let block = draw else { return }
         let picked = selection.filter { $0 < vertexCount }.sorted()
         guard picked.count > 1, let keep = picked.first else { return }
+        let spots = positions
+        let center = picked.map { spots[$0] }.reduce(SIMD3<Float>(0, 0, 0), +) / Float(picked.count)
         let list = indices
         structural("Merge Vertices") {
             setPosition(keep, center)
@@ -467,7 +480,7 @@ final class ModelEditSession: ObservableObject {
         var list = indices
         structural("Add Quad") {
             var data: [UInt8] = []
-            for corner in [(Float(-0.5), Float(-0.5), Float(0), Float(1)), (0.5, -0.5, 1, 1), (0.5, 0.5, 1, 0), (-0.5, 0.5, 0, 0)] {
+            for corner in [(Float(-0.5), Float(-0.5), Float(-0.5), Float(0.5)), (0.5, -0.5, 0.5, 0.5), (0.5, 0.5, 0.5, -0.5), (-0.5, 0.5, -0.5, -0.5)] {
                 var vertex = [UInt8](repeating: 0, count: 36)
                 func half(_ at: Int, _ value: Float) {
                     let bits = Gltf.floatToHalf(value)

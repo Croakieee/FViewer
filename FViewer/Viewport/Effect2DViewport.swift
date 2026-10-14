@@ -129,10 +129,18 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     func draw(in view: MTKView) {
-        let mouse = NSEvent.mouseLocation
+        var mouse = CGPoint(x: -1, y: -1)
+        if let window = view.window {
+            let local = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            if view.bounds.contains(local) { mouse = local }
+        }
         var signature: [Double] = [Double(document?.previewRevision ?? 0), Double(document?.revision ?? 0), Double(document?.selectionID?.hashValue ?? 0)]
         signature.append(contentsOf: [Double(mouse.x), Double(mouse.y), Double(NSEvent.pressedMouseButtons), document?.clock.time ?? 0, Double(document?.clock.seed ?? 0)])
         signature.append(contentsOf: [Double(view.drawableSize.width), Double(view.drawableSize.height)])
+        signature.append(contentsOf: [Double(PreviewRules.token), Double(ViewportRenderer.bloom.on ? 1 : 0), Double(ViewportRenderer.bloom.threshold),
+                                      Double(ViewportRenderer.bloom.intensity), Double(ViewportRenderer.bloom.radius)])
+        signature.append(Double(String(describing: ViewportRenderer.backgroundColor).hashValue % 100_000))
+        signature.append(Double(String(describing: document?.visibilityFilter).hashValue % 100_000))
         if signature != idleSignature {
             idleSignature = signature
             lastActivity = CACurrentMediaTime()

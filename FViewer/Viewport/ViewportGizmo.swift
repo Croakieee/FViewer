@@ -119,7 +119,7 @@ extension ViewportRenderer {
             gizmo.origin = origin
             gizmo.basis = basis
             gizmo.unit = Vec3(max(abs(unit.x), 1e-4), max(abs(unit.y), 1e-4), max(abs(unit.z), 1e-4))
-            gizmo.size = max(0.05, simd_distance(camera.eye, origin) * 0.13)
+            gizmo.size = max(0.05, (camera.ortho ? camera.distance : simd_distance(camera.eye, origin)) * 0.13)
         } else {
             gizmo.radiusModel = gizmo.active?.radiusModel
             if gizmo.active?.kind == 4 { gizmo.lengthModel = gizmo.active?.radiusModel }

@@ -11,6 +11,7 @@ public final class EffectState {
     public var released: Double?
     public var plane = Plane()
     public var turn = Affine3.identity
+    public var fps = 30.0
 }
 
 public struct Rgba {

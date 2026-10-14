@@ -307,6 +307,15 @@ public struct MaterialGraph: Decodable {
             node.params?[name] ?? MaterialGraph.kind(of: node.type)?.params.first { $0.name == name }?.value ?? 0
         }
 
+        var storedSlots: [String: String] = [:]
+        func stored(_ node: MaterialNode, _ name: String) -> String {
+            let key = node.id + "." + name
+            if let known = storedSlots[key] { return known }
+            let text = literal(param(node, name))
+            storedSlots[key] = text
+            return text
+        }
+
         func emit(_ id: String) -> Int? {
             if let index = done[id] { return index }
             guard let node = byID[id], let kind = MaterialGraph.kind(of: node.type) else {
@@ -329,14 +338,14 @@ public struct MaterialGraph: Decodable {
                 if name == "time" { return "float4(u.material.x)" }
                 if name == "rgb" { return "float4(c.rgb, c.a)" }
                 if name == "normal" { return "float4(0.0, 0.0, 1.0, 0.0)" }
-                return "float4(\(literal(param(node, name))))"
+                return "float4(\(stored(node, name)))"
             }
 
             counter += 1
             let index = counter
             let n = "n\(index)"
             func set(_ output: String, _ expression: String) { lines.append("    float4 \(n)_\(output) = \(expression);") }
-            func p(_ name: String) -> String { literal(param(node, name)) }
+            func p(_ name: String) -> String { stored(node, name) }
 
             switch node.type {
             case "layers", "subgraph":
@@ -383,7 +392,7 @@ public struct MaterialGraph: Decodable {
             case "add": set("out", "\(input("a")) + \(input("b"))")
             case "subtract": set("out", "\(input("a")) - \(input("b"))")
             case "multiply": set("out", "\(input("a")) * \(input("b"))")
-            case "divide": set("out", "\(input("a")) / max(abs(\(input("b"))), float4(1e-5)) * sign(\(input("b")) + float4(1e-9))")
+            case "divide": set("out", "\(input("a")) / max(abs(\(input("b"))), float4(1e-5)) * sign(\(input("b"))) * step(float4(1e-5), abs(\(input("b"))))")
             case "lerp": set("out", "mix(\(input("a")), \(input("b")), clamp(\(input("t")).x, 0.0, 1.0))")
             case "min": set("out", "min(\(input("a")), \(input("b")))")
             case "max": set("out", "max(\(input("a")), \(input("b")))")
@@ -439,7 +448,7 @@ public struct MaterialGraph: Decodable {
             return "n\(source)_\(link.out)"
         }
         let color = wired("color"), alpha = wired("alpha"), emissive = wired("emissive"), mask = wired("opacityMask")
-        if let mask { lines.append("    if (\(mask).x < \(literal(param(output, "clip")))) discard_fragment();") }
+        if let mask { lines.append("    if (\(mask).x < \(stored(output, "clip"))) discard_fragment();") }
         if let color { lines.append("    c.rgb = \(color).rgb;") }
         if let alpha { lines.append("    c.a = \(alpha).x;") }
         if let emissive { lines.append("    c.rgb += \(emissive).rgb;") }

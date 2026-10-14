@@ -206,6 +206,12 @@ struct ModelViewport3D: View {
         let pivot = picked.reduce(SIMD3<Float>(0, 0, 0), +) / Float(picked.count)
         let pivotScreen = cam.project(pivot) ?? CGPoint(x: size.width / 2, y: size.height / 2)
         var transform: (SIMD3<Float>) -> SIMD3<Float> = { $0 }
+        var turnNormal: ((SIMD3<Float>) -> SIMD3<Float>)?
+        var turnTangent: ((SIMD3<Float>) -> SIMD3<Float>)?
+        func unit(_ value: SIMD3<Float>, _ fallback: SIMD3<Float>) -> SIMD3<Float> {
+            let length = simd_length(value)
+            return length > 1e-6 && length.isFinite ? value / length : fallback
+        }
         switch modal.kind {
         case "g":
             let scale = max(cam.depth(pivot), 0.01) / cam.focal
@@ -221,15 +227,28 @@ struct ModelViewport3D: View {
                 scale[axis] = factor
             }
             transform = { pivot + ($0 - pivot) * scale }
+            if modal.axis != nil, scale.x > 1e-4, scale.y > 1e-4, scale.z > 1e-4 {
+                turnNormal = { unit($0 / scale, $0) }
+                turnTangent = { unit($0 * scale, $0) }
+            }
         default:
             let from = atan2(modal.start.y - pivotScreen.y, modal.start.x - pivotScreen.x)
             let to = atan2(mouse.y - pivotScreen.y, mouse.x - pivotScreen.x)
             let axis = modal.axis.map { ModelViewport3D.axes[$0] } ?? cam.forward
             let rotation = simd_quatf(angle: Float(to - from), axis: axis)
             transform = { pivot + rotation.act($0 - pivot) }
+            turnNormal = { rotation.act($0) }
+            turnTangent = { rotation.act($0) }
         }
-        for index in session.selection where index < origins.count { session.setPosition(index, transform(origins[index])) }
-        for index in session.emitSelection where index < emitOrigins.count { session.setEmitPosition(index, transform(emitOrigins[index])) }
+        for index in session.selection where index < origins.count {
+            session.setPosition(index, transform(origins[index]))
+            if let turnNormal { session.setNormal(index, turnNormal(session.normal(index))) }
+            if let turnTangent { session.setTangent(index, turnTangent(session.tangent(index))) }
+        }
+        for index in session.emitSelection where index < emitOrigins.count {
+            session.setEmitPosition(index, transform(emitOrigins[index]))
+            if let turnNormal { session.setEmitNormal(index, turnNormal(session.emitNormal(index))) }
+        }
         document.liveDrag()
     }
 

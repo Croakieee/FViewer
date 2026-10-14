@@ -34,6 +34,7 @@ struct RColor {
 struct RLife {
     var value: Float = -1
     var random: Float = 0
+    var randomType = 0
 }
 
 struct RSchedulerItem {
@@ -357,7 +358,7 @@ enum AvfxSchemaReader {
     static func life(_ block: AvfxBlock?) -> RLife {
         guard let block else { return RLife() }
         if block.children == nil { return RLife(value: Float(block.intValue), random: 0) }
-        return RLife(value: block.float("Val", -1), random: block.float("ValR"))
+        return RLife(value: block.float("Val", -1), random: block.float("ValR"), randomType: block.int("Type"))
     }
 
     static func emitterItem(_ r: [AvfxBlock], index: Int) -> REmitterItem {
@@ -413,7 +414,7 @@ enum AvfxSchemaReader {
         for tag in ["Ang", "AngR", "HBI", "HBIR", "HEI", "HEIR", "HBO", "HBOR", "HEO", "HEOR", "WB", "WBR", "WE", "WER", "RB", "RBR", "RE", "RER"] {
             curves[tag] = curve(block.child(tag))
         }
-        return RDisc(countU: block.int("PCnU", 2), countV: block.int("PCnV", 2), curves: curves, colorInner: optionalColor(block.child("CEI")),
+        return RDisc(countU: min(max(block.int("PCnU", 2), 1), 128), countV: min(max(block.int("PCnV", 2), 1), 128), curves: curves, colorInner: optionalColor(block.child("CEI")),
                      colorOuter: optionalColor(block.child("CEO")))
     }
 
