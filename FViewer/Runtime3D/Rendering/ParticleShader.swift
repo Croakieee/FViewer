@@ -37,6 +37,7 @@ struct U {
     float4 scene2;
     float4 flags3;
     float4 flags4;
+    float4 pixelUv;
 };
 
 struct VOut {
@@ -128,11 +129,18 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     if (u.debugColor.w > 0.0) return u.debugColor;
     float2 uv1 = in.uv1;
     float2 uv2 = in.uv2;
+    float2 uv3 = in.uv3;
     float2 uv4 = in.uv4;
     float2 uv5 = in.uv5;
+    float2 pixel = in.position.xy / max(u.scene.zw, float2(1.0)) - 0.5;
+    if (u.pixelUv.x > 0.5) uv1 = transformUv(u, 0, pixel);
+    if (u.pixelUv.y > 0.5) uv2 = transformUv(u, 1, pixel);
+    if (u.pixelUv.z > 0.5) uv3 = transformUv(u, 2, pixel);
+    if (u.pixelUv.w > 0.5) uv4 = transformUv(u, 3, pixel);
+    if (u.flags4.z > 0.5) uv5 = transformUv(u, 4, pixel);
     float2 d = float2(0.0);
     if (u.flags2.y > 0.5) {
-        float2 raw = map3.sample(s3, in.uv3).rg;
+        float2 raw = map3.sample(s3, uv3).rg;
         d = (u.flags3.x > 0.5 ? raw - 0.5 : raw * 2.0 - 1.0) * u.misc.y;
         if (u.distortLayers.x > 0.5) uv1 += d;
         if (u.distortLayers.y > 0.5) uv2 += d;

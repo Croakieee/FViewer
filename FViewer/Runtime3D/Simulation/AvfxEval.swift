@@ -35,8 +35,9 @@ extension RCurve {
         let span = Float(b.time - a.time)
         if span <= 0 { return vb }
         let f = (t - Float(a.time)) / span
-        if color || a.type == 1 { return va + (vb - va) * f }
-        if a.type == 2 { return va }
+        let onArrival = PreviewRules.hot.stepKeyOnArrival
+        if !color, onArrival ? b.type == 2 : a.type == 2 { return onArrival && t >= Float(b.time) ? vb : va }
+        if color || a.type == 1 || a.type == 2 { return va + (vb - va) * f }
         let f2 = f * f, f3 = f2 * f
         let h00 = 2 * f3 - 3 * f2 + 1, h10 = f3 - 2 * f2 + f, h01 = -2 * f3 + 3 * f2, h11 = f3 - f2
         let before: Float? = i >= 2 ? Float(a.time - keys[i - 2].time) : nil
@@ -52,7 +53,7 @@ extension RCurve {
         let first = keys[0]
         if count == 1 { return value(first) }
         let last = keys[count - 1]
-        var t = post == 2 && PreviewRules.isOn("periodicCurves") ? time.total : time.t
+        var t = post == 2 && PreviewRules.hot.periodicCurves ? time.total : time.t
         let start = Float(first.time), end = Float(last.time)
         let duration = end - start
         var cycles: Float = 0
@@ -88,6 +89,11 @@ enum Eval {
 
     static func randomOffset(_ random: RCurve?, type: Int, _ time: CurveTime, _ seed: Float) -> Float {
         guard let random else { return 0 }
+        var seed = seed
+        if type >= 3, PreviewRules.hot.randomAlwaysPerFrame {
+            let mixed = sin(seed * 12.9898 + Float(Int(time.t.rounded(.down))) * 78.233) * 43758.5453
+            seed = mixed - mixed.rounded(.down)
+        }
         let amplitude = curve(random, time)
         switch type {
         case 1, 4: return amplitude * seed
@@ -118,10 +124,11 @@ enum Eval {
             return Vec3(x, y, z)
         }
         let base = Vec3(curve(c.x, time, fallback), curve(c.y, time, fallback), curve(c.z, time, fallback))
-        let offsets = Vec3(randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot)),
+        var offsets = Vec3(randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot)),
                            randomOffset(c.ry, type: c.y?.random ?? 0, time, seed.get(slot + 1)),
                            randomOffset(c.rz, type: c.z?.random ?? 0, time, seed.get(slot + 2)))
-        return linked(base, c.connect) + linked(offsets, PreviewRules.isOn("axisConnectRandom") ? c.connectRandom : c.connect)
+        if PreviewRules.hot.axisConnectRandom { offsets = linked(offsets, c.connectRandom) }
+        return linked(base + offsets, c.connect)
     }
 
     static func color(_ c: RColor, _ time: CurveTime, _ seed: RandomSeed) -> Vec4 {

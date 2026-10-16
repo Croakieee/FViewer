@@ -90,11 +90,28 @@ struct REmitterItem {
     var generateDelayByOne: Bool
     var injectionAngle: Vec3
     var startFrame = 0
-    var startFrameUpdate = false
+    var startFrameNullUpdate = false
+    var localDirection = 0
+    var inheritBinderRotation = false
+    var inheritParentVelocity = false
+    var inheritParentLife = false
+    var parameterLink = -1
 }
 
 nonisolated final class REmitter: @unchecked Sendable {
     var coordOrder: Int
+    var gravityRandom: RCurve?
+    var airResistanceRandom: RCurve?
+    var velocityRandom: [RCurve?] = [nil, nil, nil]
+    var anyDirection = false
+    var injectAngles: [RCurve?] = [nil, nil, nil]
+    var injectAnglesRandom: [RCurve?] = [nil, nil, nil]
+    var coneRotationRandom: [RCurve?] = [nil, nil, nil]
+    var innerSize: RCurve?
+    var outerSize: RCurve?
+    var innerSizeRandom: RCurve?
+    var outerSizeRandom: RCurve?
+    var radiusRandom: RCurve?
     var index: Int
     var type: Int
     var loopStart: Int
@@ -170,6 +187,7 @@ struct RUvSet {
     var scroll: RCurve3
     var rotation: RCurve?
     var rotationRandom: RCurve? = nil
+    var pixelPosition = false
 }
 
 struct RTextureLayer {
@@ -234,10 +252,11 @@ struct RSimple {
     var frames: [Float]
     var injectionDirection = 0
     var radialFrom: Float = 0
-    var radialTo: Float = .pi
-    var tiltStart = SIMD2<Float>(0, 0)
-    var tiltRandom = SIMD2<Float>(0, 0)
-    var tiltVelocity = SIMD2<Float>(0, 0)
+    var radialTo: Float = 0
+    var bindModel = -1
+    var flatterySpeed: Float = 0
+    var spinAdd: Float = 0
+    var lifeRandom: Float = 0
 }
 
 struct RDisc {
@@ -267,9 +286,11 @@ struct RPolyline {
     var spline = false
     var noBillboard = false
     var noBillboardAxis = 0
+    var widthRandom: [RCurve?] = [nil, nil, nil, nil]
 }
 
 nonisolated final class RParticle: @unchecked Sendable {
+    var collision = -1
     var index: Int
     var type: Int
     var loopStart: Int
@@ -390,6 +411,7 @@ struct RBinder {
     var bindTargetPoint: Int
     var bindPointId: Int
     var offset = RCurve3()
+    var followTargetOrientation = true
 }
 
 struct REffector {
@@ -431,6 +453,8 @@ struct REffectSchema {
     var effectors: [REffector] = []
     var emitterEffectors: [Int] = []
     var softFadeRange: Float = 0.5
+    var angleFade: [(enabled: Bool, inner: Float, outer: Float)] = []
+    var drawLayer = 2
 }
 
 private extension Array where Element == AvfxBlock {
@@ -482,7 +506,9 @@ enum AvfxSchemaReader {
                      inheritRotation: r.bool("ICbR"), inheritPosition: r.bool("ICbP"), overrideLife: r.bool("bOvr"),
                      overrideLifeValue: Float(r.int("OvrV")), overrideLifeRandom: Float(r.int("OvrR")), generateDelay: r.int("GenD"),
                      generateDelayByOne: r.bool("bGD"), injectionAngle: Vec3(r.float("BIAX"), r.float("BIAY"), r.float("BIAZ")),
-                     startFrame: min(max(r.int("StFr"), 0), 3600), startFrameUpdate: r.bool("bStN"))
+                     startFrame: min(max(r.int("StFr"), 0), 3600), startFrameNullUpdate: r.bool("bStN"), localDirection: r.int("LoDr"),
+                     inheritBinderRotation: r.bool("ICbB"), inheritParentVelocity: r.bool("IPbV"), inheritParentLife: r.bool("IPbL"),
+                     parameterLink: r.int("PrLk", -1))
     }
 
     static func layer(_ block: AvfxBlock?) -> RTextureLayer? {
@@ -521,9 +547,8 @@ enum AvfxSchemaReader {
             rotVelocity: f("RVZ"), blockCount: max(1, i("BlkN", 1)), velocityMin: f("VMin"), velocityMax: f("VMax"),
             uvCellsU: max(1, i("UvCU", 1)), uvCellsV: max(1, i("UvCV", 1)), uvInterval: i("UvIv", 1), uvRandom: i("UvNR"),
             pivot: SIMD2(f("PvtX"), f("PvtY")), interval: i("CrI", 1), intervalRandom: i("CrIR"), intervalCount: max(1, i("CrIC", 1)),
-            life: Float(max(1, i("CrIL", 1))), colors: colors, frames: frames, injectionDirection: i("SIDT"),
-            radialFrom: f("IRD0"), radialTo: f("IRD1", .pi), tiltStart: SIMD2(f("RIX"), f("RIY")), tiltRandom: SIMD2(f("RBX"), f("RBY")),
-            tiltVelocity: SIMD2(f("RVX"), f("RVY")))
+            life: i("CrIL", 1) < 0 ? -1 : Float(max(1, i("CrIL", 1))), colors: colors, frames: frames, injectionDirection: i("SIDT"),
+            radialFrom: f("IRD0"), radialTo: f("IRD1"), bindModel: i("VBMN", -1), flatterySpeed: f("FltS"), spinAdd: f("RAZ"), lifeRandom: Float(max(0, i("CrLR"))))
     }
 
     static func disc(_ block: AvfxBlock?) -> RDisc? {
@@ -544,7 +569,8 @@ enum AvfxSchemaReader {
                          colorCenter: optionalColor(block.child("ColC")), colorEnd: optionalColor(block.child("ColE")),
                          colorEdgeBegin: optionalColor(block.child("CoEB")), colorEdgeCenter: optionalColor(block.child("CoEC")),
                          colorEdgeEnd: optionalColor(block.child("CoEE")), spline: block.bool("bSpl"), noBillboard: block.bool("bNtB"),
-                         noBillboardAxis: block.int("NBBA"))
+                         noBillboardAxis: block.int("NBBA"),
+                         widthRandom: [curve(block.child("WdR")), curve(block.child("WdBR")), curve(block.child("WdCR")), curve(block.child("WdER"))])
     }
 
     static func read(_ root: AvfxBlock) -> REffectSchema {
@@ -572,7 +598,7 @@ enum AvfxSchemaReader {
             let particleRecords = e.lastRecords("ItPr")
             let emitterRecords = e.lastRecords("ItEm").dropFirst(particleRecords.count)
             let data = e.child("Data")
-            return REmitter(
+            let emitter = REmitter(
                 index: index, type: e.int("EVT"), loopStart: e.int("LpSt"), loopEnd: e.int("LpEd"), childLimit: e.int("ClCn"),
                 rotationBase: e.int("RBDT"), rotationOrder: e.int("ROT"), life: life(e.child("Life")), createCount: curve(e.child("CrC")),
                 createCountRandom: curve(e.child("CrCR")), createInterval: curve(e.child("CrI")), createIntervalRandom: curve(e.child("CrIR")),
@@ -586,6 +612,19 @@ enum AvfxSchemaReader {
                 coneAngle: curve(data?.child("IjA")), coneAngleRandom: curve(data?.child("IjAR")),
                 coneRotation: [curve(data?.child("AnX")), curve(data?.child("AnY")), curve(data?.child("AnZ"))],
                 dataRotationOrder: data?.int("ROT") ?? 0)
+            emitter.gravityRandom = curve(e.child("GraR"))
+            emitter.airResistanceRandom = curve(e.child("ARsR"))
+            emitter.velocityRandom = [curve(e.child("VRX")), curve(e.child("VRY")), curve(e.child("VRZ"))]
+            emitter.anyDirection = e.bool("bAD")
+            emitter.injectAngles = [curve(e.child("IAX")), curve(e.child("IAY")), curve(e.child("IAZ"))]
+            emitter.injectAnglesRandom = [curve(e.child("IAXR")), curve(e.child("IAYR")), curve(e.child("IAZR"))]
+            emitter.coneRotationRandom = [curve(data?.child("AnXR")), curve(data?.child("AnYR")), curve(data?.child("AnZR"))]
+            emitter.innerSize = curve(data?.child("InS"))
+            emitter.outerSize = curve(data?.child("OuS"))
+            emitter.innerSizeRandom = curve(data?.child("InSR"))
+            emitter.outerSizeRandom = curve(data?.child("OuSR"))
+            emitter.radiusRandom = curve(data?.child("RadR"))
+            return emitter
         }
         let particles = root.childrenNamed("Ptcl").enumerated().map { index, p -> RParticle in
             let data = p.child("Data")
@@ -597,7 +636,7 @@ enum AvfxSchemaReader {
             }
             var modelIndex = data?.int("MNO", -1) ?? -1
             if let list = data?.child("MdNo"), let first = list.data.first { modelIndex = first == 255 ? -1 : Int(first) }
-            return RParticle(
+            let particle = RParticle(
                 index: index, type: type, loopStart: p.int("LpSt"), loopEnd: p.int("LpEd"), rotationBase: p.int("RBDT"),
                 rotationOrder: p.int("RoOT"), drawMode: p.int("RMT"), culling: p.int("CulT"), depthTest: p.bool("DsDt"),
                 depthWrite: p.bool("DsDw"), depthOffset: p.float("DpOf"), drawPriority: p.int("DwPr"), life: life(p.child("Life")),
@@ -605,7 +644,8 @@ enum AvfxSchemaReader {
                 airResistanceRandom: curve(p.child("ARsR")), scale: curve3(p.child("Scl")), rotation: curve3(p.child("Rot")),
                 position: curve3(p.child("Pos")), rotVelX: curve(p.child("VRX")), rotVelY: curve(p.child("VRY")), rotVelZ: curve(p.child("VRZ")),
                 color: color(p.child("Col")),
-                uvSets: p.childrenNamed("UvSt").map { RUvSet(scale: curve3($0.child("Scl")), scroll: curve3($0.child("Scr")), rotation: curve($0.child("Rot")), rotationRandom: curve($0.child("RotR"))) },
+                uvSets: p.childrenNamed("UvSt").map { RUvSet(scale: curve3($0.child("Scl")), scroll: curve3($0.child("Scr")), rotation: curve($0.child("Rot")), rotationRandom: curve($0.child("RotR")),
+                                                        pixelPosition: $0.int("CUvT") == 1) },
                 tc1: layer(p.child("TC1")), tc2: layer(p.child("TC2")), tc3: layer(p.child("TC3")), tc4: layer(p.child("TC4")),
                 palette: palette, distortion: layer(p.child("TD")), modelIndex: modelIndex, colorBegin: optionalColor(data?.child("ColB")),
                 colorEnd: optionalColor(data?.child("ColE")), lineLength: curve(data?.child("Len")), lineLengthRandom: curve(data?.child("LenR")),
@@ -617,11 +657,14 @@ enum AvfxSchemaReader {
                 rotVelRandom: [curve(p.child("VRXR")), curve(p.child("VRYR")), curve(p.child("VRZR"))],
                 clipNear: p.bool("bNea") ? (p.float("NeSt"), p.float("NeEd")) : nil, clipFar: p.bool("bFar") ? (p.float("FaSt"), p.float("FaEd")) : nil,
                 clipFromCaster: p.int("FaBP") == 1)
+            particle.collision = p.int("Coll", -1)
+            return particle
         }
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
             return RBinder(type: b.int("BnVr"), distance: curve(b.child("Data")?.child("Dst")), adjustToScreen: b.bool("bATS"),
-                           bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1, offset: curve3(props?.child("Pos")))
+                           bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1, offset: curve3(props?.child("Pos")),
+                           followTargetOrientation: b.child("bFTO").map { _ in b.bool("bFTO") } ?? true)
         }
         var result = REffectSchema(
             revisedPosition: Vec3(root.float("RvPx"), root.float("RvPy"), root.float("RvPz")),
@@ -648,6 +691,8 @@ enum AvfxSchemaReader {
             result.particles[index].dissolve = RDissolve(target: data.int("DTT"), reverse: data.bool("bRev"), erosion: curve(data.child("EroR")),
                                                          endWidth: curve(data.child("EdW")), intensity: curve(data.child("Int")))
         }
+        result.angleFade = ["X", "Y", "Z"].map { (root.bool("AF\($0)e"), root.float("AF\($0)i"), root.float("AF\($0)o")) }
+        result.drawLayer = root.int("DwLy", 2)
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
         return result
     }

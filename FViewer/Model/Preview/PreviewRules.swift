@@ -59,23 +59,79 @@ enum PreviewRules {
         ("decalNoMipmaps", "Decals without mipmaps", "Decal and Decal Ring textures are read at full size."),
         ("createIntervalWholeFrame", "Create interval at least a frame", "A Create Interval below one frame counts as one frame: an item creates at most once per frame."),
         ("createOnceOwnCount", "Create once ignores emitter count", "An item created once at the emitter start makes its own Create Count; the emitter's Create Count does not multiply it."),
-        ("cylinderNoInjection", "Cylinder Model without injection speed", "Particles from a Cylinder Model emitter are not thrown; they move only by their own curves."),
         ("trailWholePath", "Trails keep the whole path", "A Position History trail of a particle with a finite life keeps its whole path since birth."),
         ("polylineAxisFromBase", "Polyline line along the rotation base", "An Axis Order line runs along the particle's Rotation Direction Base axis (X, Y or Z)."),
         ("polylineWidthRevised", "Polyline width by revised scale", "Polyline ribbon width is multiplied by the mean of the effect's Revised Scale X and Y."),
         ("emitterPeriodicCurves", "Emitter adding curves ignore the loop", "Emitter curves that keep adding after their last key run on the emitter's total age while it is held in its loop."),
         ("moveDirectionRotation", "Move direction keeps rotation", "Move Direction Billboard particles lie with Z along their motion and Y away from the camera, and their own Rotation turns them on top."),
         ("auraTarget", "Aura target", "Model Skin particles are drawn only when their Aura Target includes the loaded model: Weapon or Off Hand for weapon models, Character or Summon for the others."),
-        ("startFrame", "Start frame", "A particle item with Start Frame is born as if it had already lived that many frames; with Start Frame Null Update those frames are simulated (motion, sprites), otherwise only its curves move on. Inferred from game files."),
         ("binderOffset", "Binder offset", "The Position of a binder's start properties moves the bind point in its own space: X to the side, Y up, Z forward. Camera binders are not moved. Inferred from game files."),
-        ("spriteCone", "Sprite injection cone", "Simple Animation sprites with Injection Direction Type 1 fly out inside a cone around the particle's up axis, between the angles Injection Radial Direction 0 and 1. Inferred from game files."),
         ("polylineShape", "Polyline spline and fixed ribbon", "Polylines with Is Spline follow a smooth curve through their points; with No Billboard the ribbon spreads along the particle's Not Billboard Base Axis instead of facing the camera."),
-        ("spriteTilt", "Sprite tilt", "Simple Animation sprites also turn about their X and Y axes: Rotation Start, Rotation Base (random) and Rotation Velocity X and Y, on top of facing the screen."),
+        ("stepKeyOnArrival", "Step keys jump on arrival", "A Step key holds the previous value up to its own frame and jumps there; the segment after it follows the next key's type."),
+        ("randomAlwaysPerFrame", "Always random each frame", "Random curves of type Always draw a new random value every frame instead of once per particle."),
+        ("lifeRandomType", "Life random by type", "Life Random adds, takes off or spreads both ways by its Random Type (Plus, Minus, Plus Minus)."),
+        ("createTimeLast", "Create Time last tick", "An item with Create Time 2 creates once, at the last Create Interval tick of the emitter's finite life, with its own Create Count."),
+        ("emitterRandomOnce", "Emitter random once", "The random parts of an emitter's Position, Rotation and Scale are drawn once per emitter, not for every particle."),
+        ("emitterShapeRandom", "Emitter shape random", "Angle, Radius, Inner Size and Outer Size Random of the emitter shape spread every spawn by their curve's Random Type."),
+        ("shapeAngles", "Shape angles", "Angle X, Y and Z of the emitter data turn Cone Model, Sphere Model, Cylinder Model and Model shapes in the data Rotation Order."),
+        ("ringStartZ", "Rings start at +Z", "Sphere Model and Cylinder Model rings start at +Z and run towards +X."),
+        ("coneModelRings", "Cone Model rings", "Cone Model emitters place Divide Y rings up to the Injection Angle from +Z, Divide X points each, at Radius; On Vertex methods start on the point, To Vertex methods at the centre."),
+        ("coneSizes", "Cone inner and outer size", "Cone emitters start each particle along its direction between Inner Size and Outer Size."),
+        ("modelToVertexFromCentre", "Model To Vertex from the centre", "Model emitters with a To Vertex method start particles at the emitter's origin and throw them along the vertex normal."),
+        ("emitterInjectionAngle", "Emitter injection angle", "With Any Direction on, Injection Angle X, Y and Z (with their Random) turn each child about its shape point."),
+        ("emitterVelocityAngle", "Emitter velocity random as angle", "With Any Direction off, Velocity Random X, Y and Z turn each child about the emitter's axes by that angle."),
+        ("emitterMotionRandom", "Emitter motion random", "Gravity Random and Air Resistance Random of a thrown child emitter are drawn per emitter by the curve's Random Type."),
+        ("influenceUnknownFollows", "Influence 8 and 9 follow", "Items with Parent Influence Coord 8 or 9 follow the emitter like All Always."),
+        ("inheritParentLife", "Inherit parent life", "Items with Inherit Parent Life live only for the rest of the emitter's life."),
+        ("inheritParentVelocity", "Inherit parent velocity", "Items with Inherit Parent Velocity start with the velocity of the thrown emitter that made them."),
+        ("localDirectionFollowsNormal", "Local direction follows normal", "Particles of an item with Local Direction 1 turn local +Z along the normal of their shape point."),
+        ("localDirectionChildEmitters", "Local direction for child emitters", "Child emitters of an item with Local Direction 1 turn local +Z along the normal of their shape point."),
+        ("parameterLink", "Parameter link", "Parameter Link lays the linked particle's Position, Rotation and Scale over the particle as a parent, and its colour multiplies the particle's."),
+        ("itemStartFrame", "Item start frame", "A particle item with Start Frame starts that many frames into its life; its curves and its life count from there."),
+        ("startFrameNullUpdate", "Start frame null update", "With Start Frame Null Update the skipped frames are not run; without it the particle moves through them."),
+        ("rotationVelocityTurnsFlight", "Rotation velocity turns flight", "Particle Rotation Velocity is an angle that turns the launch direction about its flight frame, in the named Rotation Order."),
+        ("localFlightUnscaled", "Emitter-space flight unscaled", "A flight kept in emitter space is turned with the emitter but scaled only by the effect's Revised Scale, not the emitter's scale."),
+        ("inheritBinderRotation", "Influence on binder rotation", "With Options items without Influence on Rotation take the binder's rotation when Influence on Binder Position is on."),
+        ("moveDirectionAxisZ", "Move direction along Z", "Particles with Rotation Base Move Direction turn local +Z along their motion, their own rotation on top."),
+        ("modelTreeBillboardOwnAxis", "Model tree billboard own axis", "Models with Tree Billboard turn about their own +Y to face the camera."),
+        ("collisionFreeze", "Collision freeze", "Particles with Collision Type 2 stop where they reach the floor."),
+        ("angleFade", "Camera angle fade", "Header Fade X and Y fade the effect by the camera's vertical and horizontal angle between Fade Inner and Fade Outer."),
+        ("drawLayerOverScene", "Draw layer over scene", "Effects with Draw Layer Screen, Post UI or Prev UI draw over the scene without depth test."),
+        ("addBeforeClamp", "Add before clamping", "Add particles are weighted by alpha before bright colour is clamped, so colours above 1 stay saturated."),
+        ("simpleClockRate", "Sprite clock 1.2", "Simple Animation sprite age, life, births and atlas run 1.2 times faster than effect frames; their motion does not."),
+        ("simpleLifeInfinite", "Sprite endless life", "Sprites with Life −1 live as long as their particle."),
+        ("simpleLifeRandom", "Sprite random life", "Each sprite lives Create Interval Life plus a random 0 to Create Life Random frames. Create Life Random is a whole number in the file; its values are always below the life. Inferred from game files."),
+        ("simpleSpinRandom", "Sprite spin random", "Each sprite turns at Rotation Add Z plus a random part of Rotation Velocity Z."),
+        ("simpleCreateAreaFullSize", "Sprite area full size", "Create Area X, Y and Z are the full size of the spawn box."),
+        ("simpleDirectionUp", "Sprite direction up", "Sprites with Injection Direction Type 1 or 3 fly up, between the angles Injection Radial Direction 0 and 1 from +Y."),
+        ("simpleBindModelPath", "Sprite bind model path", "Sprites born on a vertex travel to the same vertex of the Bind Model, along Velocity Flattery Rate and Speed."),
+        ("simpleAreaOnVertices", "Sprite area on vertices", "Create Area also scatters sprites born on model vertices."),
+        ("pixelPositionUv", "UV by pixel position", "A UV Set with Calculate UV By Pixel Position maps its layers by the pixel's place on the screen instead of the particle's own UV. From the field name, not checked in the game."),
+        ("polylineWidthRandom", "Polyline width random", "Width Random, Width Begin, Center and End Random give each polyline its own width by the curve's Random Type."),
         ("releasedEndlessEnd", "Released endless particles end", "Once released, a particle with endless life ends together with the emitter that made it. While held it stays. Inferred from game files, not checked in the game."),
     ]
 
     private static var cache: [String: Bool] = [:]
     static private(set) var token = 0
+
+    struct Hot {
+        var stepKeyOnArrival = true
+        var randomAlwaysPerFrame = true
+        var axisConnectRandom = true
+        var periodicCurves = true
+    }
+
+    private static var hotToken = -1
+    private static var hotValues = Hot()
+
+    static var hot: Hot {
+        if hotToken != token {
+            hotValues = Hot(stepKeyOnArrival: isOn("stepKeyOnArrival"), randomAlwaysPerFrame: isOn("randomAlwaysPerFrame"),
+                            axisConnectRandom: isOn("axisConnectRandom"), periodicCurves: isOn("periodicCurves"))
+            hotToken = token
+        }
+        return hotValues
+    }
 
     static func isOn(_ key: String) -> Bool {
         if let cached = cache[key] { return cached }

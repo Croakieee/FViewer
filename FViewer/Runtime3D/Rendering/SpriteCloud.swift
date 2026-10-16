@@ -16,8 +16,10 @@ final class SpriteCloud {
         var scaleX: Float
         var scaleY: Float
         var rotation: Float
-        var tilt = SIMD2<Float>(0, 0)
+        var spin: Float
         var cell: Int
+        var life: Float
+        var path: Vec3?
         var world = false
     }
 
@@ -26,15 +28,23 @@ final class SpriteCloud {
 
     let anim: RSimple
     private let points: [EmitPoint]
+    private let bindPoints: [EmitPoint]
     private let lines: Bool
     private var sprites: [Sprite] = []
     private var created = 0
     private var nextBurst: Float = 0
 
-    init(anim: RSimple, points: [EmitPoint], lines: Bool) {
+    init(anim: RSimple, points: [EmitPoint], bindPoints: [EmitPoint] = [], lines: Bool) {
         self.anim = anim
         self.points = points
+        self.bindPoints = PreviewRules.isOn("simpleBindModelPath") ? bindPoints : []
         self.lines = lines
+    }
+
+    private var spriteLife: Float { anim.life < 0 ? (PreviewRules.isOn("simpleLifeInfinite") ? .infinity : 1) : anim.life }
+
+    private func pathShare(_ age: Float) -> Float {
+        (1 - cos(.pi * min(1, max(0, anim.flatteryRate + anim.flatterySpeed * age)))) / 2
     }
 
     private var capacity: Int { min(2048, max(1, anim.createCount)) }
@@ -42,8 +52,9 @@ final class SpriteCloud {
 
     func step(_ frames: Float, alive: Bool, random: inout SeededRandom) {
         let a = anim
+        let clock = frames * (PreviewRules.isOn("simpleClockRate") ? 1.2 : 1)
         for i in sprites.indices {
-            sprites[i].age += frames
+            sprites[i].age += clock
             sprites[i].fall += a.gravity * frames
             let keep = Vec3(
                 pow(max(0, 1 - (1 - a.coordAccuracy.x) * SpriteCloud.flatteryScale), frames),
@@ -51,12 +62,13 @@ final class SpriteCloud {
                 pow(max(0, 1 - (1 - a.coordAccuracy.z) * SpriteCloud.flatteryScale), frames))
             sprites[i].velocity *= keep
             sprites[i].position += (sprites[i].velocity + sprites[i].fall) * frames
+            if let path = sprites[i].path { sprites[i].position += path * (pathShare(sprites[i].age) - pathShare(sprites[i].age - clock)) }
         }
-        sprites.removeAll { $0.age >= a.life }
+        sprites.removeAll { $0.age >= $0.life }
         guard alive else { return }
-        nextBurst -= frames
+        nextBurst -= clock
         if a.createNewAfterDeath {
-            let step = max(a.life / Float(max(1, a.createCount)), 0.01)
+            let step = max(1, spriteLife) / Float(max(1, a.createCount))
             while nextBurst <= 0 {
                 if sprites.count < capacity {
                     sprites.append(spawn(&random))
@@ -79,27 +91,35 @@ final class SpriteCloud {
 
     private func spawn(_ random: inout SeededRandom) -> Sprite {
         let a = anim
-        let point: EmitPoint? = a.injectionPosition == 1 && !points.isEmpty ? points[min(points.count - 1, Int(random.next() * Float(points.count)))] : nil
-        var direction = point?.normal ?? Vec3(random.range(-1, 1), random.range(-1, 1), random.range(-1, 1))
+        let index = min(max(points.count - 1, 0), Int(random.next() * Float(points.count)))
+        let point: EmitPoint? = a.injectionPosition == 1 && !points.isEmpty ? points[index] : nil
+        let path: Vec3? = point != nil && !bindPoints.isEmpty ? bindPoints[index % bindPoints.count].position - point!.position : nil
+        var direction: Vec3
+        if PreviewRules.isOn("simpleDirectionUp"), a.injectionDirection == 1 || a.injectionDirection == 3 {
+            let polar = random.range(min(a.radialFrom, a.radialTo), max(a.radialFrom, a.radialTo)), turn = random.range(0, 2 * .pi)
+            direction = Vec3(sin(polar) * cos(turn), cos(polar), sin(polar) * sin(turn))
+        } else {
+            direction = point?.normal ?? Vec3(random.range(-1, 1), random.range(-1, 1), random.range(-1, 1))
+        }
         if simd_length_squared(direction) < 1e-6 { direction = Vec3(0, 1, 0) }
         direction = simd_normalize(direction)
-        if point == nil, a.injectionDirection == 1, PreviewRules.isOn("spriteCone") {
-            let low = min(max(min(a.radialFrom, a.radialTo), 0), .pi), high = min(max(max(a.radialFrom, a.radialTo), 0), .pi)
-            let cosine = random.range(cos(high), cos(low)), turn = random.range(0, 2 * .pi)
-            let sine = max(0, 1 - cosine * cosine).squareRoot()
-            direction = Vec3(sine * cos(turn), cosine, sine * sin(turn))
-        }
         let kx = random.range(min(a.scaleRandomX.x, a.scaleRandomX.y), max(a.scaleRandomX.x, a.scaleRandomX.y))
         let ky = a.scaleRandomLink ? kx : random.range(min(a.scaleRandomY.x, a.scaleRandomY.y), max(a.scaleRandomY.x, a.scaleRandomY.y))
         let cells = a.uvCellsU * a.uvCellsV
-        let position = point?.position ?? Vec3(random.range(-1, 1) * a.createArea.x, random.range(-1, 1) * a.createArea.y, random.range(-1, 1) * a.createArea.z)
+        let area: Float = PreviewRules.isOn("simpleCreateAreaFullSize") ? 0.5 : 1
+        let scatter = Vec3(random.range(-1, 1) * a.createArea.x, random.range(-1, 1) * a.createArea.y, random.range(-1, 1) * a.createArea.z) * area
+        var position = scatter
+        if let point {
+            position = point.position + (path.map { $0 * pathShare(0) } ?? .zero) + (PreviewRules.isOn("simpleAreaOnVertices") ? scatter : .zero)
+        }
         let speed = a.velocityMin > a.velocityMax ? a.velocityMax : random.range(a.velocityMin, a.velocityMax)
         let block = Float(Int(random.next() * Float(a.blockCount))) * 2 * .pi / Float(a.blockCount)
         let rotation = a.rotStart + random.range(-1, 1) * a.rotRandom + block
         let cell = cells > 1 && a.uvRandom > 0 ? Int(random.next() * Float(min(a.uvRandom, cells))) : 0
-        var tilt = a.tiltStart
-        if a.tiltRandom != .zero, PreviewRules.isOn("spriteTilt") { tilt += SIMD2(random.range(-1, 1), random.range(-1, 1)) * a.tiltRandom }
-        return Sprite(position: position, velocity: direction * speed, scaleX: kx, scaleY: ky, rotation: rotation, tilt: tilt, cell: cell)
+        let spin = PreviewRules.isOn("simpleSpinRandom") ? a.spinAdd + random.range(-1, 1) * a.rotVelocity : a.rotVelocity
+        let life = PreviewRules.isOn("simpleLifeRandom") && a.lifeRandom > 0 ? spriteLife + (random.next() * (a.lifeRandom + 1)).rounded(.down) : spriteLife
+        return Sprite(position: position, velocity: direction * speed, scaleX: kx, scaleY: ky, rotation: rotation, spin: spin, cell: cell, life: life,
+                      path: path)
     }
 
     private func color(at age: Float) -> Vec4 {
@@ -121,26 +141,24 @@ final class SpriteCloud {
         var out: [SpriteInstance] = []
         out.reserveCapacity(sprites.count)
         for i in sprites.indices {
-            let k = min(1, sprites[i].age / a.life)
+            let k = min(1, sprites[i].age / sprites[i].life)
             let e = pow(k, a.scaleCurve > 0 ? a.scaleCurve : 1)
             if !a.bindParent && !sprites[i].world {
                 sprites[i].position = Math3D.point(frame, sprites[i].position)
                 sprites[i].velocity = Math3D.vector(frame, sprites[i].velocity)
+                sprites[i].fall = Math3D.vector(frame, sprites[i].fall)
+                sprites[i].path = sprites[i].path.map { Math3D.vector(frame, $0) }
                 sprites[i].world = true
             }
             let s = sprites[i]
             var position = s.world ? s.position : Math3D.point(frame, s.position)
             var w = (a.scaleStart.x + (a.scaleEnd.x - a.scaleStart.x) * e) * s.scaleX * (a.scaleByParent ? particleScale.x : revisedScale.x)
             var h = (a.scaleStart.y + (a.scaleEnd.y - a.scaleStart.y) * e) * s.scaleY * (a.scaleByParent ? particleScale.y : revisedScale.y)
-            var rotation = cameraRotation * simd_quatf(angle: s.rotation + a.rotVelocity * s.age, axis: Vec3(0, 0, 1))
-            if PreviewRules.isOn("spriteTilt") {
-                let tilt = s.tilt + a.tiltVelocity * s.age
-                if tilt != .zero { rotation = rotation * simd_quatf(angle: tilt.x, axis: Vec3(1, 0, 0)) * simd_quatf(angle: tilt.y, axis: Vec3(0, 1, 0)) }
-            }
+            var rotation = cameraRotation * simd_quatf(angle: s.rotation + s.spin * s.age, axis: Vec3(0, 0, 1))
             if lines {
                 h = a.lineLength.x * lineLength
                 w = pixelAngle > 0 ? pixelAngle * simd_distance(position, cameraPosition) : SpriteCloud.lineWidth
-                let velocity = s.world ? s.velocity : Math3D.vector(frame, s.velocity)
+                let velocity = s.world ? s.velocity + s.fall : Math3D.vector(frame, s.velocity + s.fall)
                 if simd_length_squared(velocity) > 1e-12 {
                     let axisY = simd_normalize(velocity)
                     let side = simd_cross(cameraPosition - position, axisY)

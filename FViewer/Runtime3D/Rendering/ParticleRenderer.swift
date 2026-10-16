@@ -25,6 +25,7 @@ private struct ParticleUniforms {
     var scene2 = Vec4.zero
     var flags3 = Vec4.zero
     var flags4 = Vec4.zero
+    var pixelUv = Vec4.zero
 }
 
 struct LoadedTexture {
@@ -122,6 +123,7 @@ final class ParticleRenderer {
             (.one, .one, .zero, .one),
             (.one, .one, .zero, .one),
             (.one, .oneMinusSourceAlpha, .one, .oneMinusSourceAlpha),
+            (.one, .one, .zero, .one),
         ]
         for (slot, factor) in factors.enumerated() {
             let d = MTLRenderPipelineDescriptor()
@@ -254,7 +256,9 @@ final class ParticleRenderer {
         }
         let blendBeforeClamp = (mode == 0 || mode == 8) && PreviewRules.isOn("blendBeforeClamp")
         if blendBeforeClamp { m.blend = 7 }
-        let premultiply: Float = mode == 4 || mode == 3 || mode == 7 || blendBeforeClamp ? 1 : mode == 1 || mode == 6 ? 2 : 0
+        let addBeforeClamp = mode == 2 && PreviewRules.isOn("addBeforeClamp")
+        if addBeforeClamp { m.blend = 8 }
+        let premultiply: Float = mode == 4 || mode == 3 || mode == 7 || blendBeforeClamp || addBeforeClamp ? 1 : mode == 1 || mode == 6 ? 2 : 0
         let fresnel = isModel && ps.fresnelType != 0 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("modelFresnel")
         let lineGradient = ps.type == 3 && (ps.colorBegin != nil || ps.colorEnd != nil) && PreviewRules.isOn("lineGradient")
         let sprites = ps.simple != nil && (ps.type == 1 || ps.type == 3)
@@ -268,6 +272,14 @@ final class ParticleRenderer {
         m.uniforms.flags3 = Vec4(PreviewRules.isOn("distortionHalfRange") ? 1 : 0, paletteChannels ? 1 : 0, PreviewRules.isOn("softQuadratic") ? 1 : 0,
                                  tc1NoAlpha ? 2 : tc1White ? 1 : 0)
         m.uniforms.flags4 = Vec4(PreviewRules.isOn("tc1Luminance") && PreviewRules.isOn("tc1MultiplyWhite") ? 1 : 0, PreviewRules.isOn("depthOffsetView") ? 1 : 0, 0, 0)
+        if PreviewRules.isOn("pixelPositionUv") {
+            func pixel(_ layer: RTextureLayer?) -> Float {
+                guard let layer, layer.uvSet >= 0, layer.uvSet < ps.uvSets.count else { return 0 }
+                return ps.uvSets[layer.uvSet].pixelPosition ? 1 : 0
+            }
+            m.uniforms.pixelUv = Vec4(pixel(ps.tc1), pixel(ps.tc2), pixel(ps.distortion), pixel(ps.tc3))
+            m.uniforms.flags4.z = pixel(ps.tc4)
+        }
         m.hasColorEnds = fresnel || lineGradient
         m.soft = ps.softParticle && PreviewRules.isOn("softParticles")
         if copiesScene {
@@ -366,7 +378,7 @@ final class ParticleRenderer {
             if material.screenCopy > 0, !sceneReady, !wire { u.color.w = 0 }
             if wire { u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle); u.misc.w = 0 }
             let pipeline = wire ? pipelines[0] : pipelines[material.blend]
-            let depth = wire ? depthStates[0] : depthStates[(material.depthTest ? 2 : 0) + (material.depthWrite ? 1 : 0)]
+            let depth = wire || draw.overScene ? depthStates[0] : depthStates[(material.depthTest ? 2 : 0) + (material.depthWrite ? 1 : 0)]
             let cull: MTLCullMode = wire ? .none : material.cull
             if boundPipeline != ObjectIdentifier(pipeline) {
                 encoder.setRenderPipelineState(pipeline)
