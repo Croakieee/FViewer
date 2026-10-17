@@ -34,6 +34,7 @@ struct Uniforms {
     float4 dissolveInfo;
     float4 dissolveBands[3];
     float4 shadow;
+    float4 look;
     float4x4 shadowFaces[6];
 };
 
@@ -42,10 +43,11 @@ struct ShadowOut {
     float3 world;
 };
 
-vertex ShadowOut shadowVertex(VertexIn in [[stage_in]], constant float4x4 &face [[buffer(1)]]) {
+vertex ShadowOut shadowVertex(VertexIn in [[stage_in]], constant float4x4 &face [[buffer(1)]], constant float4x4 &model [[buffer(2)]]) {
     ShadowOut out;
-    out.world = in.position;
-    out.position = face * float4(in.position, 1.0);
+    float4 world = model * float4(in.position, 1.0);
+    out.world = world.xyz;
+    out.position = face * world;
     return out;
 }
 
@@ -111,9 +113,9 @@ fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u
         for (int i = 0; i < 4; i++) {
             float3 toLight = u.lightPosition[i].xyz - in.world;
             float d = max(length(toLight), 0.001);
-            float range = u.lightColor[i].w;
+            float reach = u.lightColor[i].w;
             float decay = u.lightPosition[i].w;
-            float falloff = range > 0.0 ? pow(clamp(1.0 - d / range, 0.0, 1.0), decay) : 1.0 / pow(max(d, 0.25), decay);
+            float falloff = reach >= 0.0 ? min(1.0, reach / max(pow(d, decay), 1e-4)) : 1.0;
             if (i == int(u.shadow.x + 0.5) && u.shadow.x > -0.5 && d > u.shadow.y && d < u.shadow.z) {
                 float3 away = -toLight;
                 float3 a = abs(away);
@@ -130,7 +132,13 @@ fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u
             }
             added += u.lightColor[i].rgb * falloff * max(dot(n, toLight / d), 0.0);
         }
-        color.rgb += in.color.rgb * added * 1.27;
+        color.rgb += in.color.rgb * added * u.look.z;
+    }
+    if (u.look.x > 0.5) {
+        float3 lin = max(color.rgb, float3(0.0));
+        lin = lin * lin * u.look.y;
+        float y = max(dot(lin, float3(0.29891, 0.58661, 0.11448)), 1e-5);
+        color.rgb = sqrt(lin * (1.0 - exp(-y)) / y);
     }
     if (glow > 0.0) color.rgb += u.dissolveColor.rgb * glow;
     if (band.a > 0.0) color.rgb = mix(color.rgb, band.rgb, band.a);

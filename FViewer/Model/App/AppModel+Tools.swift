@@ -502,6 +502,33 @@ extension AppModel {
         objectWillChange.send()
     }
 
+    func captureThumbnail() {
+        guard let file = document?.url else {
+            notice = "Save the effect first: the snapshot is kept with its file"
+            return
+        }
+        ViewportRenderer.main?.captureRequest = { [weak self] image in
+            self?.saveThumbnail(image, for: file)
+            self?.notice = "Snapshot saved as the thumbnail of \(file.lastPathComponent)"
+        }
+    }
+
+    func clearHistory() {
+        let alert = NSAlert()
+        alert.messageText = "Clear the history?"
+        alert.informativeText = "The recent files list and its snapshots are removed. Favourites and notes stay."
+        alert.addButton(withTitle: "Clear")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        for file in recentFiles where !favorites.contains(file.path) {
+            if let url = thumbnailURL(for: file) { try? FileManager.default.removeItem(at: url) }
+        }
+        UserDefaults.standard.set([Data](), forKey: "recent.bookmarks")
+        recentCache = nil
+        AppModel.thumbnailCache.removeAll()
+        objectWillChange.send()
+    }
+
     func flatModelJSON(_ block: AvfxBlock) -> Data {
         let mesh = MeshData.fromAvfx(block)
         func round(_ value: Float) -> Double { (Double(value) * 100000).rounded() / 100000 }
@@ -547,10 +574,18 @@ extension AppModel {
             ViewportRenderer.backgroundImage = image
             ViewportRenderer.backgroundToken += 1
         }
-        if let values = defaults.array(forKey: "preview.scene") as? [Double], values.count == 13 {
+        if let values = defaults.array(forKey: "preview.scene") as? [Double], values.count >= 13 {
             let f = values.map { Float($0) }
             ViewportRenderer.scene = PreviewScene(brightness: f[0], environment: Vec3(f[1], f[2], f[3]), sunlight: Vec3(f[4], f[5], f[6]), fog: f[7] > 0.5,
                                                   fogColor: Vec3(f[8], f[9], f[10]), fogStart: f[11], fogEnd: f[12])
+            if f.count >= 16 {
+                ViewportRenderer.scene.toneMap = f[13] > 0.5
+                ViewportRenderer.scene.exposure = f[14]
+                ViewportRenderer.scene.lightIntensity = f[15]
+            }
+        }
+        if let data = defaults.data(forKey: "preview.stage"), let stage = try? JSONDecoder().decode(PreviewStage.self, from: data) {
+            AvfxSimulation.stage = stage
         }
         if defaults.object(forKey: "preview.bloom.threshold") != nil {
             ViewportRenderer.bloom = (defaults.bool(forKey: "preview.bloom.on"), defaults.float(forKey: "preview.bloom.threshold"),
@@ -597,11 +632,31 @@ extension AppModel {
         scene.brightness = min(max(scene.brightness, 0.05), 20)
         scene.fogStart = max(scene.fogStart, 0)
         scene.fogEnd = max(scene.fogEnd, scene.fogStart + 0.1)
+        scene.exposure = min(max(scene.exposure, -4), 4)
+        scene.lightIntensity = min(max(scene.lightIntensity, 0), 100)
         ViewportRenderer.scene = scene
         ViewportRenderer.sceneToken += 1
         let values = [scene.brightness, scene.environment.x, scene.environment.y, scene.environment.z, scene.sunlight.x, scene.sunlight.y, scene.sunlight.z,
-                      scene.fog ? 1 : 0, scene.fogColor.x, scene.fogColor.y, scene.fogColor.z, scene.fogStart, scene.fogEnd].map { Double($0) }
+                      scene.fog ? 1 : 0, scene.fogColor.x, scene.fogColor.y, scene.fogColor.z, scene.fogStart, scene.fogEnd,
+                      scene.toneMap ? 1 : 0, scene.exposure, scene.lightIntensity].map { Double($0) }
         UserDefaults.standard.set(values, forKey: "preview.scene")
+        objectWillChange.send()
+    }
+
+    func setStage(_ change: (inout PreviewStage) -> Void) {
+        var stage = AvfxSimulation.stage
+        change(&stage)
+        stage.distance = min(max(stage.distance, 0), 60)
+        stage.side = min(max(stage.side, -30), 30)
+        for keyPath in [\PreviewStage.caster, \PreviewStage.target] {
+            stage[keyPath: keyPath].amplitude = min(max(stage[keyPath: keyPath].amplitude, 0), 30)
+            stage[keyPath: keyPath].period = min(max(stage[keyPath: keyPath].period, 0.2), 60)
+            stage[keyPath: keyPath].jumpHeight = min(max(stage[keyPath: keyPath].jumpHeight, 0), 10)
+            stage[keyPath: keyPath].jumpPeriod = min(max(stage[keyPath: keyPath].jumpPeriod, 0.2), 60)
+        }
+        AvfxSimulation.stage = stage
+        ViewportRenderer.sceneToken += 1
+        if let data = try? JSONEncoder().encode(stage) { UserDefaults.standard.set(data, forKey: "preview.stage") }
         objectWillChange.send()
     }
 

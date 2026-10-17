@@ -514,11 +514,26 @@ struct InspectorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        ForEach(Array(document.report.enumerated()), id: \.offset) { _, section in
-            Panel(title: section.title) {
-                ForEach(Array(section.lines.enumerated()), id: \.offset) { _, line in
-                    Text(line).font(Theme.font).foregroundStyle(Theme.text).frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
+        ForEach(document.report(textureURL: { app.textureURL($0) }, soundURL: { EmitterSounds.locate?($0) })) { section in
+            Panel(title: section.title, trailing: section.lines.count > 1 ? "\(section.lines.count)" : "", memory: "report." + section.title) {
+                ForEach(section.lines) { line in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: line.level == .ok ? "checkmark.circle" : line.level == .info ? "info.circle" : "exclamationmark.triangle")
+                            .font(.system(size: 9))
+                            .foregroundStyle(line.level == .ok ? Color.green : line.level == .info ? Theme.dim : line.level == .warning ? Color.orange : Color.red)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(line.text).font(Theme.font).foregroundStyle(Theme.text).lineLimit(2).truncationMode(.middle)
+                            if !line.detail.isEmpty {
+                                Text(line.detail).font(Theme.small).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        if line.target != nil { Image(systemName: "arrow.right.circle").font(.system(size: 9)).foregroundStyle(Theme.dim) }
+                    }
+                    .padding(.vertical, 1)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if let target = line.target { document.selectionID = target } }
+                    .help(line.target == nil ? "" : "Select it")
                 }
             }
         }

@@ -38,6 +38,20 @@ extension RCurve {
         let onArrival = PreviewRules.hot.stepKeyOnArrival
         if !color, onArrival ? b.type == 2 : a.type == 2 { return onArrival && t >= Float(b.time) ? vb : va }
         if color || a.type == 1 || a.type == 2 { return va + (vb - va) * f }
+        if !PreviewRules.hot.splineKeyTangents {
+            func bezier(_ p1: Float, _ h1: Float, _ h2: Float, _ p2: Float, _ u: Float) -> Float {
+                let v = 1 - u
+                return v * v * v * p1 + 3 * v * v * u * h1 + 3 * v * u * u * h2 + u * u * u * p2
+            }
+            let mid = span / 2, start = Float(a.time), end = Float(b.time)
+            let h1 = start + a.x * mid, h2 = end - a.y * mid
+            var lo: Float = 0, hi: Float = 1
+            for _ in 0..<24 {
+                let m = (lo + hi) / 2
+                if bezier(start, h1, h2, end, m) < t { lo = m } else { hi = m }
+            }
+            return va + (vb - va) * bezier(0, 0, 1, 1, (lo + hi) / 2)
+        }
         let f2 = f * f, f3 = f2 * f
         let h00 = 2 * f3 - 3 * f2 + 1, h10 = f3 - 2 * f2 + f, h01 = -2 * f3 + 3 * f2, h11 = f3 - f2
         let before: Float? = i >= 2 ? Float(a.time - keys[i - 2].time) : nil

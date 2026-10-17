@@ -249,12 +249,103 @@ struct PreviewMenu: View {
                 }
                 .opacity(scene.fog ? 1 : 0.4)
                 .allowsHitTesting(scene.fog)
+                row("Light Power") {
+                    NumberField(label: nil, value: Double(scene.lightIntensity), step: 0.1, digits: 1, onLive: { v in app.setScene { $0.lightIntensity = Float(v) } },
+                                onCommit: { _, next in app.setScene { $0.lightIntensity = Float(next) } })
+                }
+                .help("How bright the effect's Point and Directional Lights make the floor and the loaded model. The game's level depends on the zone's exposure; 4 matches the reference previewer")
+                CheckBox(isOn: scene.toneMap, label: "Scene Tone Map") { on in app.setScene { $0.toneMap = on } }
+                    .help("The floor and the loaded model go through the game's tone curve (colour × (1 − e^−Y) / Y by luminance Y); particles skip it, as in the game")
+                row("Exposure") {
+                    NumberField(label: nil, value: Double(scene.exposure), suffix: " EV", step: 0.05, digits: 2, onLive: { v in app.setScene { $0.exposure = Float(v) } },
+                                onCommit: { _, next in app.setScene { $0.exposure = Float(next) } })
+                }
+                .opacity(scene.toneMap ? 1 : 0.4)
+                .allowsHitTesting(scene.toneMap)
                 Text("Stand-ins for the zone: Brightness drives Apply Tone Map, Environment and Sunlight the Apply Rate values, Fog the Apply Fog and Global Fog settings. The game takes them from the area the effect plays in.")
                     .font(Theme.small).foregroundStyle(Theme.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)
             .frame(width: 290)
+            .background(Theme.panel)
+            .preferredColorScheme(Theme.scheme)
+        }
+    }
+}
+
+struct StageMenu: View {
+    @EnvironmentObject var app: AppModel
+    @State private var shown = false
+
+    private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).frame(width: 82, alignment: .trailing)
+            content()
+        }
+    }
+
+    private func number(_ value: Float, _ suffix: String, _ step: Double, _ set: @escaping (inout PreviewStage, Float) -> Void) -> some View {
+        NumberField(label: nil, value: Double(value), suffix: suffix, step: step, digits: 1, onLive: { v in app.setStage { set(&$0, Float(v)) } },
+                    onCommit: { _, next in app.setStage { set(&$0, Float(next)) } })
+    }
+
+    @ViewBuilder private func mover(_ title: String, _ path: WritableKeyPath<PreviewStage, StageMover>) -> some View {
+        let m = AvfxSimulation.stage[keyPath: path]
+        Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+        row("Motion") {
+            ChoiceField(choices: StageMover.Motion.allCases.map { FieldChoice(name: $0.title, value: $0.rawValue) }, value: m.motion.rawValue) { value in
+                app.setStage { $0[keyPath: path].motion = StageMover.Motion(rawValue: value) ?? .still }
+            }
+        }
+        Group {
+            row("Distance") { number(m.amplitude, " m", 0.1) { $0[keyPath: path].amplitude = $1 } }
+            row("Period") { number(m.period, " s", 0.1) { $0[keyPath: path].period = $1 } }
+        }
+        .opacity(m.motion == .still ? 0.4 : 1)
+        .allowsHitTesting(m.motion != .still)
+        CheckBox(isOn: m.jump, label: "Jump") { on in app.setStage { $0[keyPath: path].jump = on } }
+        Group {
+            row("Jump Height") { number(m.jumpHeight, " m", 0.1) { $0[keyPath: path].jumpHeight = $1 } }
+            row("Jump Period") { number(m.jumpPeriod, " s", 0.1) { $0[keyPath: path].jumpPeriod = $1 } }
+        }
+        .opacity(m.jump ? 1 : 0.4)
+        .allowsHitTesting(m.jump)
+    }
+
+    var body: some View {
+        let stage = AvfxSimulation.stage
+        let moving = stage.caster.motion != .still || stage.target.motion != .still || stage.caster.jump || stage.target.jump
+        HStack(spacing: 4) {
+            Image(systemName: "figure.stand").font(.system(size: 10))
+            Text(moving ? "Stage · Moving" : "Stage").font(Theme.font)
+        }
+        .foregroundStyle(Theme.text)
+        .padding(.horizontal, 7)
+        .frame(height: 20)
+        .background(RoundedRectangle(cornerRadius: 4).fill(shown || moving ? Theme.accent : Theme.gray(0.22)))
+        .contentShape(Rectangle())
+        .pressable { shown.toggle() }
+        .help("Caster and target the effect binds to: where the target stands and how both move on the effect's clock")
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Target").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+                CheckBox(isOn: stage.showTarget, label: "Show Target") { on in app.setStage { $0.showTarget = on } }
+                row("Distance") { number(stage.distance, " m", 0.1) { $0.distance = $1 } }
+                row("Side") { number(stage.side, " m", 0.1) { $0.side = $1 } }
+                CheckBox(isOn: stage.faceEachOther, label: "Face Each Other") { on in app.setStage { $0.faceEachOther = on } }
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                mover("Caster Motion", \.caster)
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                mover("Target Motion", \.target)
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                SegmentButton(title: "Reset Stage", active: false) { app.setStage { $0 = PreviewStage() } }
+                Text("Motion runs on the effect's clock, so it restarts with the effect and pauses with it. Binders on the caster or the target follow them, springs and Coordinate Update Frame included.")
+                    .font(Theme.small).foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .frame(width: 280)
             .background(Theme.panel)
             .preferredColorScheme(Theme.scheme)
         }
@@ -434,6 +525,7 @@ struct ViewportPanel: View {
                 if scene.showEffect {
                     HelpBadge(text: "Drag: orbit\n⇧ Drag or right drag: pan\nScroll: orbit on a trackpad, zoom with a mouse wheel\nPinch or ⌘ Scroll: zoom\n1 / 3 / 7: front, right, top\n. : frame all")
                     PreviewMenu()
+                    StageMenu()
                     GizmoMenu()
                     isolateButton
                     shadingButtons

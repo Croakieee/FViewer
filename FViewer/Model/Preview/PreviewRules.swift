@@ -42,7 +42,7 @@ enum PreviewRules {
         ("lineGradient", "Line colour along length", "Line particles blend Color Begin and Color End along their length."),
         ("cullingWinding", "Culling by D3D winding", "Front and Back culling follow the game's clockwise front faces."),
         ("postEffects", "Screen effectors", "Radial, directional and Gaussian blur and chromatic aberration effectors change the whole picture."),
-        ("cameraQuake", "Camera quake", "Camera Quake effectors shake the view while they are in reach."),
+        ("cameraQuake", "Camera quake", "Camera Quake moves the view as measured in the game: Position is a shift in metres along the camera's axes (X right, Y up, Z back), Rotation a turn in radians (X tilts up, Y turns left, Z rolls); the random part stays the same for the whole effector. Within Radius In of the effector's emitter the shake is full, farther out it falls to ((Radius Out − Radius In − d) / (Radius Out − Radius In)) ^ Attenuation."),
         ("emitterMarkers", "Emitter shapes", "The selected emitter shows its shape and its create points."),
         ("bindPointNumbers", "Bind point numbers", "Bind points of the loaded skeleton show their numbers."),
         ("loopEffectors", "Effector loop", "Effectors repeat between Loop Start and Loop End until the effect is released."),
@@ -124,7 +124,7 @@ enum PreviewRules {
         ("polylineChain", "Polyline trail chain", "A Position History trail is a chain of Point Count points: every half frame point i moves 1 − Softness × i / (Point Count − 1) of the way to where point i − 1 was. Softness 0 is a plain history, 1 keeps the tail at the birth point."),
         ("polylineConnectTarget", "Polyline connect target", "An Axis Order polyline with Connect Target runs straight from the particle to the target (with Reverse to the caster), or to the goal / start of its emitter's Linear binder."),
         ("polylineVFromHead", "Polyline texture from the head", "The texture runs along a polyline from its head (the particle, v 0) to its tail."),
-        ("binderTarget", "Target 6 m ahead", "Binders and bind points set to Target sit on a target 6 m in front of the caster, with named bind points at the caster's offsets."),
+        ("binderTarget", "Target mannequin", "Binders and bind points set to Target sit on the target mannequin of Viewport → Stage (6 m ahead by default, facing the caster), with named bind points at the caster's offsets; off, they stay at the origin."),
         ("binderLinearPath", "Binder path to the goal", "Linear, Spline and Linear Adjust binders move from their start point to their goal point by the Carry Over Factor curve over the binder's time."),
         ("childEmitterItemProps", "Item settings on child emitters", "Create Probability, the parent's Child Limit, Override Life, Influence on Child Color, Initial Position and Start Frame act on child emitters as on particles. Without Start Frame Null Update the child starts that many frames in."),
         ("injectionAngleChildEmitters", "Injection angle on child emitters", "By Injection Angle turns the k-th child emitter an item creates by k × the angle about the parent's origin."),
@@ -177,6 +177,8 @@ enum PreviewRules {
         ("movementParticle", "Movement particle hidden", "Quads with Is Movement Particle are support particles for a Directional Blur and are not drawn."),
         ("inGameLight", "Game light on lit particles", "Lit particles in an effect with Directional Light Source In Game take the viewer's own scene light, the one that shades the floor and the model."),
         ("releasedEndlessEnd", "Released endless particles end", "Once released, a particle with endless life ends together with the emitter that made it. While held it stays. Inferred from game files, not checked in the game."),
+        ("splineKeyTangents", "Spline keys as measured", "Spline segments are Hermite curves whose slopes come from the neighbouring keys (X weighs the change to the next key, Y the change from the previous one), as measured in the game. Off: they follow the VFXEditor graph instead — Bézier handles moved along time only by the key's X and Y, so every segment eases in and out — for comparing with what VFXEditor draws."),
+        ("effectorCoordOrder", "Effector compute order", "An effector's Coordinate Compute Order (CCOT) orders its own translation and rotation as for particles: a Point Light whose order translates before it rotates has its Position turned by its Rotation; a Camera Quake applies its shift and turn in that order. Non-zero in 9 of ~5 000 effectors in the game data."),
         ("pointLightShadows", "Point light shadows", "A Point Light with Enable Shadow (bSdw) and Enable Char Shadow (bChS) casts the loaded reference model's shadow onto the floor and the model, between Create Distance Near and Far (SCDN, SCDF) from the light. bChS and bMpS are on in almost every light in the game data, bSdw in about 2 %, so bSdw is taken as the switch."),
         ("sceneToneMap", "Scene tone map", "Apply Tone Map (bATM) scales the particle's colour by 1 / √(scene brightness), the exposure term read from the game's particle shader (rgb × lerp(1, 1/√lerp(1, L, a), bATM), L the mean brightness of the frame); the brightness comes from Preview → Scene."),
         ("sceneLightRates", "Scene light rates", "Apply Rate Environment (EvAR) and Apply Rate Directional (DlAR) tint the particle by that share of the scene's environment and sun colours from Preview → Scene (white leaves it unchanged)."),
@@ -201,6 +203,7 @@ enum PreviewRules {
         var periodicCurves = true
         var randomTypeOnRandom = true
         var colorRandom = true
+        var splineKeyTangents = true
     }
 
     private static var hotToken = -1
@@ -210,7 +213,8 @@ enum PreviewRules {
         if hotToken != token {
             hotValues = Hot(stepKeyOnArrival: isOn("stepKeyOnArrival"), randomAlwaysPerFrame: isOn("randomAlwaysPerFrame"),
                             axisConnectRandom: isOn("axisConnectRandom"), periodicCurves: isOn("periodicCurves"),
-                            randomTypeOnRandom: isOn("randomTypeOnRandom"), colorRandom: isOn("colorRandom"))
+                            randomTypeOnRandom: isOn("randomTypeOnRandom"), colorRandom: isOn("colorRandom"),
+                            splineKeyTangents: isOn("splineKeyTangents"))
             hotToken = token
         }
         return hotValues

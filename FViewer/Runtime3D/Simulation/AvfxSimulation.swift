@@ -851,24 +851,28 @@ final class AvfxSimulation {
             }
         }
         var object = bindPoint(onTarget: binder.bindPoint == 1, targetPoint: binder.bindTargetPoint, id: binder.bindPointId)
-        if !binder.followTargetOrientation, PreviewRules.isOn("binderFollowTargetOrientation") { object = Math3D.translation(Math3D.position(object)) }
+        if !binder.followTargetOrientation, PreviewRules.isOn("binderFollowTargetOrientation") {
+            let inner = object
+            object = { Math3D.translation(Math3D.position(inner())) }
+        }
         if let goal = binder.goal, let carry = binder.carryOver, [1, 2, 4].contains(binder.type), PreviewRules.isOn("binderLinearPath") {
-            let from = Math3D.position(object)
-            let to = Math3D.position(bindPoint(onTarget: goal.bindPoint == 1, targetPoint: goal.targetPoint, id: goal.id))
-            let turn = Math3D.decompose(object).rotation
-            let path = binder.type == 2 && PreviewRules.isOn("splineBinderRings") ? splinePath(from, to, binder, carry) : nil
+            let source = object
+            let goalPoint = bindPoint(onTarget: goal.bindPoint == 1, targetPoint: goal.targetPoint, id: goal.id)
+            let turn = Math3D.decompose(source()).rotation
+            let path = binder.type == 2 && PreviewRules.isOn("splineBinderRings") ? splinePath(binder, carry) : nil
             let start = time
             return { [weak self] in
+                let from = Math3D.position(source()), to = Math3D.position(goalPoint())
                 let k = Eval.curve(carry, CurveTime((self?.time ?? start) - start), 0)
-                let at = path?(k) ?? from + (to - from) * k
+                let at = path?(from, to, k) ?? from + (to - from) * k
                 return Math3D.compose(at, turn, Vec3(1, 1, 1)) * revised
             }
         }
         if (1...4).contains(binder.rotationType), PreviewRules.isOn("binderRotationType") {
             let kind = binder.rotationType, place = object
             return { [weak self] in
-                guard let self else { return place * revised }
-                let at = Math3D.position(place)
+                guard let self else { return place() * revised }
+                let at = Math3D.position(place())
                 let facing: simd_quatf
                 switch kind {
                 case 1: facing = self.cameraRotation ?? simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
@@ -881,42 +885,46 @@ final class AvfxSimulation {
                 return Math3D.compose(at, facing, Vec3(1, 1, 1)) * revised
             }
         }
-        let result = object * revised
-        guard PreviewRules.isOn("binderOffset") else { return { result } }
-        let offset = binder.offset
-        guard offset.x != nil || offset.y != nil || offset.z != nil else { return { result } }
         let base = object
+        let offset = binder.offset
+        guard PreviewRules.isOn("binderOffset"), offset.x != nil || offset.y != nil || offset.z != nil else { return { base() * revised } }
         return { [weak self] in
             let at = CurveTime(self?.time ?? 0)
-            return base * Math3D.translation(Vec3(Eval.curve(offset.x, at), Eval.curve(offset.y, at), Eval.curve(offset.z, at))) * revised
+            return base() * Math3D.translation(Vec3(Eval.curve(offset.x, at), Eval.curve(offset.y, at), Eval.curve(offset.z, at))) * revised
         }
     }
 
-    private func splinePath(_ from: Vec3, _ to: Vec3, _ binder: RBinder, _ carry: RCurve) -> ((Float) -> Vec3)? {
+    private func splinePath(_ binder: RBinder, _ carry: RCurve) -> ((Vec3, Vec3, Float) -> Vec3)? {
         guard !binder.rings.isEmpty else { return nil }
-        var flat = to - from
-        flat.y = 0
-        let forward = simd_length_squared(flat) > 1e-8 ? simd_normalize(flat) : Vec3(0, 0, 1)
-        let up = Vec3(0, 1, 0), side = simd_normalize(simd_cross(up, forward))
-        var points = [from], knots: [Float] = [0]
+        var jitters: [Vec3] = []
+        var knots: [Float] = [0]
         for ring in binder.rings {
             var jitter = Vec3.zero
             if ring.radius > 0 {
                 let a = random.next() * 2 * .pi, b = acos(random.next() * 2 - 1), r = ring.radius * cbrt(random.next())
                 jitter = Vec3(sin(b) * cos(a), cos(b), sin(b) * sin(a)) * r
             }
-            points.append(from + (to - from) * ring.position.z + side * ring.position.x + up * ring.position.y + jitter)
+            jitters.append(jitter)
             knots.append(Eval.curve(carry, CurveTime(Float(ring.time)), 0))
         }
-        points.append(to)
         knots.append(1)
-        if zip(knots, knots.dropFirst()).contains(where: { $0 >= $1 }) { knots = (0..<points.count).map { Float($0) / Float(points.count - 1) } }
-        let n = points.count
-        func tangent(_ i: Int) -> Vec3 {
-            let a = max(0, i - 1), b = min(n - 1, i + 1)
-            return (points[b] - points[a]) / max(1e-5, knots[b] - knots[a])
-        }
-        return { u in
+        if zip(knots, knots.dropFirst()).contains(where: { $0 >= $1 }) { knots = (0..<knots.count).map { Float($0) / Float(knots.count - 1) } }
+        let rings = binder.rings
+        return { from, to, u in
+            var flat = to - from
+            flat.y = 0
+            let forward = simd_length_squared(flat) > 1e-8 ? simd_normalize(flat) : Vec3(0, 0, 1)
+            let up = Vec3(0, 1, 0), side = simd_normalize(simd_cross(up, forward))
+            var points = [from]
+            for (ring, jitter) in zip(rings, jitters) {
+                points.append(from + (to - from) * ring.position.z + side * ring.position.x + up * ring.position.y + jitter)
+            }
+            points.append(to)
+            let n = points.count
+            func tangent(_ i: Int) -> Vec3 {
+                let a = max(0, i - 1), b = min(n - 1, i + 1)
+                return (points[b] - points[a]) / max(1e-5, knots[b] - knots[a])
+            }
             if u <= knots[0] { return points[0] + tangent(0) * (u - knots[0]) }
             if u >= knots[n - 1] { return points[n - 1] + tangent(n - 1) * (u - knots[n - 1]) }
             var i = 0
@@ -928,24 +936,33 @@ final class AvfxSimulation {
         }
     }
 
-    static var targetPosition = Vec3(0, 0, 6)
+    static var stage = PreviewStage()
 
-    private func bindPoint(onTarget: Bool, targetPoint: Int, id: Int) -> Mat4 {
-        var m = onTarget && PreviewRules.isOn("binderTarget")
-            ? Math3D.compose(AvfxSimulation.targetPosition, simd_quatf(angle: .pi, axis: Vec3(0, 1, 0)), Vec3(1, 1, 1)) : matrix_identity_float4x4
-        if useBindPoints, targetPoint == 3, let point = AvfxSimulation.bindPoints[id] { m = m * Math3D.translation(point) }
-        return m
+    var stagePlaces: (caster: Mat4, target: Mat4) {
+        let places = AvfxSimulation.stage.places(at: time / 30)
+        return (places.caster, PreviewRules.isOn("binderTarget") ? places.target : matrix_identity_float4x4)
+    }
+
+    private func bindPoint(onTarget: Bool, targetPoint: Int, id: Int) -> () -> Mat4 {
+        let point = useBindPoints && targetPoint == 3 ? AvfxSimulation.bindPoints[id] : nil
+        return { [weak self] in
+            guard let self else { return matrix_identity_float4x4 }
+            let places = self.stagePlaces
+            let base = onTarget ? places.target : places.caster
+            return point.map { base * Math3D.translation($0) } ?? base
+        }
     }
 
     private var guides: [Int: [Vec3]] = [:]
 
     private func weaponLine(_ type: Int) -> (base: Vec3, tip: Vec3) {
         let points = AvfxSimulation.bindPoints
+        let caster = stagePlaces.caster
         let base = points[3] ?? Vec3(0.3, 0.85, 0.1), tip = points[5] ?? Vec3(0.3, 1.6, 0.1)
-        guard type == 1 else { return (base, tip) }
+        guard type == 1 else { return (Math3D.point(caster, base), Math3D.point(caster, tip)) }
         let hand = points[78] ?? Vec3(-base.x, base.y, base.z)
         let reach = tip - base
-        return (hand, hand + Vec3(-reach.x, reach.y, reach.z))
+        return (Math3D.point(caster, hand), Math3D.point(caster, hand + Vec3(-reach.x, reach.y, reach.z)))
     }
 
     private func connectEnd(_ e: EmitterInstance, reverse: Bool) -> Vec3 {
@@ -954,11 +971,12 @@ final class AvfxSimulation {
         if root.binder >= 0, root.binder < schema.binders.count, PreviewRules.isOn("binderLinearPath") {
             let b = schema.binders[root.binder]
             if let goal = b.goal, [1, 2, 4].contains(b.type) {
-                return Math3D.position(reverse ? bindPoint(onTarget: b.bindPoint == 1, targetPoint: b.bindTargetPoint, id: b.bindPointId)
-                                       : bindPoint(onTarget: goal.bindPoint == 1, targetPoint: goal.targetPoint, id: goal.id))
+                return Math3D.position(reverse ? bindPoint(onTarget: b.bindPoint == 1, targetPoint: b.bindTargetPoint, id: b.bindPointId)()
+                                       : bindPoint(onTarget: goal.bindPoint == 1, targetPoint: goal.targetPoint, id: goal.id)())
             }
         }
-        return reverse || !PreviewRules.isOn("binderTarget") ? .zero : AvfxSimulation.targetPosition
+        let places = stagePlaces
+        return Math3D.position(reverse ? places.caster : places.target)
     }
 
     private func points(for model: Int) -> [EmitPoint] {
@@ -1551,9 +1569,9 @@ final class AvfxSimulation {
         return age
     }
 
-    func screenEffects(camera: Vec3, filter: VisibilityFilter = VisibilityFilter()) -> (effects: [ScreenEffect], quake: Float, phase: Float) {
+    func screenEffects(camera: Vec3, filter: VisibilityFilter = VisibilityFilter()) -> (effects: [ScreenEffect], quake: (shift: Vec3, turn: Vec3, order: Int)) {
         var effects: [ScreenEffect] = []
-        var quake: Float = 0, phase: Float = 0
+        var quake = (shift: Vec3.zero, turn: Vec3.zero, order: 0)
         let endsWithEmitter = PreviewRules.isOn("effectorEndsWithEmitter")
         for e in emitters where e.alive || !endsWithEmitter {
             guard let index = effectorIndex(e) else { continue }
@@ -1594,19 +1612,22 @@ final class AvfxSimulation {
                 effects.append(effect)
             case 6, 9:
                 guard PreviewRules.isOn("cameraQuake") else { continue }
-                let position = Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1))
-                let reach = simd_length(camera - position)
+                let reach = simd_length(camera - Math3D.position(e.world))
                 let near = Eval.curve(effector.quakeIn, t, 0), far = Eval.curve(effector.quakeOut, t, 0)
-                var amount = abs(Eval.curve(effector.quake, t, 0)) * fade(e.dying)
-                if far > near { amount *= 1 - min(max((reach - near) / (far - near), 0), 1) } else if far > 0, reach > far { amount = 0 }
-                if amount > quake {
-                    quake = amount
-                    phase = e.age
+                var share: Float = 1
+                if reach > near {
+                    let span = far - near
+                    share = span > 0 ? pow(min(max((span - reach) / span, 0), 1), max(Eval.curve(effector.quake, t, 1), 0)) : 0
                 }
+                share *= fade(e.dying)
+                guard share > 0 else { continue }
+                quake.shift += Eval.axes(effector.position, t, 0, e.seed, 1) * share
+                if let rotation = effector.rotation { quake.turn += Eval.axes(rotation, t, 0, e.seed, 4) * share }
+                if PreviewRules.isOn("effectorCoordOrder") { quake.order = effector.coordOrder }
             default: continue
             }
         }
-        return (effects, quake, phase)
+        return (effects, quake)
     }
 
     func lights(filter: VisibilityFilter = VisibilityFilter()) -> [LightDraw] {
@@ -1635,7 +1656,13 @@ final class AvfxSimulation {
             }
             let maxAttenuation = effector.attenuation >= 3 && PreviewRules.isOn("pointLightMax")
             let scaleDistance = Eval.curve(effector.distance, t, 0)
-            result.append(LightDraw(position: Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1)),
+            let shift = Eval.axes(effector.position, t, 0, e.seed, 1)
+            var place = shift
+            if effector.coordOrder != 0, let rotation = effector.rotation, PreviewRules.isOn("effectorCoordOrder") {
+                place = Math3D.position(Math3D.compose(shift, Math3D.euler(Eval.axes(rotation, t, 0, e.seed, 4), order: effector.rotationOrder), Vec3(1, 1, 1),
+                                                       order: effector.coordOrder))
+            }
+            result.append(LightDraw(position: Math3D.point(e.world, place),
                                     color: Vec3(color.x, color.y, color.z) / peak * strength, distance: scaleDistance,
                                     decay: maxAttenuation ? 0 : Float(effector.attenuation + 1),
                                     reach: scaleDistance > 0 ? max(0, Eval.curve(effector.color.bri, t, 1)) / scaleDistance : 1e6, point: true,
@@ -1692,7 +1719,11 @@ final class AvfxSimulation {
     }
 
     var usedBindPoints: [Vec3] {
-        schema.binders.compactMap { $0.bindTargetPoint == 3 ? AvfxSimulation.bindPoints[$0.bindPointId] : nil }
+        let places = stagePlaces
+        return schema.binders.compactMap { binder in
+            guard binder.bindTargetPoint == 3, let point = AvfxSimulation.bindPoints[binder.bindPointId] else { return nil }
+            return Math3D.point(binder.bindPoint == 1 ? places.target : places.caster, point)
+        }
     }
 
     private var recording = true
@@ -2055,7 +2086,7 @@ final class AvfxSimulation {
             }
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
-            var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? matrix_identity_float4x4 : m, color: color)
+            var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? stagePlaces.caster : m, color: color)
             if projected {
                 draw.decal = (decalInfo, m.inverse, groundY)
                 let reach = max(1, 2 * decalInfo.z)

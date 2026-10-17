@@ -77,6 +77,7 @@ private struct Uniforms {
     var dissolveInfo = SIMD4<Float>(0, 0, 0, 0)
     var dissolveBands: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero)
     var shadow = SIMD4<Float>(-1, 0, 0, 0)
+    var look = SIMD4<Float>(0, 1, 4 / Float.pi, 0)
     var shadowFaces: (simd_float4x4, simd_float4x4, simd_float4x4, simd_float4x4, simd_float4x4, simd_float4x4) =
         (matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4)
 }
@@ -184,7 +185,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     static var referenceParts: [(start: Int, count: Int, texture: DecodedTexture?)] = []
     private var postSource: MTLTexture?
     private var postSampler: MTLSamplerState?
-    private var quake: (amount: Float, phase: Float) = (0, 0)
+    private var quake = (shift: Vec3.zero, turn: Vec3.zero, order: 0)
     private var sceneDepth: MTLTexture?
     weak var document: EffectDocument?
     weak var app: AppModel?
@@ -302,7 +303,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     }
 
     private func overlayItems() -> [DrawItem] {
-        guard let simulation = player?.simulation, showEmitters || showBindPoints else { return [] }
+        guard let simulation = player?.simulation, showEmitters || showBindPoints || AvfxSimulation.stage.showTarget else { return [] }
         var lines: [(SIMD3<Float>, SIMD4<Float>)] = []
         var points: [MeshVertex] = []
         if showEmitters, PreviewRules.isOn("emitterMarkers") {
@@ -321,6 +322,30 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        let places = simulation.stagePlaces
+        let caster = places.caster
+        if showBindPoints || AvfxSimulation.stage.showTarget {
+            let body = SIMD4<Float>(1, 1, 1, 0.35)
+            var figures: [Mat4] = []
+            if showBindPoints && AvfxSimulation.skeletonLines.isEmpty { figures.append(caster) }
+            if AvfxSimulation.stage.showTarget { figures.append(AvfxSimulation.stage.places(at: simulation.time / 30).target) }
+            let figure: [(SIMD3<Float>, SIMD3<Float>)] = [
+                (SIMD3(0, 0, 0), SIMD3(0, 1.45, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(0.2, 1.42, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(-0.33, 0.78, 0)),
+                (SIMD3(0.2, 1.42, 0), SIMD3(0.33, 0.78, 0)), (SIMD3(-0.1, 0.95, 0), SIMD3(-0.1, 0, 0)), (SIMD3(0.1, 0.95, 0), SIMD3(0.1, 0, 0)),
+                (SIMD3(-0.1, 0.95, 0), SIMD3(0.1, 0.95, 0)), (SIMD3(0, 1.6, 0.13), SIMD3(0, 1.6, 0.3)),
+            ]
+            for place in figures {
+                for segment in figure {
+                    lines.append((Math3D.point(place, segment.0), body))
+                    lines.append((Math3D.point(place, segment.1), body))
+                }
+                for i in 0..<16 {
+                    let a = Float(i) / 16 * 2 * .pi, b = Float(i + 1) / 16 * 2 * .pi
+                    lines.append((Math3D.point(place, SIMD3(cos(a) * 0.12, 1.6 + sin(a) * 0.13, 0)), body))
+                    lines.append((Math3D.point(place, SIMD3(cos(b) * 0.12, 1.6 + sin(b) * 0.13, 0)), body))
+                }
+            }
+        }
         if showBindPoints {
             let color = SIMD4<Float>(1, 0.63, 0.16, 1)
             for point in simulation.usedBindPoints {
@@ -334,7 +359,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             let right = simd_normalize(simd_cross(SIMD3<Float>(0, 1, 0), forward))
             let up = simd_cross(forward, right)
             let glyph = max(0.012, camera.distance * 0.004)
-            for (id, point) in AvfxSimulation.bindPoints {
+            for (id, local) in AvfxSimulation.bindPoints {
+                let point = Math3D.point(caster, local)
                 let tint: SIMD4<Float> = used.contains(id) ? SIMD4(1, 0.63, 0.16, 1) : SIMD4(1, 1, 1, 0.3)
                 if !used.contains(id) {
                     lines.append((point - right * glyph * 0.6, tint))
@@ -350,30 +376,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 }
             }
             for segment in AvfxSimulation.physicsLines {
-                lines.append((segment.0, SIMD4(0.3, 0.85, 1, 0.8)))
-                lines.append((segment.1, SIMD4(0.3, 0.85, 1, 0.8)))
+                lines.append((Math3D.point(caster, segment.0), SIMD4(0.3, 0.85, 1, 0.8)))
+                lines.append((Math3D.point(caster, segment.1), SIMD4(0.3, 0.85, 1, 0.8)))
             }
-            let body = SIMD4<Float>(1, 1, 1, 0.35)
-            if !AvfxSimulation.skeletonLines.isEmpty {
-                for segment in AvfxSimulation.skeletonLines {
-                    lines.append((segment.0, body))
-                    lines.append((segment.1, body))
-                }
-            } else {
-                let figure: [(SIMD3<Float>, SIMD3<Float>)] = [
-                    (SIMD3(0, 0, 0), SIMD3(0, 1.45, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(0.2, 1.42, 0)), (SIMD3(-0.2, 1.42, 0), SIMD3(-0.33, 0.78, 0)),
-                    (SIMD3(0.2, 1.42, 0), SIMD3(0.33, 0.78, 0)), (SIMD3(-0.1, 0.95, 0), SIMD3(-0.1, 0, 0)), (SIMD3(0.1, 0.95, 0), SIMD3(0.1, 0, 0)),
-                    (SIMD3(-0.1, 0.95, 0), SIMD3(0.1, 0.95, 0)),
-                ]
-                for segment in figure {
-                    lines.append((segment.0, body))
-                    lines.append((segment.1, body))
-                }
-                for i in 0..<16 {
-                    let a = Float(i) / 16 * 2 * .pi, b = Float(i + 1) / 16 * 2 * .pi
-                    lines.append((SIMD3(cos(a) * 0.12, 1.6 + sin(a) * 0.13, 0), body))
-                    lines.append((SIMD3(cos(b) * 0.12, 1.6 + sin(b) * 0.13, 0), body))
-                }
+            for segment in AvfxSimulation.skeletonLines {
+                lines.append((Math3D.point(caster, segment.0), SIMD4(1, 1, 1, 0.35)))
+                lines.append((Math3D.point(caster, segment.1), SIMD4(1, 1, 1, 0.35)))
             }
         }
         var items: [DrawItem] = []
@@ -434,6 +442,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         guard let shadowMap, let shadowDepth, let depthState else { return }
         let eye = lights[index].position
+        var model = player?.simulation?.stagePlaces.caster ?? matrix_identity_float4x4
         let projection = ViewportRenderer.perspective(fovY: .pi / 2, aspect: 1, near: 0.02, far: range.far + 1)
         let axes: [(SIMD3<Float>, SIMD3<Float>)] = [(SIMD3(1, 0, 0), SIMD3(0, 1, 0)), (SIMD3(-1, 0, 0), SIMD3(0, 1, 0)), (SIMD3(0, 1, 0), SIMD3(0, 0, 1)),
                                                     (SIMD3(0, -1, 0), SIMD3(0, 0, 1)), (SIMD3(0, 0, 1), SIMD3(0, 1, 0)), (SIMD3(0, 0, -1), SIMD3(0, 1, 0))]
@@ -458,6 +467,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             var light = SIMD4<Float>(eye.x, eye.y, eye.z, 0)
             encoder.setFragmentBytes(&light, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
             encoder.setVertexBytes(&face, length: MemoryLayout<simd_float4x4>.stride, index: 1)
+            encoder.setVertexBytes(&model, length: MemoryLayout<simd_float4x4>.stride, index: 2)
             for item in reference {
                 guard let indices = item.indices else { continue }
                 encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
@@ -793,7 +803,9 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         guard showEffect, size.width > 1, size.height > 1, let document, document.format == .avfx, let simulation = player?.simulation else { return }
         if showBindPoints, let selected = document.selectionID, selected.hasPrefix("avfx/Bind/"), let node = document.node(selected) {
             var best: (id: Int, distance: CGFloat)?
-            for (id, world) in AvfxSimulation.bindPoints {
+            let caster = simulation.stagePlaces.caster
+            for (id, local) in AvfxSimulation.bindPoints {
+                let world = Math3D.point(caster, local)
                 let clip = lastViewProjection * SIMD4<Float>(world.x, world.y, world.z, 1)
                 guard clip.w > 1e-5 else { continue }
                 let screen = CGPoint(x: CGFloat((clip.x / clip.w) * 0.5 + 0.5) * size.width, y: CGFloat((clip.y / clip.w) * 0.5 + 0.5) * size.height)
@@ -867,11 +879,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             ? ViewportRenderer.orthographic(height: 2 * camera.distance * tan(camera.fov / 2), aspect: aspect, near: near, far: 2000)
             : ViewportRenderer.perspective(fovY: camera.fov, aspect: aspect, near: near, far: 2000)
         var viewMatrix = ViewportRenderer.lookAt(eye: camera.eye, target: camera.target, up: SIMD3(0, 1, 0))
-        if quake.amount > 0 {
-            let reach = min(quake.amount, 4) * camera.distance * 0.012
-            var shake = matrix_identity_float4x4
-            shake.columns.3 = SIMD4(sin(quake.phase * 2.9) * reach, sin(quake.phase * 3.7 + 1.3) * reach, 0, 1)
-            viewMatrix = shake * viewMatrix
+        if quake.shift != .zero || quake.turn != .zero {
+            let turn = simd_quatf(angle: quake.turn.x, axis: Vec3(1, 0, 0)) * simd_quatf(angle: quake.turn.y, axis: Vec3(0, 1, 0))
+                * simd_quatf(angle: quake.turn.z, axis: Vec3(0, 0, 1))
+            viewMatrix = Math3D.compose(quake.shift, turn, Vec3(1, 1, 1), order: quake.order).inverse * viewMatrix
         }
         let viewProjection = projection * viewMatrix
         lastViewProjection = viewProjection
@@ -885,7 +896,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                                       fovY: camera.fov, viewportHeight: Float(view.drawableSize.height))
         let effect = effectDraws(elapsed: elapsed, camera: cameraState)
         let screen = effect != nil ? player?.simulation?.screenEffects(camera: camera.eye, filter: filter) : nil
-        quake = (screen?.quake ?? 0, screen?.phase ?? 0)
+        quake = PreviewRules.isOn("cameraQuake") ? screen?.quake ?? (.zero, .zero, 0) : (.zero, .zero, 0)
         let lights = Array((effect != nil ? player?.simulation?.lights(filter: filter) : nil ?? []) ?? []).prefix(4)
         let split = effect.map { particleRenderer?.needsScene($0.particles) ?? false } ?? false
         let waited = inFlight.wait(timeout: .now() + 0.1) == .success
@@ -913,12 +924,13 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         encoder.setRenderPipelineState(pipeline)
         encoder.setFragmentSamplerState(sampler, index: 0)
         encoder.setFragmentTexture(white, index: 1)
+        encoder.setFragmentTexture(noShadow, index: 2)
         encoder.setCullMode(.none)
         func lit(_ uniforms: inout Uniforms) {
             var positions = [SIMD4<Float>](repeating: .zero, count: 4), colors = [SIMD4<Float>](repeating: .zero, count: 4)
             for (i, light) in lights.enumerated() {
                 positions[i] = SIMD4(light.position.x, light.position.y, light.position.z, light.decay)
-                colors[i] = SIMD4(light.color.x, light.color.y, light.color.z, light.distance)
+                colors[i] = SIMD4(light.color.x, light.color.y, light.color.z, light.point ? light.reach : -1)
             }
             uniforms.lightPosition = (positions[0], positions[1], positions[2], positions[3])
             uniforms.lightColor = (colors[0], colors[1], colors[2], colors[3])
@@ -957,11 +969,14 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         let dissolving = effect != nil && PreviewRules.isOn("dissolve") ? player?.simulation?.dissolve(filter: filter) : nil
         let dissolveMap = dissolving.flatMap { $0.texture >= 0 ? particleRenderer?.textureProvider($0.texture)?.texture : nil }
+        let stage = player?.simulation?.stagePlaces ?? (caster: matrix_identity_float4x4, target: matrix_identity_float4x4)
         for (pass, list) in [ground, grid, items, reference].enumerated() {
             for item in list {
-                var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
+                var uniforms = Uniforms(viewProjection: viewProjection, model: pass == 3 ? stage.caster : matrix_identity_float4x4, tint: item.tint,
                                         options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured || item.map != nil ? 1 : 0, item.pointSize, 0))
                 if item.lit { lit(&uniforms) }
+                let scene = ViewportRenderer.scene
+                uniforms.look = SIMD4(scene.toneMap && (pass == 0 || pass == 3) ? 1 : 0, pow(2, scene.exposure), scene.lightIntensity / .pi, 0)
                 if pass == 3, let dissolving, dissolveMap != nil || dissolving.shaped {
                     uniforms.dissolve = SIMD4(dissolving.amount, dissolving.edge, dissolving.reverse ? 1 : 0, 1)
                     uniforms.dissolveColor = SIMD4(dissolving.color.x, dissolving.color.y, dissolving.color.z, 0)
@@ -1015,15 +1030,16 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             particleRenderer.softDistance = player?.simulation?.schema.softFadeRange ?? 0.5
             particleRenderer.scene = ViewportRenderer.scene
             particleRenderer.globalFog = player?.simulation?.schema.globalFog ?? 0
-            particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: camera.eye,
+            particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: Math3D.position(viewMatrix.inverse),
                                   shading: effectShading)
             if !highlightDraws.isEmpty {
                 particleRenderer.drawHighlight(encoder, draws: highlightDraws, particles: effect.particles, view: viewMatrix, projection: projection,
-                                               camera: camera.eye, color: SIMD4(1.0, 0.5, 0.05, 1))
+                                               camera: Math3D.position(viewMatrix.inverse), color: SIMD4(1.0, 0.5, 0.05, 1))
             }
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentSamplerState(sampler, index: 0)
             encoder.setFragmentTexture(white, index: 1)
+            encoder.setFragmentTexture(noShadow, index: 2)
             encoder.setCullMode(.none)
             if !helpersOnTop { drawHelpers(encoder, viewProjection: viewProjection, depth: true) }
         }
@@ -1039,6 +1055,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 top.setRenderPipelineState(topPipeline)
                 top.setFragmentSamplerState(sampler, index: 0)
                 top.setFragmentTexture(white, index: 1)
+                top.setFragmentTexture(noShadow, index: 2)
                 top.setCullMode(.none)
                 drawHelpers(top, viewProjection: viewProjection, depth: false)
                 top.endEncoding()

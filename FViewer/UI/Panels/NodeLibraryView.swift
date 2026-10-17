@@ -394,6 +394,8 @@ struct HistoryView: View {
                 .padding(.horizontal, 6)
                 .frame(height: 20)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Theme.fieldDark))
+                HeaderButton(symbol: "camera", help: "Snapshot the viewport as the thumbnail of the open effect") { app.captureThumbnail() }
+                HeaderButton(symbol: "trash", help: "Clear the history (favourites and notes stay)") { app.clearHistory() }
                 HeaderButton(symbol: "folder", help: "Show the File Browser") { mode = 0 }
             }
             ScrollView {

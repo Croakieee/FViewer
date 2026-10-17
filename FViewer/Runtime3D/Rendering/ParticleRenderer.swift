@@ -50,6 +50,9 @@ struct PreviewScene: Equatable {
     var fogColor = Vec3(0.55, 0.6, 0.68)
     var fogStart: Float = 20
     var fogEnd: Float = 120
+    var toneMap = false
+    var exposure: Float = 0
+    var lightIntensity: Float = 4
 }
 
 struct LoadedTexture {

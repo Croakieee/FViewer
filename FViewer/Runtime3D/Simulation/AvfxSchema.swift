@@ -514,6 +514,7 @@ struct REffector {
     var singleSide = false
     var angleStrength: RCurve?
     var shadow: (near: Float, far: Float)?
+    var coordOrder = 0
 }
 
 struct REffectSchema {
@@ -827,6 +828,7 @@ enum AvfxSchemaReader {
                              fadeStart: data?.float("FSDc") ?? 0, fadeEnd: data?.float("FEDc") ?? 0,
                              rotation: curve3(data?.child("Rot")), power: curve(data?.child("Pow")))
         }
+        for (index, block) in root.childrenNamed("Efct").enumerated() where index < result.effectors.count { result.effectors[index].coordOrder = block.int("CCOT") }
         for (index, block) in root.childrenNamed("Efct").enumerated() where index < result.effectors.count && block.int("EfVT") == 0 {
             guard let data = block.child("Data"), data.bool("bSdw"), data.bool("bChS") else { continue }
             result.effectors[index].shadow = (max(data.float("SCDN", 0.5), 0.01), max(data.float("SCDF", 15), 0.1))
