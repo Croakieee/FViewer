@@ -73,6 +73,9 @@ private struct Uniforms {
     var dissolveColor = SIMD4<Float>(0, 0, 0, 0)
     var dissolveUv = SIMD4<Float>(1, 0, 0, 1)
     var dissolveOffset = SIMD4<Float>(0, 0, 0, 0)
+    var dissolveShape = matrix_identity_float4x4
+    var dissolveInfo = SIMD4<Float>(0, 0, 0, 0)
+    var dissolveBands: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero)
 }
 
 private struct DrawItem {
@@ -470,6 +473,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         var center: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
         var shape: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
         var count = SIMD4<Float>(0, 1, 0, 0)
+        var extra: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero, .zero)
     }
 
     private func drawHelpers(_ encoder: MTLRenderCommandEncoder, viewProjection: Mat4, depth: Bool) {
@@ -555,7 +559,10 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 let w = abs(clip.w) < 1e-5 ? 1e-5 : clip.w
                 let center = SIMD2(clip.x / w * 0.5 + 0.5, 0.5 - clip.y / w * 0.5)
                 values[index] = SIMD4(center.x, center.y, Float(effect.kind), clip.w > 0 ? effect.strength : 0)
-                if effect.kind == 7, radialMask {
+                values[9 + index] = effect.extra
+                if (effect.kind == 3 || effect.kind == 4) && effect.extra.w > 0.5 {
+                    values[4 + index] = SIMD4(min(max(effect.length, 0), 1) * 0.12, effect.inner, effect.outer, effect.gradation)
+                } else if effect.kind == 7, radialMask {
                     let gradation = PreviewRules.isOn("radialBlurGradation") && effect.inner <= 0 ? effect.gradation : 1
                     values[4 + index] = SIMD4(min(max(effect.length, 0), 1), effect.inner, effect.outer, gradation)
                 } else {
@@ -865,17 +872,20 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: item.count)
         }
         let dissolving = effect != nil && PreviewRules.isOn("dissolve") ? player?.simulation?.dissolve(filter: filter) : nil
-        let dissolveMap = dissolving.flatMap { particleRenderer?.textureProvider($0.texture)?.texture }
+        let dissolveMap = dissolving.flatMap { $0.texture >= 0 ? particleRenderer?.textureProvider($0.texture)?.texture : nil }
         for (pass, list) in [ground, grid, items, reference].enumerated() {
             for item in list {
                 var uniforms = Uniforms(viewProjection: viewProjection, model: matrix_identity_float4x4, tint: item.tint,
                                         options: SIMD4(item.lit && pass != 0 ? 1 : 0, item.textured || item.map != nil ? 1 : 0, item.pointSize, 0))
                 if item.lit { lit(&uniforms) }
-                if pass == 3, let dissolving, dissolveMap != nil {
+                if pass == 3, let dissolving, dissolveMap != nil || dissolving.shaped {
                     uniforms.dissolve = SIMD4(dissolving.amount, dissolving.edge, dissolving.reverse ? 1 : 0, 1)
                     uniforms.dissolveColor = SIMD4(dissolving.color.x, dissolving.color.y, dissolving.color.z, 0)
                     uniforms.dissolveUv = dissolving.uvMatrix
-                    uniforms.dissolveOffset = SIMD4(dissolving.uvOffset.x, dissolving.uvOffset.y, 0, 0)
+                    uniforms.dissolveOffset = SIMD4(dissolving.uvOffset.x, dissolving.uvOffset.y, dissolveMap != nil ? 1 : 0, dissolving.shaped ? 1 : 0)
+                    uniforms.dissolveShape = dissolving.inverse
+                    uniforms.dissolveInfo = SIMD4(Float(dissolving.shape), dissolving.widths.x, dissolving.widths.y, dissolving.widths.z)
+                    uniforms.dissolveBands = (dissolving.colors[0], dissolving.colors[1], dissolving.colors[2])
                 }
                 encoder.setFragmentTexture(dissolveMap ?? white, index: 1)
                 encoder.setDepthStencilState(pass == 1 || item.wire || item.textured ? overlayDepthState : depthState)

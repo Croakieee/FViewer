@@ -41,6 +41,9 @@ final class PolylineTrail {
 
     var softness: Float?
     var vFromHead = true
+    var jitter: Float = 0
+    var jitterPhase = 0
+    private(set) var centerline: [Vec3] = []
     private var chain: [Vec3]?
     private var chainTime: Float = 0
     private var lastTime: Float = 0
@@ -118,9 +121,10 @@ final class PolylineTrail {
             if total > 1e-6 { along = sums.map { $0 / total } }
         }
         var lastDirection = Vec3.zero
+        centerline.removeAll(keepingCapacity: true)
         for i in 0..<points {
             let k = along[i]
-            let p: Vec3
+            var p: Vec3
             var direction: Vec3
             if let chain, chain.count == points {
                 p = chain[i]
@@ -133,6 +137,12 @@ final class PolylineTrail {
             if simd_length_squared(direction) < 1e-8, simd_length_squared(lastDirection) > 0 { direction = lastDirection } else { lastDirection = direction }
             var side = fixedSide ?? simd_cross(direction, camera - p)
             side = simd_length_squared(side) < 1e-12 ? Vec3(0, 1, 0) : simd_normalize(side)
+            if jitter > 0 {
+                let mixed = sin(Float(i) * 12.9898 + Float(jitterPhase % 100_000) * 78.233) * 43758.5453
+                let unit = simd_length_squared(side) < 1e-12 ? Vec3(0, 1, 0) : simd_normalize(side)
+                p += unit * ((mixed - mixed.rounded(.down)) * 2 - 1) * jitter
+            }
+            centerline.append(p)
             let part = mix(k)
             let w = width * (part.first ? begin + (center - begin) * part.amount : center + (end - center) * part.amount)
             let line = part.first ? colors.begin + (colors.center - colors.begin) * part.amount : colors.center + (colors.end - colors.center) * part.amount

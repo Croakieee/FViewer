@@ -41,6 +41,12 @@ struct RDissolve {
     var erosion: RCurve?
     var endWidth: RCurve?
     var intensity: RCurve?
+    var shape = 0
+    var midWidth: RCurve?
+    var startWidth: RCurve?
+    var startColor: RColor?
+    var midColor: RColor?
+    var endColor: RColor?
 }
 
 struct RLife {
@@ -62,17 +68,21 @@ struct RTimelineItem {
     var binder: Int
     var emitter: Int
     var clip: Int
+    var effector = -1
 }
 
 struct RClip {
     var type: String
     var ints: [Int]
+    var floats: [Float] = [0, 0, 0, 0]
 }
 
 struct RTimeline {
     var binder: Int
     var items: [RTimelineItem]
     var clips: [RClip]
+    var loopStart = 0
+    var loopEnd = 0
 }
 
 struct REmitterItem {
@@ -100,6 +110,7 @@ struct REmitterItem {
     var inheritParentVelocity = false
     var inheritParentLife = false
     var parameterLink = -1
+    var unstickiness: Float = 0
 }
 
 nonisolated final class REmitter: @unchecked Sendable {
@@ -263,6 +274,17 @@ struct RSimple {
     var flatterySpeed: Float = 0
     var spinAdd: Float = 0
     var lifeRandom: Float = 0
+    var baseDirection = 0
+    var tiltStart = SIMD2<Float>(0, 0)
+    var tiltRandom = SIMD2<Float>(0, 0)
+    var tiltAdd = SIMD2<Float>(0, 0)
+    var tiltVelocity = SIMD2<Float>(0, 0)
+    var uvLoopCount = 0
+    var uvReverse = false
+    var polylineTag = 0
+    var moveInterval: Float = 0
+    var moveIntervalRandom: Float = 0
+    var useMovement = false
 }
 
 struct RDisc {
@@ -271,6 +293,8 @@ struct RDisc {
     var curves: [String: RCurve]
     var colorInner: RColor?
     var colorOuter: RColor?
+    var partsCount = 1
+    var intervalFactorV: Float = 0
 }
 
 struct RPolyline {
@@ -296,15 +320,30 @@ struct RPolyline {
     var connectTarget = false
     var connectReverse = false
     var softness: RCurve?
+    var tagNumber = 0
+    var isLocal = false
+    var bindWeapon = false
+    var bindWeaponType = 0
+    var pointDistortion: RCurve?
 }
 
 nonisolated final class RParticle: @unchecked Sendable {
     var collision = -1
     var modelIndices: [Int] = []
     var morph: RCurve?
+    var animationNumber: RCurve?
     var modelRandom = (count: 0, type: 0, interval: 0)
     var lit = false
     var lightType = 0
+    var pointLightType = 0
+    var normalLayer: RTextureLayer?
+    var normalPower: RCurve?
+    var movementParticle = false
+    var skin: (emissive: RCurve?, emissiveRandom: RCurve?, specular: RCurve?, specularRandom: RCurve?, fresnel: RCurve?, density: RCurve3)?
+    var decalScalingScale: Float = 1
+    var polygonCount: RCurve?
+    var polygonCountRandom: RCurve?
+    var fresnelRotation = RCurve3()
     var index: Int
     var type: Int
     var loopStart: Int
@@ -430,6 +469,15 @@ struct RBinder {
     var bindPoint = 0
     var goal: (bindPoint: Int, targetPoint: Int, id: Int)?
     var carryOver: RCurve?
+    var life = 0
+    var coordUpdate = -1
+    var rings: [(time: Int, position: Vec3, radius: Float)] = []
+    var spring: RCurve?
+    var springRandom: RCurve?
+    var vfxScaleBias: Float = 1
+    var ignoreVfxScale = false
+    var transformScale = 0
+    var generateDelay = 0
 }
 
 struct REffector {
@@ -457,6 +505,11 @@ struct REffector {
     var gradation: RCurve?
     var ambient: RColor?
     var rotationOrder = 0
+    var refraction: RCurve?
+    var separation: RCurve?
+    var effectStrength: RCurve?
+    var singleSide = false
+    var angleStrength: RCurve?
 }
 
 struct REffectSchema {
@@ -479,18 +532,22 @@ struct REffectSchema {
     var drawLayer = 2
     var drawOrder = 0
     var directionalLightSource = 0
+    var cameraSpace = false
+    var pointLightSources = (0, 0)
+    var fitGround = false
+    var adjustGlobalScale = false
     var ownClip: (near: (Float, Float), far: (Float, Float))?
 }
 
 private extension Array where Element == AvfxBlock {
     func int(_ tag: String, _ fallback: Int = 0) -> Int { first { $0.tag == tag }?.intValue ?? fallback }
     func float(_ tag: String, _ fallback: Float = 0) -> Float { first { $0.tag == tag }?.floatValue ?? fallback }
-    func bool(_ tag: String) -> Bool { int(tag) & 0xff == 1 }
+    func bool(_ tag: String) -> Bool { int(tag) & 0xff != 0 }
 }
 
 private extension AvfxBlock {
-    func bool(_ tag: String) -> Bool { int(tag) & 0xff == 1 }
-    func byteFlag(_ tag: String, _ fallback: UInt8 = 0) -> Bool { child(tag)?.data.first.map { $0 == 1 } ?? (fallback != 0) }
+    func bool(_ tag: String) -> Bool { int(tag) & 0xff != 0 }
+    func byteFlag(_ tag: String, _ fallback: UInt8 = 0) -> Bool { child(tag)?.data.first.map { $0 != 0 } ?? (fallback != 0) }
     func lastRecords(_ tag: String) -> [[AvfxBlock]] {
         children?.last { $0.tag == tag && $0.children != nil }?.records() ?? []
     }
@@ -534,7 +591,7 @@ enum AvfxSchemaReader {
                      generateDelayByOne: r.bool("bGD"), injectionAngle: Vec3(r.float("BIAX"), r.float("BIAY"), r.float("BIAZ")),
                      startFrame: min(max(r.int("StFr"), 0), 3600), startFrameNullUpdate: r.bool("bStN"), localDirection: r.int("LoDr"),
                      inheritBinderRotation: r.bool("ICbB"), inheritParentVelocity: r.bool("IPbV"), inheritParentLife: r.bool("IPbL"),
-                     parameterLink: r.int("PrLk", -1))
+                     parameterLink: r.int("PrLk", -1), unstickiness: r.float("ICSK"))
     }
 
     static func layer(_ block: AvfxBlock?) -> RTextureLayer? {
@@ -573,8 +630,11 @@ enum AvfxSchemaReader {
             rotVelocity: f("RVZ"), blockCount: max(1, i("BlkN", 1)), velocityMin: f("VMin"), velocityMax: f("VMax"),
             uvCellsU: max(1, i("UvCU", 1)), uvCellsV: max(1, i("UvCV", 1)), uvInterval: i("UvIv", 1), uvRandom: i("UvNR"),
             pivot: SIMD2(f("PvtX"), f("PvtY")), interval: i("CrI", 1), intervalRandom: i("CrIR"), intervalCount: max(1, i("CrIC", 1)),
-            life: i("CrIL", 1) < 0 ? -1 : Float(max(1, i("CrIL", 1))), colors: colors, frames: frames, injectionDirection: i("SIDT"),
-            radialFrom: f("IRD0"), radialTo: f("IRD1"), bindModel: i("VBMN", -1), flatterySpeed: f("FltS"), spinAdd: f("RAZ"), lifeRandom: Float(max(0, i("CrLR"))))
+            life: i("CrIL", 1) < 0 || (i("CrIL", 1) == 0 && PreviewRules.isOn("simpleLifeZeroEndless")) ? -1 : Float(max(1, i("CrIL", 1))), colors: colors, frames: frames,
+            injectionDirection: i("SIDT"), radialFrom: f("IRD0"), radialTo: f("IRD1"), bindModel: i("VBMN", -1), flatterySpeed: f("FltS"), spinAdd: f("RAZ"),
+            lifeRandom: Float(max(0, i("CrLR"))), baseDirection: i("SBDT"), tiltStart: SIMD2(f("RIX"), f("RIY")), tiltRandom: SIMD2(f("RBX"), f("RBY")),
+            tiltAdd: SIMD2(f("RAX"), f("RAY")), tiltVelocity: SIMD2(f("RVX"), f("RVY")), uvLoopCount: max(0, i("UvLC")), uvReverse: block.child("bRUV")?.data.first == 1,
+            polylineTag: i("PolT"), moveInterval: f("CIM"), moveIntervalRandom: f("CIMR"))
     }
 
     static func disc(_ block: AvfxBlock?) -> RDisc? {
@@ -584,7 +644,7 @@ enum AvfxSchemaReader {
             curves[tag] = curve(block.child(tag))
         }
         return RDisc(countU: min(max(block.int("PCnU", 2), 1), 128), countV: min(max(block.int("PCnV", 2), 1), 128), curves: curves, colorInner: optionalColor(block.child("CEI")),
-                     colorOuter: optionalColor(block.child("CEO")))
+                     colorOuter: optionalColor(block.child("CEO")), partsCount: min(max(block.int("PrtC", 1), 1), 32), intervalFactorV: block.float("PIFU"))
     }
 
     static func polyline(_ block: AvfxBlock?) -> RPolyline? {
@@ -597,7 +657,9 @@ enum AvfxSchemaReader {
                          colorEdgeEnd: optionalColor(block.child("CoEE")), spline: block.bool("bSpl"), noBillboard: block.bool("bNtB"),
                          noBillboardAxis: block.int("NBBA"),
                          widthRandom: [curve(block.child("WdR")), curve(block.child("WdBR")), curve(block.child("WdCR")), curve(block.child("WdER"))],
-                         connectTarget: block.bool("bCtg"), connectReverse: block.bool("bCtr"), softness: curve(block.child("Sft")))
+                         connectTarget: block.bool("bCtg"), connectReverse: block.bool("bCtr"), softness: curve(block.child("Sft")),
+                         tagNumber: block.int("TagN"), isLocal: block.bool("bLcl"), bindWeapon: block.bool("BdWp"), bindWeaponType: block.int("BWpT"),
+                         pointDistortion: curve(block.child("PnDs")))
     }
 
     static func read(_ root: AvfxBlock) -> REffectSchema {
@@ -612,14 +674,15 @@ enum AvfxSchemaReader {
             RTimeline(binder: t.int("BnNo", -1),
                       items: t.lastRecords("Item").map {
                           RTimelineItem(enabled: $0.bool("bEna"), start: $0.int("StTm"), end: $0.int("EdTm"), binder: $0.int("BdNo", -1),
-                                        emitter: $0.int("EmNo", -1), clip: $0.int("ClNo", -1))
+                                        emitter: $0.int("EmNo", -1), clip: $0.int("ClNo", -1), effector: $0.int("EfNo", -1))
                       },
                       clips: t.childrenNamed("Clip").map { clip in
                           let d = clip.data
                           let type = d.count >= 4 ? String(decoding: d.prefix(4).reversed(), as: UTF8.self) : ""
                           let ints = (0..<4).map { d.count >= 8 + $0 * 4 ? Int(Int32(bitPattern: d.u32(4 + $0 * 4))) : 0 }
-                          return RClip(type: type, ints: ints)
-                      })
+                          let floats = (0..<4).map { d.count >= 24 + $0 * 4 ? Float(bitPattern: d.u32(20 + $0 * 4)) : 0 }
+                          return RClip(type: type, ints: ints, floats: floats)
+                      }, loopStart: t.int("LpSt"), loopEnd: t.int("LpEd"))
         }
         let emitters = root.childrenNamed("Emit").enumerated().map { index, e -> REmitter in
             let particleRecords = e.lastRecords("ItPr")
@@ -681,18 +744,37 @@ enum AvfxSchemaReader {
                 laserWidth: curve(data?.child("Wdt")), laserWidthRandom: curve(data?.child("WdtR")), fresnelType: data?.int("FrsT") ?? 0,
                 auraTarget: data?.int("AuTT") ?? 1,
                 windmillUvType: data?.int("WUvT") ?? 0, ringWidth: curve(data?.child("WID")), ringWidthRandom: curve(data?.child("WIDR")),
-                ringFan: data?.float("RF", 1) ?? 1, simple: p.bool("bSCt") ? simple(p.child("Smpl")) : nil, disc: type == 12 ? disc(data) : nil,
+                ringFan: data?.float("RF", 1) ?? 1, simple: p.bool("bSCt") ? simple(p.child("Smpl")).map { var s = $0; s.useMovement = data?.bool("bMV") ?? false; return s } : nil, disc: type == 12 ? disc(data) : nil,
                 polyline: type == 6 ? polyline(data) : nil, softParticle: p.bool("DsSp"),
                 rotVelRandom: [curve(p.child("VRXR")), curve(p.child("VRYR")), curve(p.child("VRZR"))],
                 clipNear: p.bool("bNea") ? (p.float("NeSt"), p.float("NeEd")) : nil, clipFar: p.bool("bFar") ? (p.float("FaSt"), p.float("FaEd")) : nil,
                 clipFromCaster: p.int("FaBP") == 1)
             particle.collision = p.int("Coll", -1)
+            if p.int("PrVT") == 9 {
+                particle.polygonCount = curve(data?.child("Cnt"))
+                particle.polygonCountRandom = curve(data?.child("CntR"))
+            }
+            particle.fresnelRotation = curve3(data?.child("FrRt"))
+            if p.int("PrVT") == 1, data?.bool("bLgt") == true, PreviewRules.isOn("powderLighting") {
+                particle.lit = true
+                particle.lightType = data?.int("LgtT") ?? 0
+            }
+            particle.normalLayer = layer(p.child("TN"))
+            particle.normalPower = curve(p.child("TN")?.child("NPow"))
+            particle.movementParticle = p.int("PrVT") == 8 && data?.bool("bMP") == true
+            if p.int("PrVT") == 14 {
+                particle.skin = (curve(data?.child("EEM")), curve(data?.child("EEMR")), curve(data?.child("SEM")), curve(data?.child("SEMR")),
+                                 curve(data?.child("FrC")), curve3(data?.child("UVPD")))
+            }
+            if p.int("PrVT") == 10 || p.int("PrVT") == 11 { particle.decalScalingScale = data?.float("SS", 1) ?? 1 }
             if let list = data?.child("MdNo"), type == 5 || type == 13 {
                 particle.modelIndices = list.data.filter { $0 != 255 }.map { Int($0) }
                 if data?.bool("bShp") == true { particle.morph = curve(data?.child("Moph")) }
+                particle.animationNumber = curve(data?.child("NoAn"))
                 particle.modelRandom = (data?.int("MNRv") ?? 0, data?.int("MNRt") ?? 0, data?.int("MNRi") ?? 0)
                 particle.lit = type == 5 && data?.bool("bLgt") == true
                 particle.lightType = data?.int("DLT") ?? 0
+                particle.pointLightType = data?.int("PLT") ?? 0
             }
             return particle
         }
@@ -704,6 +786,18 @@ enum AvfxSchemaReader {
             binder.bindPoint = props?.int("BPT") ?? 0
             if let goal = b.child("PrpG"), goal.children != nil { binder.goal = (goal.int("BPT"), goal.int("BPTP"), goal.int("BPID", -1)) }
             binder.carryOver = curve(b.child("Data")?.child("COF"))
+            binder.life = b.int("Life")
+            binder.coordUpdate = props?.int("CoUF", -1) ?? -1
+            binder.generateDelay = props?.int("GenD") ?? 0
+            for tag in ["Prp1", "Prp2"] {
+                guard let ring = b.child(tag), ring.children != nil, ring.bool("bRng") else { continue }
+                binder.rings.append((ring.int("RnPT"), Vec3(ring.float("RnPX"), ring.float("RnPY"), ring.float("RnPZ")), ring.float("RnRd")))
+            }
+            binder.spring = curve(b.child("Data")?.child("SpS"))
+            binder.springRandom = curve(b.child("Data")?.child("SpSR"))
+            binder.vfxScaleBias = b.float("bVSb", 1)
+            binder.ignoreVfxScale = b.bool("bBET")
+            binder.transformScale = b.int("bTSc")
             return binder
         }
         var result = REffectSchema(
@@ -728,19 +822,33 @@ enum AvfxSchemaReader {
         for (index, block) in root.childrenNamed("Ptcl").enumerated() where index < result.particles.count { result.particles[index].coordOrder = block.int("CCOT") }
         for (index, block) in root.childrenNamed("Ptcl").enumerated() where index < result.particles.count && block.int("PrVT") == 15 {
             guard let data = block.child("Data") else { continue }
+            let edge = data.child("EdC")
             result.particles[index].dissolve = RDissolve(target: data.int("DTT"), reverse: data.bool("bRev"), erosion: curve(data.child("EroR")),
-                                                         endWidth: curve(data.child("EdW")), intensity: curve(data.child("Int")))
+                                                         endWidth: curve(data.child("EdW")), intensity: curve(data.child("Int")), shape: data.int("BST"),
+                                                         midWidth: curve(data.child("EdCW")), startWidth: curve(data.child("ECMP")),
+                                                         startColor: optionalColor(edge?.child("StrC")), midColor: optionalColor(edge?.child("MidC")),
+                                                         endColor: optionalColor(edge?.child("EndC")))
         }
         result.angleFade = ["X", "Y", "Z"].map { (root.bool("AF\($0)e"), root.float("AF\($0)i"), root.float("AF\($0)o")) }
         result.drawLayer = root.int("DwLy", 2)
         result.drawOrder = root.int("DwOT")
         result.directionalLightSource = root.int("DLST")
+        result.cameraSpace = root.bool("bCmS")
+        result.pointLightSources = (root.int("PL1S"), root.int("PL2S"))
+        result.fitGround = root.bool("bFG")
+        result.adjustGlobalScale = root.bool("bAGS")
         if root.bool("bOSt") { result.ownClip = ((root.float("NCB"), root.float("NCE")), (root.float("FCB"), root.float("FCE"))) }
         for (index, block) in root.childrenNamed("Efct").enumerated() where index < result.effectors.count {
             result.effectors[index].fadeFromCaster = block.child("Data")?.int("FaBP") == 1
             result.effectors[index].gradation = curve(block.child("Data")?.child("Gra"))
             result.effectors[index].ambient = optionalColor(block.child("Data")?.child("Amb"))
             result.effectors[index].rotationOrder = block.int("RoOT")
+            let data = block.child("Data")
+            result.effectors[index].refraction = curve(data?.child("CSR"))
+            result.effectors[index].separation = curve(data?.child("CSS"))
+            result.effectors[index].effectStrength = curve(data?.child("CGE"))
+            result.effectors[index].singleSide = data?.bool("bOS") ?? false
+            result.effectors[index].angleStrength = curve(data?.child("AStr"))
         }
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
         return result

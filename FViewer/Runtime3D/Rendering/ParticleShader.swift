@@ -41,6 +41,10 @@ struct U {
     float4 litDirection;
     float4 litAmbient;
     float4 litColor;
+    float4 fresnelAxis;
+    float4 pointPosition[2];
+    float4 pointColor[2];
+    float4 normalInfo;
 };
 
 struct VOut {
@@ -128,7 +132,8 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
                                  texture2d<float> map5 [[texture(4)]], texture2d<float> map6 [[texture(5)]],
                                  texture2d<float> sceneColor [[texture(6)]], depth2d_ms<float> sceneDepth [[texture(7)]],
                                  sampler s1 [[sampler(0)]], sampler s2 [[sampler(1)]], sampler s3 [[sampler(2)]],
-                                 sampler s4 [[sampler(3)]], sampler s5 [[sampler(4)]], sampler s6 [[sampler(5)]]) {
+                                 sampler s4 [[sampler(3)]], sampler s5 [[sampler(4)]], sampler s6 [[sampler(5)]],
+                                 texture2d<float> normalMap [[texture(8)]], sampler s7 [[sampler(6)]]) {
     if (u.debugColor.w > 0.0) return u.debugColor;
     float2 uv1 = in.uv1;
     float2 uv2 = in.uv2;
@@ -200,6 +205,20 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     if (u.litDirection.w > 0.5) {
         int kind = int(u.litDirection.w + 0.5) - 1;
         float3 l = u.litDirection.xyz;
+        float3 surface = normalize(in.worldNormal);
+        if (u.normalInfo.x > 0.5) {
+            int slot = int(u.normalInfo.y + 0.5);
+            float2 nuv = slot == 1 ? uv2 : slot == 2 ? uv3 : slot == 3 ? uv4 : slot == 4 ? uv5 : uv1;
+            float3 tn = normalMap.sample(s7, nuv).xyz * 2.0 - 1.0;
+            tn.xy *= u.normalInfo.z;
+            float3 dp1 = dfdx(in.worldPosition), dp2 = dfdy(in.worldPosition);
+            float2 duv1 = dfdx(nuv), duv2 = dfdy(nuv);
+            float3 dp2perp = cross(dp2, surface), dp1perp = cross(surface, dp1);
+            float3 tangent = dp2perp * duv1.x + dp1perp * duv2.x;
+            float3 bitangent = dp2perp * duv1.y + dp1perp * duv2.y;
+            float scale = rsqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-12));
+            surface = normalize(tangent * scale * tn.x + bitangent * scale * tn.y + surface * max(tn.z, 0.0));
+        }
         float lit;
         if (kind == 2) {
             lit = 0.5 * dot(normalize((u.model * float4(0.0, -1.0, 0.0, 0.0)).xyz), l) + 0.5;
@@ -207,15 +226,26 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
             float3 viewDir = normalize(u.cameraPosition.xyz - in.worldPosition);
             float3 seen = float3(l.x, -l.y, l.z);
             seen -= 2.0 * dot(seen, viewDir) * viewDir;
-            float3 n = normalize(in.worldNormal);
+            float3 n = surface;
             lit = kind == 1 ? 0.5 * dot(n, seen) + 0.5 : max(0.0, dot(n, seen));
         }
-        c.rgb *= u.litAmbient.xyz + u.litColor.xyz * lit;
+        float3 points = float3(0.0);
+        for (int k = 0; k < 2; k++) {
+            if (u.pointColor[k].w <= 0.0) continue;
+            float3 toLight = u.pointPosition[k].xyz - in.worldPosition;
+            float d = max(length(toLight), 0.01);
+            int pointKind = int(u.normalInfo.w + 0.5);
+            float facing = pointKind == 3 ? 0.5 * dot(normalize((u.model * float4(0.0, -1.0, 0.0, 0.0)).xyz), toLight / d) + 0.5
+                : pointKind == 1 ? 0.5 * dot(surface, toLight / d) + 0.5 : max(0.0, dot(surface, toLight / d));
+            points += u.pointColor[k].rgb * facing * min(1.0, u.pointColor[k].w / pow(d, u.pointPosition[k].w));
+        }
+        c.rgb *= u.litAmbient.xyz + u.litColor.xyz * lit + points;
     }
     if (u.flags.x > 0.5) c *= in.color;
     if (u.flags.z > 0.5) c *= u.spriteColor;
     if (u.flags.y > 0.5) {
-        float facing = abs(dot(normalize(in.worldNormal), normalize(u.cameraPosition.xyz - in.worldPosition)));
+        float3 toward = u.fresnelAxis.w > 0.5 ? u.fresnelAxis.xyz : normalize(u.cameraPosition.xyz - in.worldPosition);
+        float facing = abs(dot(normalize(in.worldNormal), toward));
         c *= mix(u.colorEnd, u.colorBegin, 1.0 - facing);
     }
     if (u.flags.w > 0.5) c *= mix(u.colorEnd, u.colorBegin, in.along);

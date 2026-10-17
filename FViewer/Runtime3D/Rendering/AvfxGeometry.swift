@@ -63,6 +63,23 @@ enum GeometryBuilder {
         return g
     }()
 
+    private static var polygons: [Int: RenderGeometry] = [:]
+
+    static func polygon(_ sides: Int) -> RenderGeometry {
+        let n = min(max(sides, 3), 256)
+        if let cached = polygons[n] { return cached }
+        let g = RenderGeometry()
+        g.add(.zero, uv: .zero)
+        for i in 0..<n {
+            let a = Float(i) / Float(n) * 2 * .pi
+            let x = 0.5 * sin(a), y = 0.5 * cos(a)
+            g.add(Vec3(x, y, 0), uv: SIMD2(x, -y))
+        }
+        for i in 0..<n { g.indices.append(contentsOf: [0, UInt32(1 + (i + 1) % n), UInt32(1 + i)]) }
+        polygons[n] = g
+        return g
+    }
+
     static let decal: RenderGeometry = {
         let g = RenderGeometry()
         for (x, y) in [(Float(-0.5), Float(0.5)), (0.5, 0.5), (-0.5, -0.5), (0.5, -0.5)] {
@@ -166,13 +183,16 @@ enum GeometryBuilder {
         g.version += 1
     }
 
-    static func disc(countU: Int, countV: Int) -> RenderGeometry {
+    static func disc(countU: Int, countV: Int, intervalFactorV: Float = 0) -> RenderGeometry {
         let nu = max(2, countU), nv = max(2, countV)
         let g = RenderGeometry()
+        let factor = min(max(intervalFactorV, -0.5), 0.5)
         for j in 0..<nv {
+            let f = Float(j) / Float(nv - 1)
+            let v = f + 2 * factor * f * (1 - f)
             for i in 0..<nu {
                 let k = Float(i) / Float(nu - 1)
-                g.add(.zero, normal: Vec3(0, 1, 0), uv: SIMD2((1 - k) - 0.5, Float(j) / Float(nv - 1) - 0.5))
+                g.add(.zero, normal: Vec3(0, 1, 0), uv: SIMD2((1 - k) - 0.5, v - 0.5))
                 if i < nu - 1 && j < nv - 1 {
                     let a = UInt32(i + j * nu), b = a + UInt32(nu)
                     g.indices.append(contentsOf: [a, b, a + 1, a + 1, b, b + 1])
@@ -226,8 +246,14 @@ enum GeometryBuilder {
 
     static func emitPoints(_ block: AvfxBlock?) -> [EmitPoint] {
         guard let e = block?.child("VEmt")?.data else { return [] }
-        return stride(from: 0, to: e.count - 27, by: 28).map { o in
+        let all = stride(from: 0, to: e.count - 27, by: 28).map { o in
             EmitPoint(position: Vec3(e.f32(o), e.f32(o + 4), e.f32(o + 8)), normal: Vec3(e.f32(o + 12), e.f32(o + 16), e.f32(o + 20)))
         }
+        guard let order = block?.child("VNum")?.data, order.count >= 2, PreviewRules.isOn("vertexOrder") else { return all }
+        let picked = stride(from: 0, to: order.count - 1, by: 2).compactMap { o -> EmitPoint? in
+            let index = Int(order.u16(o))
+            return index < all.count ? all[index] : nil
+        }
+        return picked.isEmpty ? all : picked
     }
 }

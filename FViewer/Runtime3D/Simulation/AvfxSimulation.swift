@@ -17,6 +17,7 @@ struct ScreenEffect {
     var outer: Float
     var angle: Float
     var gradation: Float = 1
+    var extra = Vec4.zero
 }
 
 struct LightDraw {
@@ -24,6 +25,8 @@ struct LightDraw {
     var color: Vec3
     var distance: Float
     var decay: Float
+    var reach: Float = 0
+    var point = false
 }
 
 struct DissolveState {
@@ -34,6 +37,11 @@ struct DissolveState {
     var color = Vec3(1, 1, 1)
     var uvMatrix = Vec4(1, 0, 0, 1)
     var uvOffset = SIMD2<Float>(0, 0)
+    var shaped = false
+    var shape = 0
+    var inverse = matrix_identity_float4x4
+    var widths = Vec3.zero
+    var colors = [Vec4](repeating: .zero, count: 3)
 }
 
 struct ParticleDraw {
@@ -57,6 +65,10 @@ struct ParticleDraw {
     var overScene = false
     var lit = 0
     var light = (direction: Vec3.zero, ambient: Vec3.zero, color: Vec3.zero)
+    var pointLights: [LightDraw] = []
+    var normalPower: Float = 1
+    var pointLightType = 0
+    var fresnelAxis = Vec4.zero
 }
 
 extension ParticleDraw {
@@ -85,6 +97,10 @@ private enum Base {
 
 private enum Influence {
     static let initialPosition = 0, withOptions = 1, allAlways = 2, allAlwaysNoPosition = 4, withOptionsNoPosition = 7, unknown = 8, unknownNoPosition = 9
+
+    static func noPosition(_ coord: Int) -> Bool {
+        (coord == allAlwaysNoPosition || coord == 5 || coord == withOptionsNoPosition || coord == unknownNoPosition) && PreviewRules.isOn("noPositionGround")
+    }
 
     static func follows(_ coord: Int) -> Bool {
         coord == allAlways || coord == allAlwaysNoPosition || ((coord == unknown || coord == unknownNoPosition) && PreviewRules.isOn("influenceUnknownFollows"))
@@ -151,10 +167,12 @@ final class EmitterInstance {
     var holdWhile: (() -> Bool)?
     var liveChildren = 0
     var binder = -1
+    var effectorOverride: Int?
     var timeScale: Float = 1
     var colorFrom: (mode: Int, initial: Vec4)?
     var injectedChildren: [Int: Int] = [:]
     var cameraRotation: simd_quatf?
+    var cameraPosition: Vec3?
 
     init(schema: REmitter, anchor: @escaping () -> Mat4, endFrames: Float, random: inout SeededRandom) {
         self.schema = schema
@@ -190,6 +208,25 @@ final class EmitterInstance {
         if let cameraRotation, schema.rotationBase == Base.cameraBillboardAxisY, PreviewRules.isOn("emitterCameraBillboard") {
             let parts = Math3D.decompose(out)
             out = Math3D.compose(parts.position, cameraRotation * Math3D.euler(rotation, order: schema.rotationOrder), parts.scale)
+        } else if PreviewRules.isOn("emitterBillboards") {
+            let base = schema.rotationBase
+            let own = Math3D.euler(rotation, order: schema.rotationOrder)
+            if let cameraRotation, base == Base.screenBillboard || base == Base.cameraBillboard {
+                let parts = Math3D.decompose(out)
+                out = Math3D.compose(parts.position, cameraRotation * own, parts.scale)
+            } else if let cameraPosition, base == Base.billboardAxisY || base == Base.treeBillboard {
+                let parts = Math3D.decompose(out)
+                let yaw = simd_quatf(angle: atan2(cameraPosition.x - parts.position.x, cameraPosition.z - parts.position.z), axis: Vec3(0, 1, 0))
+                out = Math3D.compose(parts.position, yaw * own, parts.scale)
+            } else if base == Base.moveDirection || base == Base.moveDirectionBillboard, moving {
+                let motion = velocity * Eval.curve(schema.airResistance, CurveTime(age), 1) + Vec3(0, fall, 0)
+                if simd_length_squared(motion) > 1e-10 {
+                    let parts = Math3D.decompose(out)
+                    let z = simd_normalize(motion)
+                    let x = simd_normalize(simd_cross(abs(z.y) > 0.999 ? Vec3(1, 0, 0) : Vec3(0, 1, 0), z))
+                    out = Math3D.compose(parts.position, Math3D.quaternion(x: x, y: simd_cross(z, x), z: z) * own, parts.scale)
+                }
+            }
         }
         if moving { out = Math3D.translation(travel) * out }
         return out
@@ -385,6 +422,10 @@ final class ParticleInstance {
     var normalFrame: Mat4?
     var injectTurn: Mat4?
     var stuck: Vec3?
+    var discCopies: [(geometry: RenderGeometry, seed: RandomSeed)] = []
+    var lagPosition: Vec3?
+    var lagTime: Float = 0
+    var launch = (velocity: Vec3.zero, local: Vec3.zero)
     var spin: (launch: Vec3, launchLocal: Vec3, fall: Vec3, frame: simd_quatf, frameLocal: simd_quatf)?
 
     init(schema: RParticle, item: REmitterItem, emitter: EmitterInstance, geometry: RenderGeometry?, cloud: SpriteCloud?, sequence: Int,
@@ -417,7 +458,7 @@ final class ParticleInstance {
 
 final class TimelineStart {
     let index: Int
-    let at: Float
+    var at: Float
     let source: TimelineSource?
     var spawned: Set<Int> = []
     var released = false
@@ -486,6 +527,7 @@ final class AvfxSimulation {
         random = SeededRandom(seed: seed)
         clipLog = []
         soundCues = []
+        fadeIns = []
     }
 
     var soundCues: [(emitter: EmitterInstance, path: String, index: Int)] = []
@@ -635,6 +677,37 @@ final class AvfxSimulation {
         return states
     }
 
+    private var fadeIns: [(targets: Set<Int>?, from: Float, frames: Float)] = []
+
+    private func fadeIn(_ e: EmitterInstance) -> Float {
+        var k: Float = 1
+        for f in fadeIns where matches(e.instance, f.targets) {
+            k *= f.frames > 0 ? min(1, max(0, (time - f.from) / f.frames)) : 1
+        }
+        return k
+    }
+
+    private func restartTimeline(_ index: Int) {
+        guard index >= 0, index < schema.timelines.count else { return }
+        let dropped = Set(timelineStarts.filter { $0.index == index }.map { ObjectIdentifier($0) })
+        emitters.removeAll { $0.instance.map { dropped.contains(ObjectIdentifier($0)) } ?? false }
+        particles.removeAll { $0.emitter.instance.map { dropped.contains(ObjectIdentifier($0)) } ?? false }
+        let source = timelineStarts.first { $0.index == index }?.source
+        timelineStarts.removeAll { $0.index == index }
+        timelineStarts.append(TimelineStart(index: index, at: time, source: source))
+    }
+
+    private lazy var effectorCarrier = REmitter(index: -1, type: 0, loopStart: 0, loopEnd: 0, childLimit: 0, rotationBase: 2, rotationOrder: 0,
+                                                life: RLife(), color: RColor(), position: RCurve3(), rotation: RCurve3(), scale: RCurve3(),
+                                                particleItems: [], emitterItems: [], modelIndex: -1, generateMethod: 0, divideX: 1, divideY: 1)
+
+    func effectorIndex(_ e: EmitterInstance) -> Int? {
+        if let override = e.effectorOverride { return override }
+        guard e.schema.index >= 0, e.schema.index < schema.emitterEffectors.count else { return nil }
+        let index = schema.emitterEffectors[e.schema.index]
+        return index >= 0 && index < schema.effectors.count ? index : nil
+    }
+
     private func runClip(_ clip: RClip, from start: TimelineStart) {
         clipLog.append((time, clip.type))
         switch clip.type {
@@ -643,7 +716,18 @@ final class AvfxSimulation {
             emitters.forEach { $0.stopped = true }
             release()
         case "KILL": runKill(clip, from: start)
-        case "REST": pendingRestart = true
+        case "REST":
+            if clip.floats[0] == -1, PreviewRules.isOn("resetOneTimeline") { restartTimeline(clip.ints[0]) } else { pendingRestart = true }
+        case "FADI":
+            guard PreviewRules.isOn("fadeInClip") else { break }
+            let sources = [clip.ints[1], clip.ints[3]].compactMap(TimelineSource.init(target:))
+            let targets: Set<Int>? = sources.isEmpty ? nil : Set(sources.compactMap { source -> Int? in
+                switch source {
+                case .scheduler(let index): return index < schema.scheduler.count ? schema.scheduler[index].timeline : nil
+                case .trigger(let index): return index < schema.triggers.count ? schema.triggers[index].timeline : nil
+                }
+            })
+            fadeIns.append((targets, time, Float(max(0, clip.ints[0]))))
         case "TRG ": trigger(clip.ints[0])
         case "RTRG":
             let lo = min(clip.ints[0], clip.ints[1]), hi = max(clip.ints[0], clip.ints[1])
@@ -653,29 +737,113 @@ final class AvfxSimulation {
     }
 
     private func binderMatrix(_ index: Int) -> () -> Mat4 {
-        var object = matrix_identity_float4x4
-        let revised = Math3D.compose(schema.revisedPosition, Math3D.euler(schema.revisedRotation, order: 0), schema.revisedScale)
-        if index >= 0, index < schema.binders.count, schema.binders[index].type == 3, PreviewRules.isOn("cameraBinder") {
-            let distance = schema.binders[index].distance
+        let binder: RBinder? = index >= 0 && index < schema.binders.count ? schema.binders[index] : nil
+        let core = binderCore(binder)
+        guard let binder else { return cameraSpace(core) }
+        var wrapped = core
+        var scale = PreviewRules.isOn("vfxScaleBias") && !binder.ignoreVfxScale ? binder.vfxScaleBias : 1
+        if binder.transformScale != 0, PreviewRules.isOn("binderTransformScale") {
+            scale *= binder.bindPoint == 1 ? AvfxSimulation.targetScale : AvfxSimulation.casterScale
+        }
+        if scale != 1 {
+            let inner = wrapped, scaling = Math3D.compose(.zero, simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), Vec3(repeating: scale))
+            let revised = revisedMatrix
+            let unrevised = revised.inverse
+            wrapped = { inner() * unrevised * scaling * revised }
+        }
+        if schema.fitGround, PreviewRules.isOn("fitGround") {
+            let inner = wrapped, ground = groundY
+            wrapped = {
+                var m = inner()
+                m.columns.3.y = ground
+                return m
+            }
+        }
+        wrapped = cameraSpace(wrapped)
+        if let spring = binder.spring, PreviewRules.isOn("binderSpring") {
+            let inner = wrapped, born = time, randomPart = random.next()
+            var position: Vec3?
+            var stepped = time
+            wrapped = { [weak self] in
+                let m = inner()
+                guard let self else { return m }
+                let target = Math3D.position(m)
+                guard var p = position else {
+                    position = target
+                    stepped = self.time
+                    return m
+                }
+                while stepped + 1 <= self.time {
+                    stepped += 1
+                    let at = CurveTime(stepped - born)
+                    let k = Eval.curve(spring, at, 1) + Eval.randomOffset(binder.springRandom, type: spring.random, at, randomPart)
+                    p += (target - p) * min(max(k, 0), 2)
+                }
+                position = p
+                var out = m
+                out.columns.3 = Vec4(p.x, p.y, p.z, 1)
+                return out
+            }
+        }
+        var freeze = Float.infinity
+        if binder.coordUpdate >= 0, PreviewRules.isOn("binderUpdateFrame") { freeze = Float(binder.coordUpdate) }
+        if binder.life > 0, PreviewRules.isOn("binderLife") { freeze = min(freeze, Float(binder.life)) }
+        if freeze.isFinite {
+            let inner = wrapped, born = time
+            var held: Mat4?
+            wrapped = { [weak self] in
+                if let held { return held }
+                let m = inner()
+                if let self, self.time - born >= freeze { held = m }
+                return m
+            }
+        }
+        return wrapped
+    }
+
+    static var casterScale: Float = 1
+    static var targetScale: Float = 1
+
+    private var revisedMatrix: Mat4 {
+        let rotation = PreviewRules.isOn("revisedRotationNeedsAgs") && !schema.adjustGlobalScale ? Vec3.zero : schema.revisedRotation
+        return Math3D.compose(schema.revisedPosition, Math3D.euler(rotation, order: 0), schema.revisedScale)
+    }
+
+    private func cameraSpace(_ inner: @escaping () -> Mat4) -> () -> Mat4 {
+        guard schema.cameraSpace, PreviewRules.isOn("cameraSpace") else { return inner }
+        return { [weak self] in
+            guard let self else { return inner() }
+            return Math3D.compose(self.cameraPosition, self.cameraRotation ?? simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), Vec3(1, 1, 1)) * inner()
+        }
+    }
+
+    private func binderCore(_ binder: RBinder?) -> () -> Mat4 {
+        let revised = revisedMatrix
+        guard let binder else { return { revised } }
+        if binder.type == 3, PreviewRules.isOn("cameraBinder") {
+            let distance = binder.distance
             return { [weak self] in
                 guard let self else { return matrix_identity_float4x4 }
                 return Math3D.compose(self.cameraPosition, self.cameraRotation ?? simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), Vec3(1, 1, 1))
                     * Math3D.translation(Vec3(0, 0, Eval.curve(distance, CurveTime(self.time), 0))) * revised
             }
         }
-        let binder: RBinder? = index >= 0 && index < schema.binders.count ? schema.binders[index] : nil
-        if let binder { object = bindPoint(onTarget: binder.bindPoint == 1, targetPoint: binder.bindTargetPoint, id: binder.bindPointId) }
-        if let binder, let goal = binder.goal, let carry = binder.carryOver, [1, 2, 4].contains(binder.type), PreviewRules.isOn("binderLinearPath") {
+        var object = bindPoint(onTarget: binder.bindPoint == 1, targetPoint: binder.bindTargetPoint, id: binder.bindPointId)
+        if !binder.followTargetOrientation, PreviewRules.isOn("binderFollowTargetOrientation") { object = Math3D.translation(Math3D.position(object)) }
+        if let goal = binder.goal, let carry = binder.carryOver, [1, 2, 4].contains(binder.type), PreviewRules.isOn("binderLinearPath") {
             let from = Math3D.position(object)
             let to = Math3D.position(bindPoint(onTarget: goal.bindPoint == 1, targetPoint: goal.targetPoint, id: goal.id))
+            let turn = Math3D.decompose(object).rotation
+            let path = binder.type == 2 && PreviewRules.isOn("splineBinderRings") ? splinePath(from, to, binder, carry) : nil
             let start = time
             return { [weak self] in
                 let k = Eval.curve(carry, CurveTime((self?.time ?? start) - start), 0)
-                return Math3D.translation(from + (to - from) * k) * revised
+                let at = path?(k) ?? from + (to - from) * k
+                return Math3D.compose(at, turn, Vec3(1, 1, 1)) * revised
             }
         }
-        if index >= 0, index < schema.binders.count, (1...4).contains(schema.binders[index].rotationType), PreviewRules.isOn("binderRotationType") {
-            let kind = schema.binders[index].rotationType, place = object
+        if (1...4).contains(binder.rotationType), PreviewRules.isOn("binderRotationType") {
+            let kind = binder.rotationType, place = object
             return { [weak self] in
                 guard let self else { return place * revised }
                 let at = Math3D.position(place)
@@ -692,8 +860,8 @@ final class AvfxSimulation {
             }
         }
         let result = object * revised
-        guard index >= 0, index < schema.binders.count, PreviewRules.isOn("binderOffset") else { return { result } }
-        let offset = schema.binders[index].offset
+        guard PreviewRules.isOn("binderOffset") else { return { result } }
+        let offset = binder.offset
         guard offset.x != nil || offset.y != nil || offset.z != nil else { return { result } }
         let base = object
         return { [weak self] in
@@ -702,12 +870,60 @@ final class AvfxSimulation {
         }
     }
 
+    private func splinePath(_ from: Vec3, _ to: Vec3, _ binder: RBinder, _ carry: RCurve) -> ((Float) -> Vec3)? {
+        guard !binder.rings.isEmpty else { return nil }
+        var flat = to - from
+        flat.y = 0
+        let forward = simd_length_squared(flat) > 1e-8 ? simd_normalize(flat) : Vec3(0, 0, 1)
+        let up = Vec3(0, 1, 0), side = simd_normalize(simd_cross(up, forward))
+        var points = [from], knots: [Float] = [0]
+        for ring in binder.rings {
+            var jitter = Vec3.zero
+            if ring.radius > 0 {
+                let a = random.next() * 2 * .pi, b = acos(random.next() * 2 - 1), r = ring.radius * cbrt(random.next())
+                jitter = Vec3(sin(b) * cos(a), cos(b), sin(b) * sin(a)) * r
+            }
+            points.append(from + side * ring.position.x + up * ring.position.y + forward * ring.position.z + jitter)
+            knots.append(Eval.curve(carry, CurveTime(Float(ring.time)), 0))
+        }
+        points.append(to)
+        knots.append(1)
+        if zip(knots, knots.dropFirst()).contains(where: { $0 >= $1 }) { knots = (0..<points.count).map { Float($0) / Float(points.count - 1) } }
+        let n = points.count
+        func tangent(_ i: Int) -> Vec3 {
+            let a = max(0, i - 1), b = min(n - 1, i + 1)
+            return (points[b] - points[a]) / max(1e-5, knots[b] - knots[a])
+        }
+        return { u in
+            if u <= knots[0] { return points[0] + tangent(0) * (u - knots[0]) }
+            if u >= knots[n - 1] { return points[n - 1] + tangent(n - 1) * (u - knots[n - 1]) }
+            var i = 0
+            while i < n - 2 && u > knots[i + 1] { i += 1 }
+            let span = knots[i + 1] - knots[i], f = (u - knots[i]) / span
+            let f2 = f * f, f3 = f2 * f
+            let h00 = 2 * f3 - 3 * f2 + 1, h10 = f3 - 2 * f2 + f, h01 = -2 * f3 + 3 * f2, h11 = f3 - f2
+            return points[i] * h00 + tangent(i) * (h10 * span) + points[i + 1] * h01 + tangent(i + 1) * (h11 * span)
+        }
+    }
+
     static var targetPosition = Vec3(0, 0, 6)
 
     private func bindPoint(onTarget: Bool, targetPoint: Int, id: Int) -> Mat4 {
-        var m = onTarget && PreviewRules.isOn("binderTarget") ? Math3D.translation(AvfxSimulation.targetPosition) : matrix_identity_float4x4
+        var m = onTarget && PreviewRules.isOn("binderTarget")
+            ? Math3D.compose(AvfxSimulation.targetPosition, simd_quatf(angle: .pi, axis: Vec3(0, 1, 0)), Vec3(1, 1, 1)) : matrix_identity_float4x4
         if useBindPoints, targetPoint == 3, let point = AvfxSimulation.bindPoints[id] { m = m * Math3D.translation(point) }
         return m
+    }
+
+    private var guides: [Int: [Vec3]] = [:]
+
+    private func weaponLine(_ type: Int) -> (base: Vec3, tip: Vec3) {
+        let points = AvfxSimulation.bindPoints
+        let base = points[3] ?? Vec3(0.3, 0.85, 0.1), tip = points[5] ?? Vec3(0.3, 1.6, 0.1)
+        guard type == 1 else { return (base, tip) }
+        let hand = points[78] ?? Vec3(-base.x, base.y, base.z)
+        let reach = tip - base
+        return (hand, hand + Vec3(-reach.x, reach.y, reach.z))
     }
 
     private func connectEnd(_ e: EmitterInstance, reverse: Bool) -> Vec3 {
@@ -780,8 +996,9 @@ final class AvfxSimulation {
     private func spawnEmitter(_ schema: REmitter, anchor: @escaping () -> Mat4, endFrames: Float, startAge: Float) -> EmitterInstance {
         let e = EmitterInstance(schema: schema, anchor: anchor, endFrames: endFrames, random: &random)
         e.cameraRotation = cameraRotation
+        e.cameraPosition = cameraPosition
         setupShape(e)
-        e.age = max(0, startAge)
+        e.age = startAge < 0 && PreviewRules.isOn("binderGenerateDelay") ? startAge : max(0, startAge)
         e.totalAge = e.age
         emitters.append(e)
         cueSound(e)
@@ -812,6 +1029,11 @@ final class AvfxSimulation {
         for start in Array(timelineStarts) {
             guard start.index >= 0, start.index < schema.timelines.count, timelineStarts.contains(where: { $0 === start }) else { continue }
             let timeline = schema.timelines[start.index]
+            if timeline.loopEnd > timeline.loopStart, timeline.loopStart >= 0, !released, !start.released, PreviewRules.isOn("timelineLoop"),
+               time - start.at >= Float(timeline.loopEnd) {
+                start.at += Float(timeline.loopEnd - timeline.loopStart)
+                for (i, item) in timeline.items.enumerated() where item.start >= timeline.loopStart { start.spawned.remove(i) }
+            }
             let local = time - start.at
             for (i, item) in timeline.items.enumerated() where item.clip >= 0 && item.emitter < 0 {
                 if !item.enabled || start.spawned.contains(i) || local < Float(item.start) { continue }
@@ -822,10 +1044,20 @@ final class AvfxSimulation {
                 if !item.enabled || start.spawned.contains(i) || local < Float(item.start) { continue }
                 start.spawned.insert(i)
                 if item.clip >= 0, item.clip < timeline.clips.count { runClip(timeline.clips[item.clip], from: start) }
-                guard item.emitter >= 0, item.emitter < schema.emitters.count else { continue }
                 let binder = item.binder >= 0 ? item.binder : timeline.binder
                 let end: Float = item.end > item.start ? Float(item.end - item.start) : 0
-                let e = spawnEmitter(schema.emitters[item.emitter], anchor: binderMatrix(binder), endFrames: end, startAge: local - Float(item.start))
+                let delay = binder >= 0 && binder < schema.binders.count && PreviewRules.isOn("binderGenerateDelay") ? Float(schema.binders[binder].generateDelay) : 0
+                if item.emitter < 0, item.effector >= 0, item.effector < schema.effectors.count, PreviewRules.isOn("timelineEffectors") {
+                    let carrier = spawnEmitter(effectorCarrier, anchor: binderMatrix(binder), endFrames: end, startAge: local - Float(item.start) - delay)
+                    carrier.effectorOverride = item.effector
+                    carrier.timeline = start.index
+                    carrier.instance = start
+                    carrier.binder = binder
+                    if item.end < 0 { carrier.holdWhile = { [unowned self] in !self.released && !start.released } }
+                    continue
+                }
+                guard item.emitter >= 0, item.emitter < schema.emitters.count else { continue }
+                let e = spawnEmitter(schema.emitters[item.emitter], anchor: binderMatrix(binder), endFrames: end, startAge: local - Float(item.start) - delay)
                 e.timeline = start.index
                 e.instance = start
                 e.binder = binder
@@ -842,6 +1074,7 @@ final class AvfxSimulation {
             if !isReleased(e), e.loops, e.age >= loopEnd { e.wrap(loopEnd - loopStart) }
             if e.moving { moveEmitter(e, frames) }
             e.cameraRotation = cameraRotation
+            e.cameraPosition = cameraPosition
             e.updateTransform()
             queue.append(e)
         }
@@ -916,8 +1149,19 @@ final class AvfxSimulation {
                     } else {
                         anchor = { spawnFrame }
                     }
+                    let grounded: () -> Mat4
+                    if Influence.noPosition(item.influenceCoord) {
+                        let inner = anchor, ground = groundY
+                        grounded = {
+                            var m = inner()
+                            m.columns.3.y = ground
+                            return m
+                        }
+                    } else {
+                        grounded = anchor
+                    }
                     let inheritLife = item.inheritParentLife && e.lifetime.isFinite && PreviewRules.isOn("inheritParentLife")
-                    let c = EmitterInstance(schema: child, anchor: anchor, endFrames: inheritLife ? max(1, e.lifetime - e.age) : 0, random: &random)
+                    let c = EmitterInstance(schema: child, anchor: grounded, endFrames: inheritLife ? max(1, e.lifetime - e.age) : 0, random: &random)
                     if item.generateDelayByOne && item.generateDelay > 0 { c.age = -Float(n * item.generateDelay); c.totalAge = c.age }
                     c.timeline = e.timeline
                     c.instance = e.instance
@@ -934,6 +1178,7 @@ final class AvfxSimulation {
                     }
                     c.parent = e
                     c.cameraRotation = cameraRotation
+                    c.cameraPosition = cameraPosition
                     if let point {
                         let speed = injectionSpeed(e) * revisedSpeedScale
                         if speed != 0 {
@@ -1045,8 +1290,8 @@ final class AvfxSimulation {
 
     private func modelChoice(_ ps: RParticle, _ seed: Float) -> Int? {
         let list = ps.modelIndices
-        guard list.count > 1, ps.modelRandom.count > 0, ps.morph == nil, PreviewRules.isOn("modelNumberRandom") else { return nil }
-        return min(list.count - 1, Int(seed * Float(ps.modelRandom.count + 1)))
+        guard list.count > 1, ps.modelRandom.count > 0, ps.morph == nil, ps.animationNumber == nil, PreviewRules.isOn("modelNumberRandom") else { return nil }
+        return min(Int(seed * Float(ps.modelRandom.count + 1)), ps.modelRandom.count) % list.count
     }
 
     private func morphTargets(_ ps: RParticle) -> [RenderGeometry]? {
@@ -1059,8 +1304,9 @@ final class AvfxSimulation {
 
     private func morph(_ p: ParticleInstance, _ t: CurveTime) {
         guard let shape = p.geometry, let curve = p.schema.morph, let targets = morphTargets(p.schema) else { return }
-        let m = min(max(Eval.curve(curve, t, 0), 0), Float(targets.count - 1))
-        let k = min(Int(m), targets.count - 2), f = m - Float(k)
+        let raw = Eval.curve(curve, t, 0)
+        let m = PreviewRules.isOn("morphExtrapolates") ? raw : min(max(raw, 0), Float(targets.count - 1))
+        let k = min(max(Int(m.rounded(.down)), 0), targets.count - 2), f = m - Float(k)
         let key = "\(k)|\(f)"
         guard shape.cacheKey != key else { return }
         shape.cacheKey = key
@@ -1099,7 +1345,8 @@ final class AvfxSimulation {
         case ParticleKind.decal: return GeometryBuilder.decal
         case ParticleKind.decalRing: return GeometryBuilder.ring(fan: ps.ringFan, inner: 0.5, outer: 0.5)
         case ParticleKind.laser: return GeometryBuilder.laser
-        case ParticleKind.disc: return ps.disc.map { GeometryBuilder.disc(countU: $0.countU, countV: $0.countV) }
+        case ParticleKind.disc:
+            return ps.disc.map { GeometryBuilder.disc(countU: $0.countU, countV: $0.countV, intervalFactorV: PreviewRules.isOn("discIntervalFactor") ? $0.intervalFactorV : 0) }
         default: return nil
         }
     }
@@ -1115,6 +1362,11 @@ final class AvfxSimulation {
         }
         sequence += 1
         let p = ParticleInstance(schema: ps, item: item, emitter: e, geometry: shape, cloud: cloud, sequence: sequence, random: &random)
+        if let count = ps.polygonCount, PreviewRules.isOn("polygonSides") {
+            let at = CurveTime(0)
+            let sides = Eval.curve(count, at, 4) + Eval.randomOffset(ps.polygonCountRandom, type: count.random, at, p.seed.get(37))
+            if sides >= 3 { p.geometry = GeometryBuilder.polygon(Int(sides.rounded(.down))) } else if sides < 3 { p.geometry = nil }
+        }
         if let pick = modelChoice(ps, p.seed.get(36)), let picked = model(ps.modelIndices[pick]) {
             p.geometry = picked
             p.modelPick = pick
@@ -1152,6 +1404,7 @@ final class AvfxSimulation {
         if item.influenceCoord == Influence.initialPosition && !p.follow && !p.withOptions {
             p.spawnMatrix = Math3D.compose(Math3D.position(p.spawnMatrix), simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), schema.revisedScale)
         }
+        p.launch = (p.velocity, p.localVelocity)
         for _ in 0..<preRun {
             move(p, 1)
             p.age += 1
@@ -1205,9 +1458,30 @@ final class AvfxSimulation {
     func dissolve(filter: VisibilityFilter) -> DissolveState? {
         for p in particles {
             let s = p.schema
-            guard let d = s.dissolve, d.target & 1 != 0, visible(p, filter), let tc1 = s.tc1, tc1.enabled, let texture = tc1.textures.first else { continue }
+            guard let d = s.dissolve, d.target & 1 != 0, visible(p, filter) else { continue }
+            let shaped = PreviewRules.isOn("dissolveShape")
+            let tc1 = s.tc1.flatMap { $0.enabled ? $0 : nil }
+            let texture = tc1?.textures.first ?? -1
+            guard shaped || texture >= 0 else { continue }
             let t = p.curveTime
             var state = DissolveState(texture: texture, amount: Eval.curve(d.erosion, t, 0), edge: max(0.001, Eval.curve(d.endWidth, t, 0.1)), reverse: d.reverse)
+            if shaped {
+                let local = Math3D.compose(Eval.axes(s.position, t, 0, p.seed, 1), Math3D.euler(Eval.axes(s.rotation, t, 0, p.seed, 4), order: s.rotationOrder),
+                                           Eval.axes(s.scale, t, 1, p.seed, 8))
+                let parent = p.follow ? p.emitter.world : p.spawnMatrix
+                let world = Math3D.translation(p.travel) * parent * local
+                state.shaped = true
+                state.shape = d.shape
+                state.inverse = world.inverse
+                state.widths = Vec3(max(0, Eval.curve(d.startWidth, t, 0)), max(0, Eval.curve(d.midWidth, t, 0)), max(0, Eval.curve(d.endWidth, t, 0)))
+                let strength = Eval.curve(d.intensity, t, 1)
+                state.colors = [d.startColor, d.midColor, d.endColor].map { c in
+                    guard let c else { return .zero }
+                    let v = Eval.color(c, t, p.seed)
+                    return Vec4(v.x * strength, v.y * strength, v.z * strength, min(max(v.w, 0), 1))
+                }
+            }
+            guard let tc1 else { return state }
             let color = Eval.color(s.color, t, p.seed)
             let strength = Eval.curve(d.intensity, t, 1)
             state.color = Vec3(color.x, color.y, color.z) * strength
@@ -1256,9 +1530,8 @@ final class AvfxSimulation {
         var effects: [ScreenEffect] = []
         var quake: Float = 0, phase: Float = 0
         let endsWithEmitter = PreviewRules.isOn("effectorEndsWithEmitter")
-        for e in emitters where e.schema.index < schema.emitterEffectors.count && (e.alive || !endsWithEmitter) {
-            let index = schema.emitterEffectors[e.schema.index]
-            guard index >= 0, index < schema.effectors.count else { continue }
+        for e in emitters where e.alive || !endsWithEmitter {
+            guard let index = effectorIndex(e) else { continue }
             if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
             let effector = schema.effectors[index]
             let age = effectorTime(effector, e.age)
@@ -1271,9 +1544,29 @@ final class AvfxSimulation {
                 var strength = Eval.curve(effector.strength, t, 1) * fade(e.dying)
                 if effector.fadeEnd > effector.fadeStart { strength *= 1 - min(max((distance - effector.fadeStart) / (effector.fadeEnd - effector.fadeStart), 0), 1) }
                 guard strength > 0.001 else { continue }
-                effects.append(ScreenEffect(kind: effector.type, position: origin, strength: strength, length: Eval.curve(effector.length, t, 0.1),
-                                            inner: Eval.curve(effector.inner, t, 0), outer: Eval.curve(effector.outer, t, 0), angle: Eval.curve(effector.angle, t, 0),
-                                            gradation: Eval.curve(effector.gradation, t, 0)))
+                var effect = ScreenEffect(kind: effector.type, position: origin, strength: strength, length: Eval.curve(effector.length, t, 0.1),
+                                          inner: Eval.curve(effector.inner, t, 0), outer: Eval.curve(effector.outer, t, 0), angle: Eval.curve(effector.angle, t, 0),
+                                          gradation: Eval.curve(effector.gradation, t, 0))
+                if PreviewRules.isOn("screenEffectorFields") {
+                    switch effector.type {
+                    case 3:
+                        let ramp = min(1, age / 30)
+                        effect.extra = Vec4(Eval.curve(effector.refraction, t, 0) * ramp, Eval.curve(effector.separation, t, 0) * ramp,
+                                            Eval.curve(effector.effectStrength, t, 0) * ramp, 1)
+                    case 4:
+                        if effect.outer < effect.inner {
+                            effect.inner = 0
+                            effect.outer = 0.1
+                        }
+                        effect.extra = Vec4(0, 0, 0, 1)
+                    case 5:
+                        effect.angle *= .pi / 180
+                        effect.strength *= effector.angleStrength.map { Eval.curve($0, t, 1) } ?? 1
+                        effect.extra = Vec4(effector.singleSide ? 1 : 0, 0, 0, 1)
+                    default: break
+                    }
+                }
+                effects.append(effect)
             case 6, 9:
                 guard PreviewRules.isOn("cameraQuake") else { continue }
                 let position = Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1))
@@ -1295,9 +1588,8 @@ final class AvfxSimulation {
         var result: [LightDraw] = []
         guard PreviewRules.isOn("lights") else { return result }
         let endsWithEmitter = PreviewRules.isOn("effectorEndsWithEmitter")
-        for e in emitters where e.schema.index < schema.emitterEffectors.count && (e.alive || !endsWithEmitter) {
-            let index = schema.emitterEffectors[e.schema.index]
-            guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 0 || schema.effectors[index].type == 1 else { continue }
+        for e in emitters where e.alive || !endsWithEmitter {
+            guard let index = effectorIndex(e), schema.effectors[index].type == 0 || schema.effectors[index].type == 1 else { continue }
             if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
             let effector = schema.effectors[index]
             let t = CurveTime(effectorTime(effector, e.age))
@@ -1316,9 +1608,12 @@ final class AvfxSimulation {
                                         distance: 0, decay: 0))
                 continue
             }
+            let maxAttenuation = effector.attenuation >= 3 && PreviewRules.isOn("pointLightMax")
+            let scaleDistance = Eval.curve(effector.distance, t, 0)
             result.append(LightDraw(position: Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1)),
-                                    color: Vec3(color.x, color.y, color.z) / peak * strength, distance: Eval.curve(effector.distance, t, 0),
-                                    decay: Float(effector.attenuation + 1)))
+                                    color: Vec3(color.x, color.y, color.z) / peak * strength, distance: scaleDistance,
+                                    decay: maxAttenuation ? 0 : Float(effector.attenuation + 1),
+                                    reach: scaleDistance > 0 ? max(0, Eval.curve(effector.color.bri, t, 1)) / scaleDistance : 1e6, point: true))
         }
         return result
     }
@@ -1380,10 +1675,12 @@ final class AvfxSimulation {
     private var renderPass = 0
 
     private func particleDirectionalLight(_ filter: VisibilityFilter) -> (direction: Vec3, ambient: Vec3, color: Vec3)? {
+        if schema.directionalLightSource == 2, PreviewRules.isOn("inGameLight") {
+            return (-simd_normalize(Vec3(0.4, 0.8, 0.45)), Vec3(repeating: 0.45), Vec3(repeating: 0.55))
+        }
         guard schema.directionalLightSource == 1, PreviewRules.isOn("particleDirectionalLight") else { return nil }
-        for e in emitters where e.alive && e.schema.index < schema.emitterEffectors.count {
-            let index = schema.emitterEffectors[e.schema.index]
-            guard index >= 0, index < schema.effectors.count, schema.effectors[index].type == 1 else { continue }
+        for e in emitters where e.alive {
+            guard let index = effectorIndex(e), schema.effectors[index].type == 1 else { continue }
             if filter.hidden.contains(.emitter(e.schema.index)) || filter.hidden.contains(.timeline(e.timeline)) { continue }
             let effector = schema.effectors[index]
             let t = CurveTime(effectorTime(effector, e.age))
@@ -1423,12 +1720,22 @@ final class AvfxSimulation {
         let overScene = [0, 8, 9].contains(schema.drawLayer) && PreviewRules.isOn("drawLayerOverScene")
         let keepEmitterRotation = PreviewRules.isOn("billboardModelKeepsEmitterRotation")
         let particleLight = particleDirectionalLight(filter)
+        let localPoint = schema.pointLightSources.0 == 3 || schema.pointLightSources.1 == 3
+        let particlePoints = particleLight != nil && localPoint && PreviewRules.isOn("particlePointLights") ? Array(lights(filter: filter).filter(\.point).prefix(2)) : []
         var draws: [ParticleDraw] = []
         for p in particles {
             guard p.geometry != nil, visible(p, filter) else { continue }
+            if p.schema.movementParticle, PreviewRules.isOn("movementParticle") { continue }
             let s = p.schema
             let t = p.curveTime
             if s.morph != nil { morph(p, t) }
+            if let number = s.animationNumber, s.morph == nil, s.modelIndices.count > 1, PreviewRules.isOn("modelAnimationNumber") {
+                let pick = min(max(Int(Eval.curve(number, t, 0).rounded(.down)), 0), s.modelIndices.count - 1)
+                if pick != p.modelPick, let picked = model(s.modelIndices[pick]) {
+                    p.geometry = picked
+                    p.modelPick = pick
+                }
+            }
             if p.modelPick >= 0, s.modelRandom.interval > 0, s.modelRandom.type >= 3 {
                 let step = Float(Int(p.age / Float(s.modelRandom.interval)))
                 let mixed = sin(p.seed.get(36) * 12.9898 + step * 78.233) * 43758.5453
@@ -1496,6 +1803,22 @@ final class AvfxSimulation {
                 if !p.localFlight && keepPosition && simd_length_squared(p.offset) > 0 { parent = parent * Math3D.translation(p.offset) }
             } else {
                 parent = p.spawnMatrix
+            }
+            if Influence.noPosition(p.item.influenceCoord) { parent.columns.3.y = groundY }
+            if p.follow, p.item.unstickiness > 1, PreviewRules.isOn("influenceUnstickiness") {
+                let target = Math3D.position(parent)
+                var held = p.lagPosition ?? target
+                if recording {
+                    var stepped = p.lagTime
+                    if p.lagPosition == nil { stepped = p.totalAge }
+                    while stepped + 1 <= p.totalAge {
+                        stepped += 1
+                        held += (target - held) / p.item.unstickiness
+                    }
+                    p.lagPosition = held
+                    p.lagTime = stepped
+                }
+                parent.columns.3 = Vec4(held.x, held.y, held.z, 1)
             }
             if simd_length_squared(p.travel) > 0 { parent = Math3D.translation(p.travel) * parent }
             var m = parent * local
@@ -1578,6 +1901,16 @@ final class AvfxSimulation {
                 GeometryBuilder.setDisc(shape, countU: disc.countU, countV: disc.countV, shape: discShape(disc, t, p.seed), inner: inner, outer: outer)
             }
             if s.type == ParticleKind.decal || s.type == ParticleKind.decalRing {
+                if s.decalScalingScale != 1, PreviewRules.isOn("decalScalingScale") {
+                    var root = p.emitter
+                    while let up = root.parent { root = up }
+                    let bias = root.binder >= 0 && root.binder < schema.binders.count && PreviewRules.isOn("vfxScaleBias") ? schema.binders[root.binder].vfxScaleBias : 1
+                    if bias != 0, bias != 1 {
+                        let k = (1 - s.decalScalingScale) / bias + s.decalScalingScale
+                        let parts = Math3D.decompose(m)
+                        m = Math3D.compose(parts.position, parts.rotation, parts.scale * k)
+                    }
+                }
                 var parts = Math3D.decompose(m)
                 if abs(parts.position.y - groundY) <= abs(parts.scale.y) / 2 {
                     parts.position.y = groundY
@@ -1589,35 +1922,62 @@ final class AvfxSimulation {
 
             if let trail = p.trail, let line = s.polyline {
                 let count = max(2, line.pointCount)
+                var space = matrix_identity_float4x4
+                if line.isLocal, PreviewRules.isOn("polylineLocal") {
+                    var root = p.emitter
+                    while let up = root.parent { root = up }
+                    space = root.anchor()
+                }
+                let toSpace = space.inverse
                 if line.createType == 1 {
                     let chain = PreviewRules.isOn("polylineChain")
                     trail.softness = chain ? Eval.curve(line.softness, t, 0) : nil
                     trail.historyFrames = chain ? Float(line.pointCount) / 2 + 2
                         : p.lifetime.isFinite && PreviewRules.isOn("trailWholePath") ? .infinity : Float(line.pointCount) / 2
-                    if recording { trail.record(p.totalAge, Math3D.position(m)) }
+                    var head = Math3D.position(m)
+                    if line.bindWeapon, PreviewRules.isOn("polylineBindWeapon") { head = weaponLine(line.bindWeaponType).tip }
+                    if recording { trail.record(p.totalAge, Math3D.point(toSpace, head)) }
+                } else if line.bindWeapon, PreviewRules.isOn("polylineBindWeapon") {
+                    let weapon = weaponLine(line.bindWeaponType)
+                    trail.setPoints((0..<count).map { Math3D.point(toSpace, weapon.base + (weapon.tip - weapon.base) * (Float($0) / Float(count - 1))) })
                 } else if line.connectTarget, PreviewRules.isOn("polylineConnectTarget") {
                     let from = Math3D.position(m), to = connectEnd(p.emitter, reverse: line.connectReverse)
-                    trail.setPoints((0..<count).map { from + (to - from) * (Float($0) / Float(count - 1)) })
+                    trail.setPoints((0..<count).map { Math3D.point(toSpace, from + (to - from) * (Float($0) / Float(count - 1))) })
                 } else {
                     let length = Eval.curve(line.length, t, 1)
                     let base = PreviewRules.isOn("polylineAxisFromBase") ? s.rotationBase : 1
                     let axis = base == 0 ? Vec3(1, 0, 0) : base == 2 ? Vec3(0, 0, 1) : Vec3(0, 1, 0)
-                    trail.setPoints((0..<count).map { Math3D.point(m, axis * (length * Float($0) / Float(count - 1))) })
+                    trail.setPoints((0..<count).map { Math3D.point(toSpace, Math3D.point(m, axis * (length * Float($0) / Float(count - 1)))) })
                 }
                 guard trail.drawable else { continue }
                 trail.vFromHead = PreviewRules.isOn("polylineVFromHead")
                 let axis = line.noBillboardAxis == 0 ? Vec3(1, 0, 0) : line.noBillboardAxis == 2 ? Vec3(0, 0, 1) : Vec3(0, 1, 0)
-                trail.fixedSide = line.noBillboard && PreviewRules.isOn("polylineShape") ? Math3D.direction(m, axis) : nil
+                trail.fixedSide = line.noBillboard && PreviewRules.isOn("polylineShape") ? Math3D.direction(toSpace * m, axis) : nil
                 func tint(_ c: RColor?) -> Vec4 { c.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1) }
                 let widthScale = PreviewRules.isOn("polylineWidthRevised") ? (schema.revisedScale.x + schema.revisedScale.y) / 2 : 1
                 let spread = PreviewRules.isOn("polylineWidthRandom")
                 func width(_ c: RCurve?, _ k: Int) -> Float { spread ? Eval.withRandom(c, line.widthRandom[k], t, 1, p.seed.get(16 + k)) : Eval.curve(c, t, 1) }
-                trail.build(camera: camera.position, width: width(line.width, 0) * widthScale, begin: width(line.widthBegin, 1),
+                trail.jitter = PreviewRules.isOn("polylinePointDistortion") ? abs(Eval.curve(line.pointDistortion, t, 0)) : 0
+                trail.jitterPhase = Int((p.totalAge * 2).rounded(.down)) &+ p.sequence &* 7919
+                trail.build(camera: Math3D.point(toSpace, camera.position), width: width(line.width, 0) * widthScale, begin: width(line.widthBegin, 1),
                             center: width(line.widthCenter, 2), end: width(line.widthEnd, 3),
                             colors: PolylineColors(begin: tint(line.colorBegin), center: tint(line.colorCenter), end: tint(line.colorEnd),
                                                    edgeBegin: tint(line.colorEdgeBegin), edgeCenter: tint(line.colorEdgeCenter),
                                                    edgeEnd: tint(line.colorEdgeEnd)))
-                m = matrix_identity_float4x4
+                if line.tagNumber > 0, PreviewRules.isOn("polylineTagHelper") {
+                    if recording { guides[line.tagNumber] = trail.centerline.map { Math3D.point(space, $0) } }
+                    continue
+                }
+                m = space
+            }
+            if s.collision == 0, recording, PreviewRules.isOn("collisionRespawn"), Math3D.position(m).y < groundY, p.age > 0 {
+                p.age = 0
+                p.totalAge = 0
+                p.travel = .zero
+                p.localTravel = .zero
+                p.velocity = p.launch.velocity
+                p.localVelocity = p.launch.local
+                p.spin = nil
             }
             if s.collision == 2, collisionFreeze {
                 let parts = Math3D.decompose(m)
@@ -1628,6 +1988,7 @@ final class AvfxSimulation {
             var color = Eval.color(s.color, t, p.seed)
             if let link { color *= Eval.color(link.color, t, p.linkSeed) }
             color.w *= fade(p.dying) * angleFade
+            if !fadeIns.isEmpty { color.w *= fadeIn(p.emitter) }
             if let clip = schema.ownClip, PreviewRules.isOn("effectOwnClip") {
                 let reach = simd_length(Math3D.position(m == matrix_identity_float4x4 ? parent : m) - camera.position)
                 func ramp(_ a: Float, _ b: Float) -> Float {
@@ -1665,9 +2026,35 @@ final class AvfxSimulation {
             draw.order = s.drawPriority * 1000 + ((mode == 0 || mode == 8) && PreviewRules.isOn("blendAfterAdditive") ? 500 : 0) + s.index
             draw.sequence = p.sequence
             draw.overScene = overScene
+            if (s.fresnelType == 2 || s.fresnelType == 3), PreviewRules.isOn("fresnelAxis") {
+                let turn = Math3D.euler(Eval.axes(s.fresnelRotation, t, 0, p.seed, 9), order: s.rotationOrder)
+                let axis = s.fresnelType == 2 ? Math3D.direction(m, turn.act(Vec3(0, 0, 1))) : simd_normalize(turn.act(Vec3(0, 0, 1)))
+                draw.fresnelAxis = Vec4(axis.x, axis.y, axis.z, 1)
+            }
             if s.lit, let particleLight {
                 draw.lit = min(max(s.lightType, 0), 2) + 1
                 draw.light = particleLight
+                draw.pointLights = particlePoints
+                draw.pointLightType = s.pointLightType
+                draw.normalPower = abs(Eval.curve(s.normalPower, t, 1))
+            }
+            if let skin = s.skin, PreviewRules.isOn("modelSkinMasks") {
+                let emissive = Eval.curve(skin.emissive, t, 0) + Eval.randomOffset(skin.emissiveRandom, type: skin.emissive?.random ?? 0, t, p.seed.get(38))
+                draw.color.x *= max(0, 1 + emissive)
+                draw.color.y *= max(0, 1 + emissive)
+                draw.color.z *= max(0, 1 + emissive)
+                let fresnel = Eval.curve(skin.fresnel, t, 0)
+                if fresnel > 0 {
+                    let specular = Eval.curve(skin.specular, t, 0) + Eval.randomOffset(skin.specularRandom, type: skin.specular?.random ?? 0, t, p.seed.get(39))
+                    let k = max(0, 1 + specular * fresnel)
+                    draw.colorBegin = Vec4(draw.colorBegin.x * k, draw.colorBegin.y * k, draw.colorBegin.z * k, draw.colorBegin.w)
+                }
+                let density = Eval.axes(skin.density, t, 0, p.seed, 33)
+                let su = 1 / max(0.05, 1 + density.x + density.z), sv = 1 / max(0.05, 1 + density.y + density.z)
+                for slot in 0..<5 {
+                    let u = draw.uvMatrix[slot]
+                    draw.uvMatrix[slot] = Vec4(u.x * su, u.y * su, u.z * sv, u.w * sv)
+                }
             }
             if s.colorBegin != nil || s.colorEnd != nil {
                 draw.colorBegin = s.colorBegin.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1)
@@ -1698,6 +2085,7 @@ final class AvfxSimulation {
             if let cloud = p.cloud {
                 let parts = Math3D.decompose(m)
                 let lineLength = Eval.withRandom(s.lineLength, s.lineLengthRandom, t, 1, p.seed.get(14))
+                if let tag = s.simple?.polylineTag, tag > 0 { cloud.guide = guides[tag] ?? [] }
                 let sprites = cloud.render(frame: m, cameraRotation: camera.rotation, cameraPosition: camera.position, particleScale: parts.scale,
                                            pixelAngle: pixelAngle, lineLength: lineLength, revisedScale: schema.revisedScale)
                 for sprite in sprites {
@@ -1710,6 +2098,22 @@ final class AvfxSimulation {
                 }
             } else {
                 draws.append(draw)
+                if let disc = s.disc, disc.partsCount > 1, PreviewRules.isOn("discPartsCount") {
+                    while p.discCopies.count < disc.partsCount - 1 {
+                        var seeded = SeededRandom(seed: UInt64(p.sequence) &* 2654435761 &+ UInt64(p.discCopies.count + 1))
+                        p.discCopies.append((GeometryBuilder.disc(countU: disc.countU, countV: disc.countV,
+                                                                  intervalFactorV: PreviewRules.isOn("discIntervalFactor") ? disc.intervalFactorV : 0),
+                                             RandomSeed(&seeded, count: 40)))
+                    }
+                    let inner = disc.colorInner.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1)
+                    let outer = disc.colorOuter.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1)
+                    for copy in p.discCopies {
+                        GeometryBuilder.setDisc(copy.geometry, countU: disc.countU, countV: disc.countV, shape: discShape(disc, t, copy.seed), inner: inner, outer: outer)
+                        var extra = draw
+                        extra.geometry = copy.geometry
+                        draws.append(extra)
+                    }
+                }
             }
         }
         let orders = draws.map(\.order)

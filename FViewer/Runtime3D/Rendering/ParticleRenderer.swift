@@ -29,6 +29,10 @@ private struct ParticleUniforms {
     var litDirection = Vec4.zero
     var litAmbient = Vec4.zero
     var litColor = Vec4.zero
+    var fresnelAxis = Vec4.zero
+    var pointPosition: (Vec4, Vec4) = (.zero, .zero)
+    var pointColor: (Vec4, Vec4) = (.zero, .zero)
+    var normalInfo = Vec4.zero
 }
 
 struct LoadedTexture {
@@ -38,8 +42,8 @@ struct LoadedTexture {
 
 private struct PreparedMaterial {
     var uniforms = ParticleUniforms()
-    var textures: [MTLTexture?] = [nil, nil, nil, nil, nil, nil]
-    var samplers: [MTLSamplerState?] = [nil, nil, nil, nil, nil, nil]
+    var textures: [MTLTexture?] = [nil, nil, nil, nil, nil, nil, nil]
+    var samplers: [MTLSamplerState?] = [nil, nil, nil, nil, nil, nil, nil]
     var frames: [MTLTexture?] = []
     var blend = 0
     var depthTest = true
@@ -244,6 +248,12 @@ final class ParticleRenderer {
             m.textures[5] = texture.texture
             m.samplers[5] = sampler(tp.border, tp.border)
         }
+        if ps.lit, PreviewRules.isOn("normalMap"), let tn = ps.normalLayer, tn.enabled, let first = tn.textures.first, let texture = textureProvider(first) {
+            m.textures[6] = texture.texture
+            m.samplers[6] = sampler(tn.borderU, tn.borderV)
+            let sets = [ps.tc1, ps.tc2, ps.distortion, ps.tc3, ps.tc4].map { $0?.uvSet }
+            m.uniforms.normalInfo = Vec4(1, Float(sets.firstIndex { $0 == tn.uvSet } ?? 0), 1, 0)
+        }
         func channel(_ layer: RTextureLayer?) -> Float { isModel ? Float(min(max(layer?.uvSet ?? 0, 0), 3)) : 0 }
         m.uniforms.channels = Vec4(channel(layers[0]), channel(layers[1]), channel(distortion), channel(layers[2]))
         m.uniforms.misc = Vec4(channel(layers[3]), 0, 0, ps.depthOffset)
@@ -342,7 +352,7 @@ final class ParticleRenderer {
         let softDepthOffset: Float = PreviewRules.isOn("softDepthOffset") ? 1 : 0
         let fallbackSampler = sampler(0, 0)
         var boundPipeline: ObjectIdentifier?, boundDepth: ObjectIdentifier?, boundCull: MTLCullMode?, boundVertices: ObjectIdentifier?
-        var boundTextures = [ObjectIdentifier??](repeating: .none, count: 8), boundSamplers = [ObjectIdentifier??](repeating: .none, count: 6)
+        var boundTextures = [ObjectIdentifier??](repeating: .none, count: 9), boundSamplers = [ObjectIdentifier??](repeating: .none, count: 7)
         func bind(_ texture: MTLTexture?, _ slot: Int) {
             let id = texture.map { ObjectIdentifier($0) }
             if boundTextures[slot] != .some(id) {
@@ -370,6 +380,16 @@ final class ParticleRenderer {
             u.litDirection = Vec4(draw.light.direction.x, draw.light.direction.y, draw.light.direction.z, Float(draw.lit))
             u.litAmbient = Vec4(draw.light.ambient.x, draw.light.ambient.y, draw.light.ambient.z, 0)
             u.litColor = Vec4(draw.light.color.x, draw.light.color.y, draw.light.color.z, 0)
+            u.fresnelAxis = draw.fresnelAxis
+            u.pointPosition = (.zero, .zero)
+            u.pointColor = (.zero, .zero)
+            u.normalInfo.z = draw.normalPower
+            u.normalInfo.w = Float(draw.pointLightType)
+            for (k, light) in draw.pointLights.prefix(2).enumerated() {
+                let position = Vec4(light.position.x, light.position.y, light.position.z, light.decay)
+                let color = Vec4(light.color.x, light.color.y, light.color.z, light.reach)
+                if k == 0 { u.pointPosition.0 = position; u.pointColor.0 = color } else { u.pointPosition.1 = position; u.pointColor.1 = color }
+            }
             u.spriteColor = draw.spriteColor
             u.spriteCell = draw.spriteCell
             u.uvMatrix = (draw.uvMatrix[0], draw.uvMatrix[1], draw.uvMatrix[2], draw.uvMatrix[3], draw.uvMatrix[4])
@@ -404,10 +424,10 @@ final class ParticleRenderer {
             }
             encoder.setVertexBytes(&u, length: MemoryLayout<ParticleUniforms>.stride, index: 1)
             encoder.setFragmentBytes(&u, length: MemoryLayout<ParticleUniforms>.stride, index: 1)
-            for slot in 0..<6 {
+            for slot in 0..<7 {
                 var texture = material.textures[slot]
                 if slot == 0, draw.frame > 0, draw.frame < material.frames.count, let frame = material.frames[draw.frame] { texture = frame }
-                bind(texture ?? white, slot)
+                bind(texture ?? white, slot == 6 ? 8 : slot)
                 let state = material.samplers[slot] ?? fallbackSampler
                 let id = state.map { ObjectIdentifier($0) }
                 if boundSamplers[slot] != .some(id) {
