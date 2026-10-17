@@ -103,7 +103,7 @@ Textures are read from `.atex` and `.tex` (BC1–BC5, BC7 and uncompressed forma
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
