@@ -91,7 +91,7 @@ vertex VOut particleVertex(VIn in [[stage_in]], constant U &u [[buffer(1)]]) {
     out.worldNormal = (u.normalMatrix * float4(in.normal, 0.0)).xyz;
     out.position = u.projection * mv;
     float depthOffset = u.misc.w;
-    float pull = u.flags4.y > 0.5 ? depthOffset * length(mv.xyz) : depthOffset;
+    float pull = u.flags4.y > 0.5 ? min(depthOffset, max(length(mv.xyz) - 0.05, 0.0)) : depthOffset;
     out.viewDistance = u.scene2.z > 0.5 ? -(mv.xyz + normalize(-mv.xyz) * pull).z : -mv.z;
     if (depthOffset != 0.0) {
         float4 pulled = u.projection * float4(mv.xyz + normalize(-mv.xyz) * pull, 1.0);

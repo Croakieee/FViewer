@@ -341,8 +341,6 @@ nonisolated final class RParticle: @unchecked Sendable {
     var movementParticle = false
     var skin: (emissive: RCurve?, emissiveRandom: RCurve?, specular: RCurve?, specularRandom: RCurve?, fresnel: RCurve?, density: RCurve3)?
     var decalScalingScale: Float = 1
-    var polygonCount: RCurve?
-    var polygonCountRandom: RCurve?
     var fresnelRotation = RCurve3()
     var index: Int
     var type: Int
@@ -556,7 +554,11 @@ private extension AvfxBlock {
 enum AvfxSchemaReader {
     static func curve(_ block: AvfxBlock?, color: Bool = false) -> RCurve? {
         guard let block, block.children != nil else { return nil }
-        let keys = block.curveKeys.sorted { $0.time < $1.time }
+        var keys = block.curveKeys
+        for i in keys.indices.dropFirst() where keys[i].time < 0 && keys[i].time < keys[i - 1].time {
+            keys[i].time += 65536
+        }
+        keys.sort { $0.time < $1.time }
         if keys.isEmpty { return nil }
         return RCurve(keys: keys, pre: block.int("BvPr"), post: block.int("BvPo"), random: block.int("RanT"), color: color)
     }
@@ -750,10 +752,6 @@ enum AvfxSchemaReader {
                 clipNear: p.bool("bNea") ? (p.float("NeSt"), p.float("NeEd")) : nil, clipFar: p.bool("bFar") ? (p.float("FaSt"), p.float("FaEd")) : nil,
                 clipFromCaster: p.int("FaBP") == 1)
             particle.collision = p.int("Coll", -1)
-            if p.int("PrVT") == 9 {
-                particle.polygonCount = curve(data?.child("Cnt"))
-                particle.polygonCountRandom = curve(data?.child("CntR"))
-            }
             particle.fresnelRotation = curve3(data?.child("FrRt"))
             if p.int("PrVT") == 1, data?.bool("bLgt") == true, PreviewRules.isOn("powderLighting") {
                 particle.lit = true

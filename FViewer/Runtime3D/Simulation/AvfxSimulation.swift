@@ -56,6 +56,7 @@ struct ParticleDraw {
     var frame = 0
     var distortPower: Float = 0
     var paletteOffset: Float = 0
+    var depthCentre: Vec3?
     var spriteColor = Vec4(1, 1, 1, 1)
     var spriteCell = Vec4(0, 0, 1, 1)
     var isSprite = false
@@ -173,12 +174,19 @@ final class EmitterInstance {
     var injectedChildren: [Int: Int] = [:]
     var cameraRotation: simd_quatf?
     var cameraPosition: Vec3?
+    var born = false
+    static var birthCreates = true
+    static var pastLife = true
+    static var ignoreEnabled = true
+    private var firstSpawn: [Float] = []
+    private var firstChild: [Float] = []
 
     init(schema: REmitter, anchor: @escaping () -> Mat4, endFrames: Float, random: inout SeededRandom) {
         self.schema = schema
         self.anchor = anchor
         seed = RandomSeed(&random, count: 40)
-        let life = lifeFrames(schema.life.value, schema.life.random, seed.get(0), type: schema.life.randomType)
+        var life = lifeFrames(schema.life.value, schema.life.random, seed.get(0), type: schema.life.randomType)
+        if schema.life.value == 0, endFrames > 0, PreviewRules.isOn("emitterLifeZeroWindow") { life = .infinity }
         lifetime = min(life, endFrames > 0 ? endFrames : .infinity)
         let lifetime = lifetime
         let loops = schema.loopEnd > schema.loopStart && schema.loopStart >= 0
@@ -191,6 +199,14 @@ final class EmitterInstance {
         }
         nextSpawn = schema.particleItems.map(first)
         nextChild = schema.emitterItems.map(first)
+        firstSpawn = nextSpawn
+        firstChild = nextChild
+    }
+
+    var delayPending: Bool {
+        guard !stopped, EmitterInstance.pastLife else { return false }
+        return zip(nextSpawn, firstSpawn).contains { $0 == $1 && $0 >= lifetime && $0 < 600 }
+            || zip(nextChild, firstChild).contains { $0 == $1 && $0 >= lifetime && $0 < 600 }
     }
 
     var alive: Bool { age < lifetime || (holdWhile?() ?? false) }
@@ -357,15 +373,20 @@ final class EmitterInstance {
         let items = particles ? schema.particleItems : schema.emitterItems
         var next = particles ? nextSpawn : nextChild
         var out: [(REmitterItem, Int)] = []
-        guard alive, !stopped else { return out }
+        let open = alive
+        let birthCreates = EmitterInstance.birthCreates
+        let pastLife = EmitterInstance.pastLife
+        let firsts = particles ? firstSpawn : firstChild
+        guard !stopped, open || birthCreates || pastLife else { return out }
         for i in items.indices {
             let item = items[i]
-            if !item.enabled {
+            if !item.enabled && !EmitterInstance.ignoreEnabled {
                 next[i] = .infinity
                 continue
             }
             var guardCount = 0
-            while age >= next[i] && guardCount < limit {
+            while age >= next[i] && guardCount < limit
+                    && (open || (birthCreates && next[i] < lifetime) || (pastLife && i < firsts.count && next[i] == firsts[i] && next[i] < 600)) {
                 guardCount += 1
                 let at = CurveTime(next[i])
                 let single = item.createTime == 1 || (item.createTime == 2 && PreviewRules.isOn("createTimeLast"))
@@ -539,6 +560,8 @@ final class AvfxSimulation {
 
     func release() { released = true }
 
+    private func itemRuns(_ index: Int) -> Bool { index < 32 || !PreviewRules.isOn("timelineItemLimit") }
+
     func stop() {
         for e in emitters where e.dying == nil {
             e.dying = (time, 0)
@@ -597,7 +620,7 @@ final class AvfxSimulation {
             && !events.contains { !appliedEvents.contains($0.id) }
         let allSpawned = timelineStarts.allSatisfy { start in
             guard start.index >= 0, start.index < schema.timelines.count else { return true }
-            return schema.timelines[start.index].items.enumerated().allSatisfy { !$0.element.enabled || start.spawned.contains($0.offset) }
+            return schema.timelines[start.index].items.enumerated().allSatisfy { !$0.element.enabled || !itemRuns($0.offset) || start.spawned.contains($0.offset) }
         }
         return allStarted && allSpawned && emitters.isEmpty
     }
@@ -653,7 +676,7 @@ final class AvfxSimulation {
             if rank(state) > rank(states[timeline] ?? "") { states[timeline] = state }
         }
         for start in timelineStarts where start.index >= 0 && start.index < schema.timelines.count {
-            let pending = schema.timelines[start.index].items.indices.contains { !start.spawned.contains($0) && schema.timelines[start.index].items[$0].enabled }
+            let pending = schema.timelines[start.index].items.indices.contains { !start.spawned.contains($0) && schema.timelines[start.index].items[$0].enabled && itemRuns($0) }
             if pending { note(start.index, start.released || released ? "released" : "playing") }
         }
         for e in emitters {
@@ -770,8 +793,8 @@ final class AvfxSimulation {
                     stepped = self.time
                     return m
                 }
-                while stepped + 1 <= self.time {
-                    stepped += 1
+                while stepped + 0.5 <= self.time {
+                    stepped += 0.5
                     let at = CurveTime(stepped - born)
                     let k = Eval.curve(spring, at, 1) + Eval.randomOffset(binder.springRandom, type: spring.random, at, randomPart)
                     p += (target - p) * min(max(k, 0), 2)
@@ -880,7 +903,7 @@ final class AvfxSimulation {
                 let a = random.next() * 2 * .pi, b = acos(random.next() * 2 - 1), r = ring.radius * cbrt(random.next())
                 jitter = Vec3(sin(b) * cos(a), cos(b), sin(b) * sin(a)) * r
             }
-            points.append(from + side * ring.position.x + up * ring.position.y + forward * ring.position.z + jitter)
+            points.append(from + (to - from) * ring.position.z + side * ring.position.x + up * ring.position.y + jitter)
             knots.append(Eval.curve(carry, CurveTime(Float(ring.time)), 0))
         }
         points.append(to)
@@ -997,6 +1020,7 @@ final class AvfxSimulation {
         setupShape(e)
         e.age = startAge < 0 && PreviewRules.isOn("binderGenerateDelay") ? startAge : max(0, startAge)
         e.totalAge = e.age
+        e.born = true
         emitters.append(e)
         cueSound(e)
         return e
@@ -1033,12 +1057,12 @@ final class AvfxSimulation {
             }
             let local = time - start.at
             for (i, item) in timeline.items.enumerated() where item.clip >= 0 && item.emitter < 0 {
-                if !item.enabled || start.spawned.contains(i) || local < Float(item.start) { continue }
+                if !item.enabled || !itemRuns(i) || start.spawned.contains(i) || local < Float(item.start) { continue }
                 start.spawned.insert(i)
                 if item.clip < timeline.clips.count { runClip(timeline.clips[item.clip], from: start) }
             }
             for (i, item) in timeline.items.enumerated() {
-                if !item.enabled || start.spawned.contains(i) || local < Float(item.start) { continue }
+                if !item.enabled || !itemRuns(i) || start.spawned.contains(i) || local < Float(item.start) { continue }
                 start.spawned.insert(i)
                 if item.clip >= 0, item.clip < timeline.clips.count { runClip(timeline.clips[item.clip], from: start) }
                 let binder = item.binder >= 0 ? item.binder : timeline.binder
@@ -1063,9 +1087,16 @@ final class AvfxSimulation {
 
         var created: [EmitterInstance] = []
         var queue: [EmitterInstance] = []
+        EmitterInstance.birthCreates = PreviewRules.isOn("emitterBirthNoAge")
+        EmitterInstance.pastLife = PreviewRules.isOn("generateDelayPastLife")
+        EmitterInstance.ignoreEnabled = PreviewRules.isOn("emitterItemsIgnoreEnabled")
         for e in emitters {
-            e.age += frames * e.timeScale
-            e.totalAge += frames * e.timeScale
+            if e.born && EmitterInstance.birthCreates {
+                e.born = false
+            } else {
+                e.age += frames * e.timeScale
+                e.totalAge += frames * e.timeScale
+            }
             let loopStart = Float(e.schema.loopStart), loopEnd = Float(e.schema.loopEnd)
             if !isReleased(e), e.loops, e.age >= loopEnd { e.wrap(loopEnd - loopStart) }
             if e.moving { moveEmitter(e, frames) }
@@ -1081,7 +1112,6 @@ final class AvfxSimulation {
             for (item, count) in e.due(particles: true, limit: 64, random: &random) {
                 guard item.target >= 0, item.target < schema.particles.count else { continue }
                 let ps = schema.particles[item.target]
-                if PreviewRules.isOn("infiniteOnce"), ps.life.value < 0 && !item.overrideLife { e.stopParticleItem(item.index) }
                 if PreviewRules.isOn("heldOnce"), ps.loopEnd > ps.loopStart && ps.loopStart >= 0 { e.stopParticleItem(item.index) }
                 let first = PreviewRules.isOn("injectionAnglePerCreation") ? e.injected[item.index] ?? 0 : 0
                 e.injected[item.index] = first + count
@@ -1211,7 +1241,7 @@ final class AvfxSimulation {
             }
         }
         let fresh = Set(created.map { ObjectIdentifier($0) })
-        emitters.removeAll { !$0.alive && !fresh.contains(ObjectIdentifier($0)) && !carriers.contains(ObjectIdentifier($0)) }
+        emitters.removeAll { !$0.alive && !fresh.contains(ObjectIdentifier($0)) && !carriers.contains(ObjectIdentifier($0)) && !$0.delayPending }
 
         for p in particles {
             if p.fresh {
@@ -1358,11 +1388,6 @@ final class AvfxSimulation {
         }
         sequence += 1
         let p = ParticleInstance(schema: ps, item: item, emitter: e, geometry: shape, cloud: cloud, sequence: sequence, random: &random)
-        if let count = ps.polygonCount, PreviewRules.isOn("polygonSides") {
-            let at = CurveTime(0)
-            let sides = Eval.curve(count, at, 4) + Eval.randomOffset(ps.polygonCountRandom, type: count.random, at, p.seed.get(37))
-            if sides >= 3 { p.geometry = GeometryBuilder.polygon(Int(sides.rounded(.down))) } else if sides < 3 { p.geometry = nil }
-        }
         if let pick = modelChoice(ps, p.seed.get(36)), let picked = model(ps.modelIndices[pick]) {
             p.geometry = picked
             p.modelPick = pick
@@ -1446,8 +1471,10 @@ final class AvfxSimulation {
         let toCamera = camera - (origin + along * 0.5)
         var side = simd_cross(toCamera, along)
         if simd_length_squared(side) < 1e-12 { side = Vec3(1, 0, 0) }
-        side = simd_normalize(side) * width * across
-        let normal = simd_length_squared(along) > 1e-12 ? simd_normalize(simd_cross(along, side)) : Vec3(0, 1, 0)
+        side = simd_normalize(side)
+        let crossing = simd_cross(along, side)
+        let normal = simd_length_squared(crossing) > 1e-12 ? simd_normalize(crossing) : Vec3(0, 1, 0)
+        side *= width * across
         return Math3D.basis(side, normal, along, origin: origin)
     }
 
@@ -1916,6 +1943,7 @@ final class AvfxSimulation {
                 }
             }
 
+            var trailHead: Vec3?
             if let trail = p.trail, let line = s.polyline {
                 let count = max(2, line.pointCount)
                 var space = matrix_identity_float4x4
@@ -1964,6 +1992,7 @@ final class AvfxSimulation {
                     if recording { guides[line.tagNumber] = trail.centerline.map { Math3D.point(space, $0) } }
                     continue
                 }
+                trailHead = Math3D.position(m)
                 m = space
             }
             if s.collision == 0, recording, PreviewRules.isOn("collisionRespawn"), Math3D.position(m).y < groundY, p.age > 0 {
@@ -2005,20 +2034,20 @@ final class AvfxSimulation {
             } else if p.item.influenceColor != 0 {
                 color *= p.emitter.color
             }
-            if PreviewRules.isOn("clipDistance"), s.clipNear != nil || s.clipFar != nil {
+            if PreviewRules.isOn("clipDistance"), s.clipNear != nil || s.clipFar != nil, !s.clipFromCaster {
                 let place = Vec3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
-                let reach = simd_length(place - (s.clipFromCaster ? Vec3(0, 0, 0) : camera.position))
-                func ramp(_ a: Float, _ b: Float) -> Float {
-                    let low = min(a, b), high = max(a, b)
-                    return high - low < 1e-5 ? (reach >= high ? 1 : 0) : min(max((reach - low) / (high - low), 0), 1)
+                let reach = simd_length(place - camera.position)
+                func share(_ start: Float, _ end: Float) -> Float {
+                    abs(end - start) < 1e-5 ? (reach < end ? 1 : 0) : min(max((end - reach) / (end - start), 0), 1)
                 }
-                if let near = s.clipNear { color.w *= ramp(near.start, near.end) }
-                if let far = s.clipFar { color.w *= 1 - ramp(far.start, far.end) }
+                if let near = s.clipNear { color.w *= 1 - pow(share(near.start, near.end), 1.5) }
+                if let far = s.clipFar { color.w *= pow(share(far.start, far.end), 1.5) }
             }
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
             var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? matrix_identity_float4x4 : m, color: color)
             draw.parent = parent
+            draw.depthCentre = trailHead
             draw.order = s.drawPriority * 1000 + ((mode == 0 || mode == 8) && PreviewRules.isOn("blendAfterAdditive") ? 500 : 0) + s.index
             draw.sequence = p.sequence
             draw.overScene = overScene

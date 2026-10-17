@@ -63,23 +63,6 @@ enum GeometryBuilder {
         return g
     }()
 
-    private static var polygons: [Int: RenderGeometry] = [:]
-
-    static func polygon(_ sides: Int) -> RenderGeometry {
-        let n = min(max(sides, 3), 256)
-        if let cached = polygons[n] { return cached }
-        let g = RenderGeometry()
-        g.add(.zero, uv: .zero)
-        for i in 0..<n {
-            let a = Float(i) / Float(n) * 2 * .pi
-            let x = 0.5 * sin(a), y = 0.5 * cos(a)
-            g.add(Vec3(x, y, 0), uv: SIMD2(x, -y))
-        }
-        for i in 0..<n { g.indices.append(contentsOf: [0, UInt32(1 + (i + 1) % n), UInt32(1 + i)]) }
-        polygons[n] = g
-        return g
-    }
-
     static let decal: RenderGeometry = {
         let g = RenderGeometry()
         for (x, y) in [(Float(-0.5), Float(0.5)), (0.5, 0.5), (-0.5, -0.5), (0.5, -0.5)] {

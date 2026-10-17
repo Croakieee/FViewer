@@ -135,7 +135,7 @@ final class PolylineTrail {
                 direction = at(t + max(step, 0.5)) - at(t - max(step, 0.5))
             }
             if simd_length_squared(direction) < 1e-8, simd_length_squared(lastDirection) > 0 { direction = lastDirection } else { lastDirection = direction }
-            var side = fixedSide ?? simd_cross(direction, camera - p)
+            var side = fixedSide ?? simd_cross(camera - p, direction)
             side = simd_length_squared(side) < 1e-12 ? Vec3(0, 1, 0) : simd_normalize(side)
             if jitter > 0 {
                 let mixed = sin(Float(i) * 12.9898 + Float(jitterPhase % 100_000) * 78.233) * 43758.5453

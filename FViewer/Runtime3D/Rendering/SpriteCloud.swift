@@ -192,6 +192,7 @@ final class SpriteCloud {
         lastOrigin = origin
         var out: [SpriteInstance] = []
         out.reserveCapacity(sprites.count)
+        let full: Float = PreviewRules.isOn("simpleSpriteHalfSize") ? 2 : 1
         for i in sprites.indices {
             if let u = sprites[i].guide, guide.count >= 2 {
                 let x = u * Float(guide.count - 1), j = min(Int(x), guide.count - 2)
@@ -213,8 +214,8 @@ final class SpriteCloud {
             }
             let s = sprites[i]
             var position = s.world ? s.position : Math3D.point(frame, s.position)
-            var w = (a.scaleStart.x + (a.scaleEnd.x - a.scaleStart.x) * e) * s.scaleX * (a.scaleByParent ? particleScale.x : revisedScale.x)
-            var h = (a.scaleStart.y + (a.scaleEnd.y - a.scaleStart.y) * e) * s.scaleY * (a.scaleByParent ? particleScale.y : revisedScale.y)
+            var w = (a.scaleStart.x + (a.scaleEnd.x - a.scaleStart.x) * e) * s.scaleX * (a.scaleByParent ? particleScale.x : revisedScale.x) * full
+            var h = (a.scaleStart.y + (a.scaleEnd.y - a.scaleStart.y) * e) * s.scaleY * (a.scaleByParent ? particleScale.y : revisedScale.y) * full
             let angle = s.rotation + s.spin * s.age
             var rotation = cameraRotation * simd_quatf(angle: angle, axis: Vec3(0, 0, 1))
             if PreviewRules.isOn("simpleBaseDirection"), a.baseDirection != 0 {
