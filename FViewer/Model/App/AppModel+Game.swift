@@ -381,6 +381,18 @@ extension AppModel {
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    func locateSound(_ gamePath: String) -> URL? {
+        if let found = locateGameFile(gamePath) { return found }
+        let parts = PenumbraExport.normalized(gamePath).split(separator: "/").map(String.init)
+        var folder = document?.url.deletingLastPathComponent()
+        while let current = folder, current.pathComponents.count > 1 {
+            let candidate = parts.reduce(current) { $0.appendingPathComponent($1) }
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            folder = current.deletingLastPathComponent()
+        }
+        return nil
+    }
+
     func variantEffect(of table: URL, number: Int) -> URL? {
         let folder = table.deletingLastPathComponent().appendingPathComponent("vfx").appendingPathComponent("eff")
         let wanted = String(format: "%04d", number)

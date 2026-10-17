@@ -21,6 +21,35 @@ final class AvfxPlayer {
         self.document = document
     }
 
+    deinit {
+        let owner = ObjectIdentifier(self)
+        MainActor.assumeIsolated { EmitterSounds.shared.resign(owner) }
+    }
+
+    private var voiced: Set<ObjectIdentifier> = []
+
+    private func playSounds(_ simulation: AvfxSimulation, playing: Bool, steps: Int) {
+        let fresh = steps <= 8 ? Set(simulation.soundCues.map { ObjectIdentifier($0.emitter) }) : []
+        simulation.soundCues.removeAll()
+        let owner = ObjectIdentifier(self)
+        let sounds = EmitterSounds.shared
+        guard playing, PreviewRules.isOn("emitterSounds"), sounds.lead(document: ObjectIdentifier(document), player: owner) else {
+            sounds.stop(owner: owner)
+            voiced.removeAll()
+            return
+        }
+        var alive: Set<ObjectIdentifier> = []
+        for e in simulation.emitters where e.alive && e.schema.soundIndex >= 0 && !e.schema.sound.isEmpty {
+            let id = ObjectIdentifier(e)
+            alive.insert(id)
+            guard !voiced.contains(id), fresh.contains(id) || sounds.loops(path: e.schema.sound, index: e.schema.soundIndex) else { continue }
+            sounds.play(path: e.schema.sound, index: e.schema.soundIndex, owner: owner, emitter: id)
+            voiced.insert(id)
+        }
+        voiced.formIntersection(alive)
+        sounds.update(owner: owner, alive: alive)
+    }
+
     var schemaChanged: Bool { loadedRevision != document.previewRevision || loadedOriginal != document.showOriginal || loadedRules != PreviewRules.token }
 
     private func rebuild() {
@@ -47,6 +76,8 @@ final class AvfxPlayer {
     }
 
     private func rewindSimulation() {
+        EmitterSounds.shared.stop(owner: ObjectIdentifier(self))
+        voiced.removeAll()
         simulation?.events = document.clock.playedEvents
         appliedEvents = document.clock.eventsRevision
         simulation?.restart()
@@ -73,6 +104,7 @@ final class AvfxPlayer {
             if simulation.time + stepFrames > target + 0.001 { break }
             simulation.advance(step)
         }
+        playSounds(simulation, playing: clock.playing, steps: guardCount)
         if !clock.playing { simulation.applyEvents() }
         let draws = simulation.render(camera: camera, filter: filter)
         statusTick += 1

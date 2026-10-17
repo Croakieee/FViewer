@@ -38,6 +38,9 @@ struct U {
     float4 flags3;
     float4 flags4;
     float4 pixelUv;
+    float4 litDirection;
+    float4 litAmbient;
+    float4 litColor;
 };
 
 struct VOut {
@@ -93,8 +96,8 @@ vertex VOut particleVertex(VIn in [[stage_in]], constant U &u [[buffer(1)]]) {
     return out;
 }
 
-static float4 sampleLayer(texture2d<float> map, sampler s, float2 uv, float4 layer) {
-    float4 t = map.sample(s, uv);
+static float4 sampleLayer(texture2d<float> map, sampler s, float2 uv, float4 layer, float2 base, bool footprint) {
+    float4 t = footprint ? map.sample(s, uv, gradient2d(dfdx(base), dfdy(base))) : map.sample(s, uv);
     if (layer.w > 0.5) {
         t = float4(1.0, 1.0, 1.0, dot(t.rgb, float3(0.299, 0.587, 0.114)));
     }
@@ -138,6 +141,8 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     if (u.pixelUv.z > 0.5) uv3 = transformUv(u, 2, pixel);
     if (u.pixelUv.w > 0.5) uv4 = transformUv(u, 3, pixel);
     if (u.flags4.z > 0.5) uv5 = transformUv(u, 4, pixel);
+    float2 b1 = uv1, b2 = uv2, b4 = uv4, b5 = uv5;
+    bool footprint = u.flags4.w > 0.5 && u.flags2.y > 0.5;
     float2 d = float2(0.0);
     if (u.flags2.y > 0.5) {
         float2 raw = map3.sample(s3, uv3).rg;
@@ -160,7 +165,7 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
         if (u.flags3.w > 1.5) t.a = 0.0;
     }
     if (u.layer[0].x > 0.5) {
-        t = sampleLayer(map1, s1, uv1, u.layer[0]);
+        t = sampleLayer(map1, s1, uv1, u.layer[0], b1, footprint);
         if (u.layer[0].y < 0.5) {
             if (u.flags4.x > 0.5) t.rgb = float3(1.0);
             else if (u.flags2.w > 0.5) t.rgb = float3(dot(t.rgb, float3(0.299, 0.587, 0.114)));
@@ -174,24 +179,39 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     }
     float tc1Alpha = t.a;
     if (u.layer[1].x > 0.5) {
-        float4 l = sampleLayer(map2, s2, uv2, u.layer[1]);
+        float4 l = sampleLayer(map2, s2, uv2, u.layer[1], b2, footprint);
         t = hasT ? combine(t, l, u.layer[1]) : l;
         if (u.flags3.w > 1.5 && u.layer[1].z < 0.5) t.a = l.a;
         hasT = true;
     }
     if (u.layer[2].x > 0.5) {
-        float4 l = sampleLayer(map4, s4, uv4, u.layer[2]);
+        float4 l = sampleLayer(map4, s4, uv4, u.layer[2], b4, footprint);
         t = hasT ? combine(t, l, u.layer[2]) : l;
         hasT = true;
     }
     if (u.layer[3].x > 0.5) {
-        float4 l = sampleLayer(map5, s5, uv5, u.layer[3]);
+        float4 l = sampleLayer(map5, s5, uv5, u.layer[3], b5, footprint);
         t = hasT ? combine(t, l, u.layer[3]) : l;
     }
     if (u.flags2.z > 0.5) {
         t.a *= map6.sample(s6, float2(tc1Alpha + u.misc.z, 0.5)).a;
     }
     float4 c = u.color * t;
+    if (u.litDirection.w > 0.5) {
+        int kind = int(u.litDirection.w + 0.5) - 1;
+        float3 l = u.litDirection.xyz;
+        float lit;
+        if (kind == 2) {
+            lit = 0.5 * dot(normalize((u.model * float4(0.0, -1.0, 0.0, 0.0)).xyz), l) + 0.5;
+        } else {
+            float3 viewDir = normalize(u.cameraPosition.xyz - in.worldPosition);
+            float3 seen = float3(l.x, -l.y, l.z);
+            seen -= 2.0 * dot(seen, viewDir) * viewDir;
+            float3 n = normalize(in.worldNormal);
+            lit = kind == 1 ? 0.5 * dot(n, seen) + 0.5 : max(0.0, dot(n, seen));
+        }
+        c.rgb *= u.litAmbient.xyz + u.litColor.xyz * lit;
+    }
     if (u.flags.x > 0.5) c *= in.color;
     if (u.flags.z > 0.5) c *= u.spriteColor;
     if (u.flags.y > 0.5) {

@@ -78,6 +78,7 @@ final class AppModel: ObservableObject {
             open(URL(fileURLWithPath: arguments[flag + 1]))
         }
         AppDelegate.model = self
+        EmitterSounds.locate = { [weak self] in self?.locateSound($0) }
         restoreGameFolder()
         restoreSkeleton()
         startAutosave()

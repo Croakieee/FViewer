@@ -29,6 +29,10 @@ struct RColor {
     var sclA: RCurve?
     var bri: RCurve?
     var ranBri: RCurve?
+    var ranR: RCurve?
+    var ranG: RCurve?
+    var ranB: RCurve?
+    var ranA: RCurve?
 }
 
 struct RDissolve {
@@ -112,6 +116,8 @@ nonisolated final class REmitter: @unchecked Sendable {
     var innerSizeRandom: RCurve?
     var outerSizeRandom: RCurve?
     var radiusRandom: RCurve?
+    var sound = ""
+    var soundIndex = -1
     var index: Int
     var type: Int
     var loopStart: Int
@@ -287,10 +293,18 @@ struct RPolyline {
     var noBillboard = false
     var noBillboardAxis = 0
     var widthRandom: [RCurve?] = [nil, nil, nil, nil]
+    var connectTarget = false
+    var connectReverse = false
+    var softness: RCurve?
 }
 
 nonisolated final class RParticle: @unchecked Sendable {
     var collision = -1
+    var modelIndices: [Int] = []
+    var morph: RCurve?
+    var modelRandom = (count: 0, type: 0, interval: 0)
+    var lit = false
+    var lightType = 0
     var index: Int
     var type: Int
     var loopStart: Int
@@ -412,6 +426,10 @@ struct RBinder {
     var bindPointId: Int
     var offset = RCurve3()
     var followTargetOrientation = true
+    var rotationType = 0
+    var bindPoint = 0
+    var goal: (bindPoint: Int, targetPoint: Int, id: Int)?
+    var carryOver: RCurve?
 }
 
 struct REffector {
@@ -433,8 +451,12 @@ struct REffector {
     var quakeOut: RCurve?
     var fadeStart: Float = 0
     var fadeEnd: Float = 0
+    var fadeFromCaster = false
     var rotation: RCurve3? = nil
     var power: RCurve? = nil
+    var gradation: RCurve?
+    var ambient: RColor?
+    var rotationOrder = 0
 }
 
 struct REffectSchema {
@@ -455,6 +477,9 @@ struct REffectSchema {
     var softFadeRange: Float = 0.5
     var angleFade: [(enabled: Bool, inner: Float, outer: Float)] = []
     var drawLayer = 2
+    var drawOrder = 0
+    var directionalLightSource = 0
+    var ownClip: (near: (Float, Float), far: (Float, Float))?
 }
 
 private extension Array where Element == AvfxBlock {
@@ -489,7 +514,8 @@ enum AvfxSchemaReader {
         guard let block else { return RColor() }
         return RColor(rgb: curve(block.child("RGB"), color: true), a: curve(block.child("A")), sclR: curve(block.child("SclR")),
                       sclG: curve(block.child("SclG")), sclB: curve(block.child("SclB")), sclA: curve(block.child("SclA")),
-                      bri: curve(block.child("Bri")), ranBri: curve(block.child("RBri")))
+                      bri: curve(block.child("Bri")), ranBri: curve(block.child("RBri")), ranR: curve(block.child("RanR")),
+                      ranG: curve(block.child("RanG")), ranB: curve(block.child("RanB")), ranA: curve(block.child("RanA")))
     }
 
     static func optionalColor(_ block: AvfxBlock?) -> RColor? { block == nil ? nil : color(block) }
@@ -520,7 +546,7 @@ enum AvfxSchemaReader {
                              borderV: block.int("TBVT"), calcColor: block.int("TCCT"), calcAlpha: block.int("TCAT"),
                              textures: textures.filter { $0 >= 0 }, texN: curve(block.child("TxN")), texNRandom: curve(block.child("TxNR")),
                              targets: [block.bool("bT1"), block.bool("bT2"), block.bool("bT3"), block.bool("bT4")], power: curve(block.child("DPow")),
-                             screenCopy: block.bool("bUSC"), filter: block.int("TFT", 1))
+                             screenCopy: block.bool("bUSC") || (block.bool("bPFC") && PreviewRules.isOn("previousFrameCopy")), filter: block.int("TFT", 1))
     }
 
     static func simple(_ block: AvfxBlock?) -> RSimple? {
@@ -570,7 +596,8 @@ enum AvfxSchemaReader {
                          colorEdgeBegin: optionalColor(block.child("CoEB")), colorEdgeCenter: optionalColor(block.child("CoEC")),
                          colorEdgeEnd: optionalColor(block.child("CoEE")), spline: block.bool("bSpl"), noBillboard: block.bool("bNtB"),
                          noBillboardAxis: block.int("NBBA"),
-                         widthRandom: [curve(block.child("WdR")), curve(block.child("WdBR")), curve(block.child("WdCR")), curve(block.child("WdER"))])
+                         widthRandom: [curve(block.child("WdR")), curve(block.child("WdBR")), curve(block.child("WdCR")), curve(block.child("WdER"))],
+                         connectTarget: block.bool("bCtg"), connectReverse: block.bool("bCtr"), softness: curve(block.child("Sft")))
     }
 
     static func read(_ root: AvfxBlock) -> REffectSchema {
@@ -624,6 +651,8 @@ enum AvfxSchemaReader {
             emitter.innerSizeRandom = curve(data?.child("InSR"))
             emitter.outerSizeRandom = curve(data?.child("OuSR"))
             emitter.radiusRandom = curve(data?.child("RadR"))
+            emitter.sound = e.child("SdNm").map { String(decoding: $0.data.prefix { $0 != 0 }, as: UTF8.self) } ?? ""
+            emitter.soundIndex = e.int("SdNo", -1)
             return emitter
         }
         let particles = root.childrenNamed("Ptcl").enumerated().map { index, p -> RParticle in
@@ -658,13 +687,24 @@ enum AvfxSchemaReader {
                 clipNear: p.bool("bNea") ? (p.float("NeSt"), p.float("NeEd")) : nil, clipFar: p.bool("bFar") ? (p.float("FaSt"), p.float("FaEd")) : nil,
                 clipFromCaster: p.int("FaBP") == 1)
             particle.collision = p.int("Coll", -1)
+            if let list = data?.child("MdNo"), type == 5 || type == 13 {
+                particle.modelIndices = list.data.filter { $0 != 255 }.map { Int($0) }
+                if data?.bool("bShp") == true { particle.morph = curve(data?.child("Moph")) }
+                particle.modelRandom = (data?.int("MNRv") ?? 0, data?.int("MNRt") ?? 0, data?.int("MNRi") ?? 0)
+                particle.lit = type == 5 && data?.bool("bLgt") == true
+                particle.lightType = data?.int("DLT") ?? 0
+            }
             return particle
         }
         let binders = root.childrenNamed("Bind").map { b -> RBinder in
             let props = b.child("PrpS")
-            return RBinder(type: b.int("BnVr"), distance: curve(b.child("Data")?.child("Dst")), adjustToScreen: b.bool("bATS"),
+            var binder = RBinder(type: b.int("BnVr"), distance: curve(b.child("Data")?.child("Dst")), adjustToScreen: b.bool("bATS"),
                            bindTargetPoint: props?.int("BPTP") ?? 0, bindPointId: props?.int("BPID", -1) ?? -1, offset: curve3(props?.child("Pos")),
-                           followTargetOrientation: b.child("bFTO").map { _ in b.bool("bFTO") } ?? true)
+                           followTargetOrientation: b.child("bFTO").map { _ in b.bool("bFTO") } ?? true, rotationType: b.int("RoTp"))
+            binder.bindPoint = props?.int("BPT") ?? 0
+            if let goal = b.child("PrpG"), goal.children != nil { binder.goal = (goal.int("BPT"), goal.int("BPTP"), goal.int("BPID", -1)) }
+            binder.carryOver = curve(b.child("Data")?.child("COF"))
+            return binder
         }
         var result = REffectSchema(
             revisedPosition: Vec3(root.float("RvPx"), root.float("RvPy"), root.float("RvPz")),
@@ -693,6 +733,15 @@ enum AvfxSchemaReader {
         }
         result.angleFade = ["X", "Y", "Z"].map { (root.bool("AF\($0)e"), root.float("AF\($0)i"), root.float("AF\($0)o")) }
         result.drawLayer = root.int("DwLy", 2)
+        result.drawOrder = root.int("DwOT")
+        result.directionalLightSource = root.int("DLST")
+        if root.bool("bOSt") { result.ownClip = ((root.float("NCB"), root.float("NCE")), (root.float("FCB"), root.float("FCE"))) }
+        for (index, block) in root.childrenNamed("Efct").enumerated() where index < result.effectors.count {
+            result.effectors[index].fadeFromCaster = block.child("Data")?.int("FaBP") == 1
+            result.effectors[index].gradation = curve(block.child("Data")?.child("Gra"))
+            result.effectors[index].ambient = optionalColor(block.child("Data")?.child("Amb"))
+            result.effectors[index].rotationOrder = block.int("RoOT")
+        }
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
         return result
     }

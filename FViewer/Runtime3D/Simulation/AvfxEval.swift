@@ -89,6 +89,7 @@ enum Eval {
 
     static func randomOffset(_ random: RCurve?, type: Int, _ time: CurveTime, _ seed: Float) -> Float {
         guard let random else { return 0 }
+        let type = random.random != 0 && PreviewRules.hot.randomTypeOnRandom ? random.random : type
         var seed = seed
         if type >= 3, PreviewRules.hot.randomAlwaysPerFrame {
             let mixed = sin(seed * 12.9898 + Float(Int(time.t.rounded(.down))) * 78.233) * 43758.5453
@@ -132,9 +133,15 @@ enum Eval {
     }
 
     static func color(_ c: RColor, _ time: CurveTime, _ seed: RandomSeed) -> Vec4 {
-        let rgb = c.rgb?.eval3(time) ?? Vec3(1, 1, 1)
-        let brightness = curve(c.bri, time, 1) + (c.ranBri != nil ? curve(c.ranBri, time) * (seed.get(7) * 2 - 1) : 0)
+        var rgb = c.rgb?.eval3(time) ?? Vec3(1, 1, 1)
+        var alpha = curve(c.a, time, 1)
+        let brightness = curve(c.bri, time, 1) + randomOffset(c.ranBri, type: c.bri?.random ?? 0, time, seed.get(7))
+        if PreviewRules.hot.colorRandom {
+            rgb += Vec3(randomOffset(c.ranR, type: 0, time, seed.get(32)), randomOffset(c.ranG, type: 0, time, seed.get(33)),
+                        randomOffset(c.ranB, type: 0, time, seed.get(34)))
+            alpha += randomOffset(c.ranA, type: c.a?.random ?? 0, time, seed.get(35))
+        }
         return Vec4(rgb.x * curve(c.sclR, time, 1) * brightness, rgb.y * curve(c.sclG, time, 1) * brightness,
-                    rgb.z * curve(c.sclB, time, 1) * brightness, curve(c.a, time, 1) * curve(c.sclA, time, 1))
+                    rgb.z * curve(c.sclB, time, 1) * brightness, alpha * curve(c.sclA, time, 1))
     }
 }

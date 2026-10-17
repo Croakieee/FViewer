@@ -39,7 +39,43 @@ final class PolylineTrail {
         historyFrames = Float(max(1, list.count - 1))
     }
 
+    var softness: Float?
+    var vFromHead = true
+    private var chain: [Vec3]?
+    private var chainTime: Float = 0
+    private var lastTime: Float = 0
+    private var lastPosition = Vec3.zero
+
+    private func advanceChain(_ time: Float, _ position: Vec3) {
+        guard var c = chain else {
+            chain = [Vec3](repeating: position, count: points)
+            chainTime = time
+            lastTime = time
+            lastPosition = position
+            return
+        }
+        let steps = Int(((time - chainTime) * 2 + 1e-6).rounded(.down))
+        let soft = min(1, max(0, softness ?? 0))
+        let span = max(1e-6, time - lastTime)
+        if steps > 0 {
+            for s in 1...steps {
+                for i in stride(from: c.count - 1, to: 0, by: -1) {
+                    let k = 1 - soft * Float(i) / Float(c.count - 1)
+                    c[i] += (c[i - 1] - c[i]) * k
+                }
+                let f = min(1, (chainTime + Float(s) / 2 - lastTime) / span)
+                c[0] = lastPosition + (position - lastPosition) * f
+            }
+            chainTime += Float(steps) / 2
+        }
+        c[0] = position
+        chain = c
+        lastTime = time
+        lastPosition = position
+    }
+
     func record(_ time: Float, _ position: Vec3) {
+        if softness != nil { advanceChain(time, position) } else { chain = nil }
         if let last = history.last, time <= last.time {
             history[history.count - 1].position = position
             return
@@ -49,7 +85,6 @@ final class PolylineTrail {
         while history.count > 2, history[1].time <= time - keep { history.removeFirst() }
     }
 
-    var spline = false
     var fixedSide: Vec3?
 
     private func at(_ t: Float) -> Vec3 {
@@ -58,14 +93,7 @@ final class PolylineTrail {
         for i in 1..<history.count where t <= history[i].time {
             let a = history[i - 1], b = history[i]
             let f = (t - a.time) / max(1e-6, b.time - a.time)
-            guard spline else { return a.position + (b.position - a.position) * f }
-            let p0 = i >= 2 ? history[i - 2].position : a.position, p3 = i + 1 < history.count ? history[i + 1].position : b.position
-            let f2 = f * f, f3 = f2 * f
-            let c1: Vec3 = b.position - p0
-            let c2: Vec3 = 2 * p0 - 5 * a.position + 4 * b.position - p3
-            let c3: Vec3 = 3 * a.position - p0 - 3 * b.position + p3
-            let sum: Vec3 = 2 * a.position + c1 * f + c2 * f2 + c3 * f3
-            return 0.5 * sum
+            return a.position + (b.position - a.position) * f
         }
         return last.position
     }
@@ -79,11 +107,30 @@ final class PolylineTrail {
         func mix(_ k: Float) -> (first: Bool, amount: Float) {
             k <= centerK ? (true, centerK > 0 ? k / centerK : 1) : (false, (k - centerK) / max(1e-6, 1 - centerK))
         }
+        var along = (0..<points).map { Float($0) / Float(points - 1) }
+        if let chain, chain.count == points {
+            var total: Float = 0
+            var sums: [Float] = [0]
+            for i in 1..<points {
+                total += simd_distance(chain[i], chain[i - 1])
+                sums.append(total)
+            }
+            if total > 1e-6 { along = sums.map { $0 / total } }
+        }
+        var lastDirection = Vec3.zero
         for i in 0..<points {
-            let k = Float(i) / Float(points - 1)
-            let t = now - step * Float(i)
-            let p = at(t)
-            let direction = at(t + max(step, 0.5)) - at(t - max(step, 0.5))
+            let k = along[i]
+            let p: Vec3
+            var direction: Vec3
+            if let chain, chain.count == points {
+                p = chain[i]
+                direction = chain[max(0, i - 1)] - chain[min(points - 1, i + 1)]
+            } else {
+                let t = now - step * Float(i)
+                p = at(t)
+                direction = at(t + max(step, 0.5)) - at(t - max(step, 0.5))
+            }
+            if simd_length_squared(direction) < 1e-8, simd_length_squared(lastDirection) > 0 { direction = lastDirection } else { lastDirection = direction }
             var side = fixedSide ?? simd_cross(direction, camera - p)
             side = simd_length_squared(side) < 1e-12 ? Vec3(0, 1, 0) : simd_normalize(side)
             let part = mix(k)
@@ -96,11 +143,10 @@ final class PolylineTrail {
                 let o = i * across + j
                 geometry.setPosition(o, p + side * ((a - 0.5) * 2 * w))
                 geometry.setColor(o, data.useEdge && j != 1 ? edge : line)
-                geometry.vertices[o * RenderGeometry.stride + 10] = a - 0.5
-                geometry.vertices[o * RenderGeometry.stride + 11] = 0.5 - k
-                for extra in stride(from: 12, to: 18, by: 2) {
+                let v = vFromHead ? k - 0.5 : 0.5 - k
+                for extra in stride(from: 10, to: 18, by: 2) {
                     geometry.vertices[o * RenderGeometry.stride + extra] = a - 0.5
-                    geometry.vertices[o * RenderGeometry.stride + extra + 1] = 0.5 - k
+                    geometry.vertices[o * RenderGeometry.stride + extra + 1] = v
                 }
             }
         }

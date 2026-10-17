@@ -66,7 +66,7 @@ enum PreviewRules {
         ("moveDirectionRotation", "Move direction keeps rotation", "Move Direction Billboard particles lie with Z along their motion and Y away from the camera, and their own Rotation turns them on top."),
         ("auraTarget", "Aura target", "Model Skin particles are drawn only when their Aura Target includes the loaded model: Weapon or Off Hand for weapon models, Character or Summon for the others."),
         ("binderOffset", "Binder offset", "The Position of a binder's start properties moves the bind point in its own space: X to the side, Y up, Z forward. Camera binders are not moved. Inferred from game files."),
-        ("polylineShape", "Polyline spline and fixed ribbon", "Polylines with Is Spline follow a smooth curve through their points; with No Billboard the ribbon spreads along the particle's Not Billboard Base Axis instead of facing the camera."),
+        ("polylineShape", "Polyline fixed ribbon", "Polylines with No Billboard spread the ribbon along the particle's current Not Billboard Base Axis instead of facing the camera. Is Spline changes nothing, as measured in the game."),
         ("stepKeyOnArrival", "Step keys jump on arrival", "A Step key holds the previous value up to its own frame and jumps there; the segment after it follows the next key's type."),
         ("randomAlwaysPerFrame", "Always random each frame", "Random curves of type Always draw a new random value every frame instead of once per particle."),
         ("lifeRandomType", "Life random by type", "Life Random adds, takes off or spreads both ways by its Random Type (Plus, Minus, Plus Minus)."),
@@ -108,6 +108,29 @@ enum PreviewRules {
         ("simpleAreaOnVertices", "Sprite area on vertices", "Create Area also scatters sprites born on model vertices."),
         ("pixelPositionUv", "UV by pixel position", "A UV Set with Calculate UV By Pixel Position maps its layers by the pixel's place on the screen instead of the particle's own UV. From the field name, not checked in the game."),
         ("polylineWidthRandom", "Polyline width random", "Width Random, Width Begin, Center and End Random give each polyline its own width by the curve's Random Type."),
+        ("emitterSounds", "Emitter sounds", "While the effect plays, every emitter with a Sound plays it when it starts: the .scd is read from the game folder or from the library (sound/… next to vfx/…). Looping sounds play until the emitter ends."),
+        ("randomTypeOnRandom", "Random type of the random curve", "A random part (XR, Gravity Random, Create Interval Random…) is spread by the Random Type stored on that random curve. Across all 44 257 game effects the type is set there, while the base curve keeps 0."),
+        ("colorRandom", "Colour random", "Random R, G, B and A of a colour add their own random part to each channel, by their Random Type; Random Brightness uses its own type too."),
+        ("modelMorph", "Model morph", "A Model particle with Is Morph blends its Model Index list by Morph: 0 is the first model, 1 the second and so on. In the game files every morph list holds models with the same vertex count."),
+        ("modelNumberRandom", "Model number random", "A Model particle with Model Number Random picks one model of its Model Index list for each particle; with an Always random type and an interval it picks again every interval frames."),
+        ("drawOrder", "Draw order", "Header Draw Order Reverse draws the newest particles first; Depth draws far particles before near ones inside each draw priority."),
+        ("effectOwnClip", "Effect clip distance", "With Clip Own Setting the whole effect fades in between Near Clip Begin and End and out between Far Clip Begin and End, by the distance from the camera."),
+        ("binderRotationType", "Binder rotation type", "Binder Rotation Type Billboard turns the bound effect with the camera, Billboard Axis Y and Camera Billboard Axis Y turn it about Y towards the camera, Look At Camera points its +Z at the camera."),
+        ("previousFrameCopy", "Previous frame copy", "Layers with Previous Frame Copy show the picture behind the particle, as Use Screen Copy does (the current frame stands in for the previous one)."),
+        ("effectorFadeBase", "Effector fade base point", "Screen effectors with Fade Base Point Caster fade by their distance from the caster instead of the camera."),
+        ("radialBlurRadiusMask", "Radial blur as the game", "Radial Blur averages 24 points from the pixel towards the centre over Length, and mixes by Strength inside the game's Inner / Outer Radius mask (radii / 2 in screen UV)."),
+        ("radialBlurGradation", "Radial blur gradation", "Radial Blur Gradation softens the mask edge: G = 0.5 / Gradation (kept at 1 with an Inner Radius)."),
+        ("effectorEndsWithEmitter", "Effector ends with its emitter", "A screen effector or light stops when the emitter that owns it ends."),
+        ("distortionKeepsFootprint", "Distortion keeps texture detail", "Distorted layers pick their mip level from the undistorted UV, so a fast-changing distortion map does not blur the texture to its average."),
+        ("polylineChain", "Polyline trail chain", "A Position History trail is a chain of Point Count points: every half frame point i moves 1 − Softness × i / (Point Count − 1) of the way to where point i − 1 was. Softness 0 is a plain history, 1 keeps the tail at the birth point."),
+        ("polylineConnectTarget", "Polyline connect target", "An Axis Order polyline with Connect Target runs straight from the particle to the target (with Reverse to the caster), or to the goal / start of its emitter's Linear binder."),
+        ("polylineVFromHead", "Polyline texture from the head", "The texture runs along a polyline from its head (the particle, v 0) to its tail."),
+        ("binderTarget", "Target 6 m ahead", "Binders and bind points set to Target sit on a target 6 m in front of the caster, with named bind points at the caster's offsets."),
+        ("binderLinearPath", "Binder path to the goal", "Linear, Spline and Linear Adjust binders move from their start point to their goal point by the Carry Over Factor curve over the binder's time."),
+        ("childEmitterItemProps", "Item settings on child emitters", "Create Probability, the parent's Child Limit, Override Life, Influence on Child Color, Initial Position and Start Frame act on child emitters as on particles. Without Start Frame Null Update the child starts that many frames in."),
+        ("injectionAngleChildEmitters", "Injection angle on child emitters", "By Injection Angle turns the k-th child emitter an item creates by k × the angle about the parent's origin."),
+        ("billboardModelKeepsEmitterRotation", "Billboard models keep emitter rotation", "Billboarded Model, Light Model and Disc particles keep their emitters' rotation (without the binder) under their own, on top of the billboard."),
+        ("particleDirectionalLight", "Lit models by the effect's light", "Model particles with Is Lightning in an effect with Directional Light Source In Local take the effect's Directional Light effector: colour × (Ambient + Color × Power × term), the term by Directional Light Type; black without such an effector."),
         ("releasedEndlessEnd", "Released endless particles end", "Once released, a particle with endless life ends together with the emitter that made it. While held it stays. Inferred from game files, not checked in the game."),
     ]
 
@@ -119,6 +142,8 @@ enum PreviewRules {
         var randomAlwaysPerFrame = true
         var axisConnectRandom = true
         var periodicCurves = true
+        var randomTypeOnRandom = true
+        var colorRandom = true
     }
 
     private static var hotToken = -1
@@ -127,7 +152,8 @@ enum PreviewRules {
     static var hot: Hot {
         if hotToken != token {
             hotValues = Hot(stepKeyOnArrival: isOn("stepKeyOnArrival"), randomAlwaysPerFrame: isOn("randomAlwaysPerFrame"),
-                            axisConnectRandom: isOn("axisConnectRandom"), periodicCurves: isOn("periodicCurves"))
+                            axisConnectRandom: isOn("axisConnectRandom"), periodicCurves: isOn("periodicCurves"),
+                            randomTypeOnRandom: isOn("randomTypeOnRandom"), colorRandom: isOn("colorRandom"))
             hotToken = token
         }
         return hotValues

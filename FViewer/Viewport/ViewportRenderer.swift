@@ -546,7 +546,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         blit.copy(from: target, to: postSource)
         blit.endEncoding()
         var uniforms = PostUniforms()
-        uniforms.count = SIMD4(Float(effects.count), Float(target.width) / Float(max(target.height, 1)), 0, 0)
+        let radialMask = PreviewRules.isOn("radialBlurRadiusMask")
+        uniforms.count = SIMD4(Float(effects.count), Float(target.width) / Float(max(target.height, 1)), radialMask ? 1 : 0, 0)
         withUnsafeMutableBytes(of: &uniforms) { raw in
             let values = raw.bindMemory(to: SIMD4<Float>.self)
             for (index, effect) in effects.enumerated() {
@@ -554,7 +555,12 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                 let w = abs(clip.w) < 1e-5 ? 1e-5 : clip.w
                 let center = SIMD2(clip.x / w * 0.5 + 0.5, 0.5 - clip.y / w * 0.5)
                 values[index] = SIMD4(center.x, center.y, Float(effect.kind), clip.w > 0 ? effect.strength : 0)
-                values[4 + index] = SIMD4(min(max(effect.length, 0), 1) * (effect.kind == 7 ? 0.5 : 0.12), effect.inner, effect.outer, effect.angle)
+                if effect.kind == 7, radialMask {
+                    let gradation = PreviewRules.isOn("radialBlurGradation") && effect.inner <= 0 ? effect.gradation : 1
+                    values[4 + index] = SIMD4(min(max(effect.length, 0), 1), effect.inner, effect.outer, gradation)
+                } else {
+                    values[4 + index] = SIMD4(min(max(effect.length, 0), 1) * (effect.kind == 7 ? 0.5 : 0.12), effect.inner, effect.outer, effect.angle)
+                }
             }
         }
         let pass = MTLRenderPassDescriptor()

@@ -132,7 +132,15 @@ fragment float4 postFragment(PostOut in [[stage_in]], constant PostUniforms &u [
         float inner = u.shape[i].y, outer = u.shape[i].z;
         float weight = outer > inner ? smoothstep(inner, outer, distance) : 1.0;
         float3 sum = float3(0.0);
-        if (kind == 7) {
+        if (kind == 7 && u.count.z > 0.5) {
+            for (int k = 0; k < 24; k++) sum += map.sample(mapSampler, center + away * (1.0 - reach * (float(k) + 0.5) / 24.0)).rgb;
+            float gradation = u.shape[i].w;
+            float g = gradation > 0.0 ? 0.5 / gradation : 1e6;
+            float r2 = dot(away, away);
+            float innerMask = inner > 0.0 ? 1.0 + g * (r2 / (0.25 * inner * inner) - 1.0) : 1e6;
+            float outerMask = outer > 0.0 ? 0.5 + g * (1.0 - r2 / (0.25 * outer * outer)) : -1e6;
+            color = mix(color, sum / 24.0, clamp(max(u.center[i].w, 0.0) * clamp(min(innerMask, outerMask), 0.0, 1.0), 0.0, 1.0));
+        } else if (kind == 7) {
             for (int k = 0; k < 16; k++) sum += map.sample(mapSampler, in.uv - away * reach * weight * (float(k) / 15.0)).rgb;
             color = mix(color, sum / 16.0, strength);
         } else if (kind == 5) {

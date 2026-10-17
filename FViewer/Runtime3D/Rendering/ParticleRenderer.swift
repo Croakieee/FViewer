@@ -26,6 +26,9 @@ private struct ParticleUniforms {
     var flags3 = Vec4.zero
     var flags4 = Vec4.zero
     var pixelUv = Vec4.zero
+    var litDirection = Vec4.zero
+    var litAmbient = Vec4.zero
+    var litColor = Vec4.zero
 }
 
 struct LoadedTexture {
@@ -271,7 +274,7 @@ final class ParticleRenderer {
         let tc1NoAlpha = tc1White && ps.tc1?.enabled != true && PreviewRules.isOn("tc1OffNoAlpha") && (loaded[1] != nil || loaded[2] != nil || loaded[3] != nil)
         m.uniforms.flags3 = Vec4(PreviewRules.isOn("distortionHalfRange") ? 1 : 0, paletteChannels ? 1 : 0, PreviewRules.isOn("softQuadratic") ? 1 : 0,
                                  tc1NoAlpha ? 2 : tc1White ? 1 : 0)
-        m.uniforms.flags4 = Vec4(PreviewRules.isOn("tc1Luminance") && PreviewRules.isOn("tc1MultiplyWhite") ? 1 : 0, PreviewRules.isOn("depthOffsetView") ? 1 : 0, 0, 0)
+        m.uniforms.flags4 = Vec4(PreviewRules.isOn("tc1Luminance") && PreviewRules.isOn("tc1MultiplyWhite") ? 1 : 0, PreviewRules.isOn("depthOffsetView") ? 1 : 0, 0, PreviewRules.isOn("distortionKeepsFootprint") ? 1 : 0)
         if PreviewRules.isOn("pixelPositionUv") {
             func pixel(_ layer: RTextureLayer?) -> Float {
                 guard let layer, layer.uvSet >= 0, layer.uvSet < ps.uvSets.count else { return 0 }
@@ -364,6 +367,9 @@ final class ParticleRenderer {
             u.color = draw.color
             u.colorBegin = draw.colorBegin
             u.colorEnd = draw.colorEnd
+            u.litDirection = Vec4(draw.light.direction.x, draw.light.direction.y, draw.light.direction.z, Float(draw.lit))
+            u.litAmbient = Vec4(draw.light.ambient.x, draw.light.ambient.y, draw.light.ambient.z, 0)
+            u.litColor = Vec4(draw.light.color.x, draw.light.color.y, draw.light.color.z, 0)
             u.spriteColor = draw.spriteColor
             u.spriteCell = draw.spriteCell
             u.uvMatrix = (draw.uvMatrix[0], draw.uvMatrix[1], draw.uvMatrix[2], draw.uvMatrix[3], draw.uvMatrix[4])
