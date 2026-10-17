@@ -30,6 +30,7 @@ nonisolated struct DecodedTexture: Sendable {
     var mipLevels: Int
     var alphaOnly: Bool
     var rgba: [UInt8]
+    var faces: [[UInt8]] = []
 
     func makeImage() -> CGImage? {
         guard let provider = CGDataProvider(data: Data(rgba) as CFData) else { return nil }
@@ -77,6 +78,18 @@ nonisolated enum Atex {
         guard data.count - surface >= need else {
             throw TexError.invalid("\(format.name) \(width)×\(height): needs \(need) bytes, has \(data.count - surface)")
         }
+        let cube = data.u32(0) & 0x2000000 != 0 && data.count - surface >= need * 6
+        var faces: [[UInt8]] = []
+        for face in 0..<(cube ? 6 : 1) {
+            faces.append(surfacePixels(format, width, height, data, surface + face * need))
+        }
+        var decoded = DecodedTexture(width: width, height: height, formatName: format.name, mipLevels: mips, alphaOnly: format == .a8, rgba: faces[0])
+        if cube { decoded.faces = faces }
+        return decoded
+    }
+
+    private static func surfacePixels(_ format: TexFormat, _ width: Int, _ height: Int, _ data: [UInt8], _ surface: Int) -> [UInt8] {
+        let px = width * height
         var rgba = [UInt8](repeating: 0, count: px * 4)
         switch format {
         case .bc1: blocks(&rgba, width, height, data, surface, 8) { b, o, out in color(b, o, out, bc1: true) }
@@ -116,8 +129,7 @@ nonisolated enum Atex {
         default:
             uncompressed(&rgba, format, px, data, surface)
         }
-        return DecodedTexture(width: width, height: height, formatName: format.name, mipLevels: mips,
-                              alphaOnly: format == .a8, rgba: rgba)
+        return rgba
     }
 
     private static func blocks(_ target: inout [UInt8], _ w: Int, _ h: Int, _ source: [UInt8], _ base: Int, _ blockBytes: Int,

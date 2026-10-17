@@ -271,7 +271,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             }
         }
         guard let texture = ParticleRenderer.makeTexture(device, decoded) else { return nil }
-        let loaded = LoadedTexture(texture: texture, alphaOnly: decoded.alphaOnly)
+        let loaded = LoadedTexture(texture: texture, alphaOnly: decoded.alphaOnly, cube: ParticleRenderer.makeCube(device, decoded))
         effectTextures[key] = loaded
         return loaded
     }

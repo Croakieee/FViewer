@@ -336,6 +336,7 @@ nonisolated final class RParticle: @unchecked Sendable {
     var lit = false
     var lightType = 0
     var pointLightType = 0
+    var reflection: RTextureLayer?
     var normalLayer: RTextureLayer?
     var normalPower: RCurve?
     var movementParticle = false
@@ -758,6 +759,7 @@ enum AvfxSchemaReader {
                 particle.lightType = data?.int("LgtT") ?? 0
             }
             particle.normalLayer = layer(p.child("TN"))
+            particle.reflection = layer(p.child("TR"))
             particle.normalPower = curve(p.child("TN")?.child("NPow"))
             particle.movementParticle = p.int("PrVT") == 8 && data?.bool("bMP") == true
             if p.int("PrVT") == 14 {

@@ -33,17 +33,21 @@ private struct ParticleUniforms {
     var pointPosition: (Vec4, Vec4) = (.zero, .zero)
     var pointColor: (Vec4, Vec4) = (.zero, .zero)
     var normalInfo = Vec4.zero
+    var reflectInfo = Vec4.zero
 }
 
 struct LoadedTexture {
     var texture: MTLTexture
     var alphaOnly: Bool
+    var cube: MTLTexture? = nil
 }
 
 private struct PreparedMaterial {
     var uniforms = ParticleUniforms()
     var textures: [MTLTexture?] = [nil, nil, nil, nil, nil, nil, nil]
     var samplers: [MTLSamplerState?] = [nil, nil, nil, nil, nil, nil, nil]
+    var reflectCube: MTLTexture?
+    var reflectFlat: MTLTexture?
     var frames: [MTLTexture?] = []
     var blend = 0
     var depthTest = true
@@ -90,6 +94,7 @@ final class ParticleRenderer {
     private var depthStates: [MTLDepthStencilState] = []
     private var samplers: [Int: MTLSamplerState] = [:]
     private var white: MTLTexture?
+    private var whiteCube: MTLTexture?
     private var samples = 4
     private lazy var emptyDepth: MTLTexture? = {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: 1, height: 1, mipmapped: false)
@@ -163,6 +168,11 @@ final class ParticleRenderer {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm, width: 1, height: 1, mipmapped: false)
         white = device.makeTexture(descriptor: descriptor)
         white?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: [UInt8](repeating: 255, count: 4), bytesPerRow: 4)
+        whiteCube = device.makeTexture(descriptor: MTLTextureDescriptor.textureCubeDescriptor(pixelFormat: .rgba8Unorm, size: 1, mipmapped: false))
+        for face in 0..<6 {
+            whiteCube?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, slice: face, withBytes: [UInt8](repeating: 255, count: 4),
+                               bytesPerRow: 4, bytesPerImage: 4)
+        }
     }
 
     func reset() {
@@ -171,6 +181,27 @@ final class ParticleRenderer {
     }
 
     private static var mipQueue: MTLCommandQueue?
+
+    static func makeCube(_ device: MTLDevice, _ decoded: DecodedTexture) -> MTLTexture? {
+        guard decoded.faces.count == 6, decoded.width == decoded.height else { return nil }
+        let size = decoded.width
+        let descriptor = MTLTextureDescriptor.textureCubeDescriptor(pixelFormat: .rgba8Unorm, size: size, mipmapped: size > 1)
+        descriptor.usage = size > 1 ? [.shaderRead, .renderTarget] : [.shaderRead]
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        for (face, pixels) in decoded.faces.enumerated() {
+            texture.replace(region: MTLRegionMake2D(0, 0, size, size), mipmapLevel: 0, slice: face, withBytes: pixels,
+                            bytesPerRow: size * 4, bytesPerImage: size * size * 4)
+        }
+        if size > 1 {
+            if mipQueue == nil { mipQueue = device.makeCommandQueue() }
+            if let buffer = mipQueue?.makeCommandBuffer(), let blit = buffer.makeBlitCommandEncoder() {
+                blit.generateMipmaps(for: texture)
+                blit.endEncoding()
+                buffer.commit()
+            }
+        }
+        return texture
+    }
 
     static func makeTexture(_ device: MTLDevice, _ decoded: DecodedTexture) -> MTLTexture? {
         let mipped = decoded.width > 1 && decoded.height > 1
@@ -253,6 +284,10 @@ final class ParticleRenderer {
             m.samplers[6] = sampler(tn.borderU, tn.borderV)
             let sets = [ps.tc1, ps.tc2, ps.distortion, ps.tc3, ps.tc4].map { $0?.uvSet }
             m.uniforms.normalInfo = Vec4(1, Float(sets.firstIndex { $0 == tn.uvSet } ?? 0), 1, 0)
+        }
+        if PreviewRules.isOn("reflectionLayer"), let tr = ps.reflection, tr.enabled, let first = tr.textures.first, let texture = textureProvider(first) {
+            if let cube = texture.cube { m.reflectCube = cube } else { m.reflectFlat = texture.texture }
+            m.uniforms.reflectInfo = Vec4(texture.cube != nil ? 1 : 2, Float(tr.calcColor), 0, 0)
         }
         func channel(_ layer: RTextureLayer?) -> Float { isModel ? Float(min(max(layer?.uvSet ?? 0, 0), 3)) : 0 }
         m.uniforms.channels = Vec4(channel(layers[0]), channel(layers[1]), channel(distortion), channel(layers[2]))
@@ -352,7 +387,7 @@ final class ParticleRenderer {
         let softDepthOffset: Float = PreviewRules.isOn("softDepthOffset") ? 1 : 0
         let fallbackSampler = sampler(0, 0)
         var boundPipeline: ObjectIdentifier?, boundDepth: ObjectIdentifier?, boundCull: MTLCullMode?, boundVertices: ObjectIdentifier?
-        var boundTextures = [ObjectIdentifier??](repeating: .none, count: 9), boundSamplers = [ObjectIdentifier??](repeating: .none, count: 7)
+        var boundTextures = [ObjectIdentifier??](repeating: .none, count: 11), boundSamplers = [ObjectIdentifier??](repeating: .none, count: 7)
         func bind(_ texture: MTLTexture?, _ slot: Int) {
             let id = texture.map { ObjectIdentifier($0) }
             if boundTextures[slot] != .some(id) {
@@ -441,6 +476,8 @@ final class ParticleRenderer {
             }
             bind(sceneColor ?? white, 6)
             bind(sceneDepth ?? emptyDepth, 7)
+            bind(material.reflectCube ?? whiteCube, 9)
+            bind(material.reflectFlat ?? white, 10)
             encoder.drawIndexedPrimitives(type: .triangle, indexCount: geometry.indexCount, indexType: .uint32, indexBuffer: geometry.indices,
                                           indexBufferOffset: 0)
         }

@@ -45,6 +45,7 @@ struct U {
     float4 pointPosition[2];
     float4 pointColor[2];
     float4 normalInfo;
+    float4 reflectInfo;
 };
 
 struct VOut {
@@ -133,7 +134,8 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
                                  texture2d<float> sceneColor [[texture(6)]], depth2d_ms<float> sceneDepth [[texture(7)]],
                                  sampler s1 [[sampler(0)]], sampler s2 [[sampler(1)]], sampler s3 [[sampler(2)]],
                                  sampler s4 [[sampler(3)]], sampler s5 [[sampler(4)]], sampler s6 [[sampler(5)]],
-                                 texture2d<float> normalMap [[texture(8)]], sampler s7 [[sampler(6)]]) {
+                                 texture2d<float> normalMap [[texture(8)]], sampler s7 [[sampler(6)]],
+                                 texturecube<float> envCube [[texture(9)]], texture2d<float> envFlat [[texture(10)]]) {
     if (u.debugColor.w > 0.0) return u.debugColor;
     float2 uv1 = in.uv1;
     float2 uv2 = in.uv2;
@@ -200,6 +202,20 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     }
     if (u.flags2.z > 0.5) {
         t.a *= map6.sample(s6, float2(tc1Alpha + u.misc.z, 0.5)).a;
+    }
+    if (u.reflectInfo.x > 0.5) {
+        constexpr sampler env(filter::linear, mip_filter::linear, address::repeat);
+        float3 r = reflect(normalize(in.worldPosition - u.cameraPosition.xyz), normalize(in.worldNormal));
+        float3 e;
+        if (u.reflectInfo.x > 1.5) {
+            float3 rv = (u.view * float4(r, 0.0)).xyz;
+            float m = 2.0 * sqrt(rv.x * rv.x + rv.y * rv.y + (rv.z + 1.0) * (rv.z + 1.0));
+            e = envFlat.sample(env, float2(rv.x / max(m, 1e-4) + 0.5, 0.5 - rv.y / max(m, 1e-4))).rgb;
+        } else {
+            e = envCube.sample(env, r).rgb;
+        }
+        int op = int(u.reflectInfo.y + 0.5);
+        t.rgb = op == 1 ? t.rgb + e : op == 2 ? t.rgb - e : op == 3 ? max(t.rgb, e) : op == 4 ? min(t.rgb, e) : t.rgb * e;
     }
     float4 c = u.color * t;
     if (u.litDirection.w > 0.5) {

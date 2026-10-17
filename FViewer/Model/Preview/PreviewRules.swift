@@ -177,6 +177,7 @@ enum PreviewRules {
         ("movementParticle", "Movement particle hidden", "Quads with Is Movement Particle are support particles for a Directional Blur and are not drawn."),
         ("inGameLight", "Game light on lit particles", "Lit particles in an effect with Directional Light Source In Game take the viewer's own scene light, the one that shades the floor and the model."),
         ("releasedEndlessEnd", "Released endless particles end", "Once released, a particle with endless life ends together with the emitter that made it. While held it stays. Inferred from game files, not checked in the game."),
+        ("reflectionLayer", "Reflection layer", "The Texture Reflection layer looks up its texture by the view reflected on the surface (a cube map, or a sphere map for a flat texture) and mixes it into the colour by its Calculate Color; Rate and Power are not used."),
         ("emitterBirthNoAge", "Emitters do not age on their birth step", "An emitter started by a timeline item already has the age since the item started and does not age again on that step; it creates whatever falls before its end, so an emitter living one or two frames still creates."),
         ("emitterLifeZeroWindow", "Emitter Life 0 lasts its timeline window", "An emitter with Life 0 started by a timeline item lives for the item's window instead of one frame."),
         ("generateDelayPastLife", "Generate Delay past the emitter's end", "An item whose Generate Delay is after its emitter's end is still created once at that frame."),
