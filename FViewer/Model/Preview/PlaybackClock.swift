@@ -57,11 +57,6 @@ final class PlaybackClock: ObservableObject {
         eventsRevision += 1
         if !loadingEvents { onEventsEdited?() }
     } }
-    @Published var holding = true { didSet {
-        guard holding != oldValue else { return }
-        eventsRevision += 1
-        if !loadingEvents { onEventsEdited?() }
-    } }
     private var loadingEvents = false
     private(set) var eventsRevision = 0
     var onEventsEdited: (() -> Void)?
@@ -69,13 +64,7 @@ final class PlaybackClock: ObservableObject {
 
     func isEnding(_ kind: PreviewEvent.Kind) -> Bool { endingTest?(kind) ?? { if case .trigger = kind { return false }; return true }() }
 
-    var startsByTrigger = false
-
-    func isPlayed(_ event: PreviewEvent) -> Bool {
-        guard !event.muted else { return false }
-        guard holding, isEnding(event.kind) else { return true }
-        return startsByTrigger && events.first(where: { !$0.muted && { if case .trigger = $0.kind { return true }; return false }($0) })?.id == event.id
-    }
+    func isPlayed(_ event: PreviewEvent) -> Bool { !event.muted }
 
     var playedEvents: [PreviewEvent] { events.filter(isPlayed) }
     @Published var timelineStates: [Int: String] = [:]
@@ -96,7 +85,6 @@ final class PlaybackClock: ObservableObject {
     func addEvent(_ kind: PreviewEvent.Kind, at frame: Double? = nil) -> PreviewEvent {
         let event = PreviewEvent(frame: max(0, (frame ?? time).rounded(.down)), kind: kind)
         events = (events + [event]).sorted { $0.frame < $1.frame }
-        if isEnding(kind) { holding = false }
         return event
     }
 
@@ -120,10 +108,9 @@ final class PlaybackClock: ObservableObject {
 
     func removeEvent(_ id: UUID) { events.removeAll { $0.id == id } }
 
-    func loadEvents(_ list: [PreviewEvent], holding hold: Bool) {
+    func loadEvents(_ list: [PreviewEvent]) {
         loadingEvents = true
         events = list.sorted { $0.frame < $1.frame }
-        holding = hold
         loadingEvents = false
     }
 

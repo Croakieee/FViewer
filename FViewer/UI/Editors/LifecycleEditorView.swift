@@ -5,7 +5,7 @@ struct LifecycleEditorView: View {
     @ObservedObject var clock: PlaybackClock
     @State private var timeline = 0
 
-    private static let addable: [String] = ["KILL", "END ", "ULLP", "TRG ", "RTRG", "REST"]
+    private static let addable: [String] = ["KILL", "END ", "ULLP", "TRG ", "RTRG", "REST", "FADI"]
 
     private func fields(_ id: String) -> [PropField] {
         guard let node = document.node(id) else { return [] }
@@ -94,10 +94,8 @@ struct LifecycleEditorView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text("Preview").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.text)
-                    HoldEndSwitch(document: document, clock: clock)
                     Text(clock.events.isEmpty ? "no events" : clock.events.map { event -> String in
-                        let name: String = { switch event.kind { case .trigger(let i): return "T\(i)"; case .release: return "Release"; case .stop: return "Stop" } }()
-                        return name + " @ \(Int(safe: event.frame))" + (clock.isPlayed(event) ? "" : " (off)")
+                        EffectDocument.eventShort(event.kind) + " @ \(Int(safe: event.frame))" + (clock.isPlayed(event) ? "" : " (muted)")
                     }.joined(separator: ", "))
                     .font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
                     .help("Game events on the Events row of the Timeline. Drag them there to change when they happen")
@@ -133,8 +131,9 @@ struct LifecycleEditorView: View {
                 if let enabled = field(list, tag: "bEna") { FieldControl(document: document, field: enabled).frame(width: 16) }
                 if let type = field(list, suffix: "type") { FieldControl(document: document, field: type).frame(width: 140) }
                 if let start = field(list, tag: "StTm") { FieldControl(document: document, field: start, label: "Frame").frame(width: 96) }
-                if code == "KILL", let fade = field(list, suffix: "fade") {
-                    FieldControl(document: document, field: fade, label: "Fade").frame(width: 92).help("Frames over which the targets fade out")
+                if code == "KILL" || code == "FADI", let fade = field(list, suffix: "fade") {
+                    FieldControl(document: document, field: fade, label: code == "KILL" ? "Fade" : "Fade In").frame(width: 100)
+                        .help(code == "KILL" ? "Frames over which the targets fade out" : "Frames over which the targets fade in")
                 }
                 if code == "TRG ", let trigger = field(list, suffix: "trigger") { FieldControl(document: document, field: trigger).frame(width: 190) }
                 if code == "RTRG" {
@@ -190,7 +189,7 @@ struct LifecycleEditorView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Add a clip to this timeline at the playhead: Kill, End, Unlock Loop Point, Trigger, Random Trigger or Reset")
+        .help("Add a clip to this timeline at the playhead: Kill, End, Unlock Loop Point, Trigger, Random Trigger, Reset or Fade In")
     }
 
     private var timelineColumn: some View {

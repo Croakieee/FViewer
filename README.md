@@ -39,7 +39,7 @@ Originals are never overwritten. **Save** writes a copy next to the source with 
 
 Strips show when each emitter of a timeline starts and ends. Drag a strip to move it, drag its edge to change its length. The curve inside a strip is the number of live particles on each frame. The timeline row shows the total.
 
-Playback controls set the frame, the end frame, speed, loop and the random seed. A **Release** event on the Events row lets held particles and emitters play out, as when the game ends an effect.
+Playback controls set the frame, the end frame, speed, loop and the random seed. A **Release** event on the Game Events lane of the Timeline lets held particles and emitters play out, as when the game ends an effect.
 
 ### Graph Editor
 

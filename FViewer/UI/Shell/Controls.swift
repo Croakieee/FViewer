@@ -410,11 +410,10 @@ struct CurveValueRows: View {
     var random: CurveGroup?
     var addRandom: MissingCurve?
     var floats = true
-    @State private var floating = false
 
     private func open() {
         document.activeCurveID = group.id
-        if floats { floating = true }
+        if floats { CurvePanel.shared.show(app) }
     }
 
     static func pairs(_ curves: [CurveGroup], _ missing: [MissingCurve]) -> (rows: [(group: CurveGroup, random: CurveGroup?, add: MissingCurve?)], rest: [MissingCurve]) {
@@ -433,7 +432,7 @@ struct CurveValueRows: View {
 
     private func float(_ target: CurveGroup) {
         document.activeCurveID = target.id
-        if floats { floating = true }
+        if floats { CurvePanel.shared.show(app) }
     }
 
     private var colorChannels: [CurveChannel] { group.channels.filter { $0.colorComponent != nil } }
@@ -616,13 +615,6 @@ struct CurveValueRows: View {
                 .padding(.trailing, 6)
             }
             randomLine
-        }
-        .popover(isPresented: $floating, arrowEdge: .leading) {
-            CurveEditorView(document: document, clock: document.clock)
-                .environmentObject(app)
-                .frame(width: 820, height: 420)
-                .background(Theme.panel)
-                .preferredColorScheme(Theme.scheme)
         }
     }
 }

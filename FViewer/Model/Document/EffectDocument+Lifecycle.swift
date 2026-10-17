@@ -24,7 +24,7 @@ nonisolated enum TimelineSource: Hashable {
     var name: String {
         switch self {
         case .scheduler(let index): return "Scheduler Item \(index)"
-        case .trigger(let index): return "Trigger \(index)"
+        case .trigger(let index): return EffectDocument.triggerName(index)
         }
     }
 
@@ -52,12 +52,36 @@ nonisolated struct ClipSummary {
     let trigger: Int?
     let range: ClosedRange<Int>?
 
-    var usesTargets: Bool { code == "KILL" || code == "ULLP" }
+    var usesTargets: Bool { ["KILL", "ULLP", "REST", "FADI"].contains(code) }
+    var stops: Bool { code == "KILL" || code == "ULLP" }
 }
 
 extension EffectDocument {
     static func clipName(_ code: String) -> String {
         clipTypes.first { $0.code == code }?.name ?? code.trimmingCharacters(in: .whitespaces)
+    }
+
+    nonisolated static let triggerMeanings: [Int: String] = [0: "End of Animation", 1: "Interrupted", 2: "Mount Landing", 3: "Mount Takeoff", 4: "Weapon Sheathe",
+                                                 5: "Weapon Draw", 8: "Crafting / Gathering", 9: "Crafting / Gathering", 10: "Mount", 11: "Dismount"]
+
+    nonisolated static func triggerName(_ index: Int) -> String {
+        "Trigger \(index)" + (triggerMeanings[index].map { " · " + $0 } ?? "")
+    }
+
+    static func eventShort(_ kind: PreviewEvent.Kind) -> String {
+        switch kind {
+        case .trigger(let index): return "T\(index)"
+        case .release: return "Release"
+        case .stop: return "Remove"
+        }
+    }
+
+    static func eventSymbol(_ kind: PreviewEvent.Kind) -> String {
+        switch kind {
+        case .trigger: return "bolt.fill"
+        case .release: return "lock.open.fill"
+        case .stop: return "xmark"
+        }
     }
 
     static func clipHelp(_ code: String) -> String {
@@ -67,8 +91,8 @@ extension EffectDocument {
         case "ULLP": return "Releases the loops of the timelines its targets point to, so they play to the end. No targets: everything"
         case "TRG ": return "Fires a trigger slot, as if the game sent it"
         case "RTRG": return "Fires one random trigger slot from the range"
-        case "REST": return "Restarts the whole effect"
-        case "FADI": return "Fade in. Not found in game files; the preview ignores it"
+        case "REST": return "Restarts the timelines its targets point to from their first frame. No targets: the whole effect"
+        case "FADI": return "Fades in the timelines its targets point to over its duration in frames. No targets: everything"
         default: return ""
         }
     }
@@ -81,8 +105,11 @@ extension EffectDocument {
         case "KILL":
             return ClipSummary(code: code, name: clipName(code), fade: max(0, ints[0]), targets: ints.dropFirst().compactMap(TimelineSource.init(target:)),
                                trigger: nil, range: nil)
-        case "ULLP":
+        case "ULLP", "REST":
             return ClipSummary(code: code, name: clipName(code), fade: 0, targets: ints.dropFirst().compactMap(TimelineSource.init(target:)),
+                               trigger: nil, range: nil)
+        case "FADI":
+            return ClipSummary(code: code, name: clipName(code), fade: max(0, ints[0]), targets: ints.dropFirst().compactMap(TimelineSource.init(target:)),
                                trigger: nil, range: nil)
         case "TRG ":
             return ClipSummary(code: code, name: clipName(code), fade: 0, targets: [], trigger: ints[0], range: nil)
@@ -102,6 +129,7 @@ extension EffectDocument {
             text += unique.isEmpty ? " · everything" : " → " + unique.map(\.name).joined(separator: ", ")
         }
         if clip.code == "KILL", clip.fade > 0 { text += " · fade \(clip.fade)" }
+        if clip.code == "FADI", clip.fade > 0 { text += " · fade in \(clip.fade)" }
         if let trigger = clip.trigger { text += " → Trigger \(trigger)" }
         if let range = clip.range { text += " → Trigger \(range.lowerBound)…\(range.upperBound)" }
         return text
@@ -156,7 +184,7 @@ extension EffectDocument {
         var result: [(timeline: Int, clip: Int, summary: ClipSummary)] = []
         for (t, block) in root.childrenNamed("TmLn").enumerated() {
             for (c, clip) in block.childrenNamed("Clip").enumerated() {
-                guard let summary = EffectDocument.clipSummary(clip), summary.usesTargets else { continue }
+                guard let summary = EffectDocument.clipSummary(clip), summary.stops else { continue }
                 if summary.targets.isEmpty ? t != timeline : summary.targets.contains(where: mine.contains) { result.append((t, c, summary)) }
             }
         }

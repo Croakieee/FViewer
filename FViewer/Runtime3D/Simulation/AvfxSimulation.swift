@@ -717,17 +717,14 @@ final class AvfxSimulation {
             release()
         case "KILL": runKill(clip, from: start)
         case "REST":
-            if clip.floats[0] == -1, PreviewRules.isOn("resetOneTimeline") { restartTimeline(clip.ints[0]) } else { pendingRestart = true }
+            if PreviewRules.isOn("resetOneTimeline"), let targets = targets(clip) {
+                for index in targets.sorted() { restartTimeline(index) }
+            } else {
+                pendingRestart = true
+            }
         case "FADI":
             guard PreviewRules.isOn("fadeInClip") else { break }
-            let sources = [clip.ints[1], clip.ints[3]].compactMap(TimelineSource.init(target:))
-            let targets: Set<Int>? = sources.isEmpty ? nil : Set(sources.compactMap { source -> Int? in
-                switch source {
-                case .scheduler(let index): return index < schema.scheduler.count ? schema.scheduler[index].timeline : nil
-                case .trigger(let index): return index < schema.triggers.count ? schema.triggers[index].timeline : nil
-                }
-            })
-            fadeIns.append((targets, time, Float(max(0, clip.ints[0]))))
+            fadeIns.append((targets(clip), time, Float(max(0, clip.ints[0]))))
         case "TRG ": trigger(clip.ints[0])
         case "RTRG":
             let lo = min(clip.ints[0], clip.ints[1]), hi = max(clip.ints[0], clip.ints[1])
@@ -1047,14 +1044,13 @@ final class AvfxSimulation {
                 let binder = item.binder >= 0 ? item.binder : timeline.binder
                 let end: Float = item.end > item.start ? Float(item.end - item.start) : 0
                 let delay = binder >= 0 && binder < schema.binders.count && PreviewRules.isOn("binderGenerateDelay") ? Float(schema.binders[binder].generateDelay) : 0
-                if item.emitter < 0, item.effector >= 0, item.effector < schema.effectors.count, PreviewRules.isOn("timelineEffectors") {
+                if item.effector >= 0, item.effector < schema.effectors.count, PreviewRules.isOn("timelineEffectors") {
                     let carrier = spawnEmitter(effectorCarrier, anchor: binderMatrix(binder), endFrames: end, startAge: local - Float(item.start) - delay)
                     carrier.effectorOverride = item.effector
                     carrier.timeline = start.index
                     carrier.instance = start
                     carrier.binder = binder
                     if item.end < 0 { carrier.holdWhile = { [unowned self] in !self.released && !start.released } }
-                    continue
                 }
                 guard item.emitter >= 0, item.emitter < schema.emitters.count else { continue }
                 let e = spawnEmitter(schema.emitters[item.emitter], anchor: binderMatrix(binder), endFrames: end, startAge: local - Float(item.start) - delay)

@@ -523,7 +523,10 @@ extension EffectDocument {
                                     set: { $0 ? Float(0).bitPattern : Float(-1).bitPattern }))
             fields.append(flagField("Start Hidden", at: 24, suffix: "hidden", isOn: { block.data.f32(24) != -1 },
                                     set: { $0 ? Float(0).bitPattern : Float(-1).bitPattern }))
-        case "ULLP":
+        case "ULLP", "REST":
+            targets()
+        case "FADI":
+            fields.append(intField("Fade In Duration", 0, suffix: "fade"))
             targets()
         case "TRG ":
             fields.append(choiceField("Trigger", 0, suffix: "trigger", triggerChoices(current: int(0))))
@@ -673,6 +676,10 @@ extension EffectDocument {
         return groups
     }
 
+    private func effectorTypeName(_ block: AvfxBlock) -> String {
+        enumText("EffectorType", block.int("EfVT")).replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression).replacingOccurrences(of: "_", with: " ")
+    }
+
     func avfxSequencerRows(_ root: AvfxBlock) -> [SequencerRow] {
         let timelines = root.childrenNamed("TmLn")
         let scheduled = schedulerSlots, slots = triggerSlots
@@ -723,17 +730,22 @@ extension EffectDocument {
                     end = max(end, start + Double(summary.fade))
                 }
                 let effector = recordInt(record, "EfNo")
-                let effectorCount = root.childrenNamed("Efct").count
+                let effectorBlocks = root.childrenNamed("Efct")
+                let effectorItem = emitter < 0 && clip < 0 && effector >= 0 && effector < effectorBlocks.count
                 var label = "[NONE]"
                 if emitter >= 0 {
                     label = names["avfx/Emit/\(emitter)"] ?? "Emitter \(emitter)"
+                    if effector >= 0, effector < effectorBlocks.count {
+                        label += " + " + (names["avfx/Efct/\(effector)"] ?? "Effector \(effector)") + " · " + effectorTypeName(effectorBlocks[effector])
+                    }
                 } else if clip >= 0 {
                     label = names["\(id)/Clip\(clip)"] ?? (clip < clipBlocks.count ? clipLabel(clipBlocks[clip]) : "Clip \(clip) · missing")
-                } else if effector >= 0, effector < effectorCount {
-                    label = names["avfx/Efct/\(effector)"] ?? "Effector \(effector)"
+                } else if effectorItem {
+                    label = (names["avfx/Efct/\(effector)"] ?? "Effector \(effector)") + " · " + effectorTypeName(effectorBlocks[effector])
                 }
-                var row = SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end, openEnded: open && life <= 0 && emitter >= 0,
-                                       tint: emitter >= 0 ? .emitter : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
+                var row = SequencerRow(id: "\(id)/Item/\(i)", label: label, start: start, end: end,
+                                       openEnded: open && (emitter >= 0 ? life <= 0 : effectorItem),
+                                       tint: emitter >= 0 ? .emitter : effectorItem ? .effector : .item, depth: 1, nodeID: "\(id)/Item/\(i)")
                 row.base = base
                 row.started = starts[t] != nil
                 row.timeline = t
@@ -754,6 +766,8 @@ extension EffectDocument {
             header.sources = sources[t] ?? []
             header.started = starts[t] != nil
             header.base = base
+            let loopStart = Double(timeline.int("LpSt")), loopEnd = Double(timeline.int("LpEd"))
+            if loopEnd > loopStart, loopStart >= 0 { header.loop = (base + loopStart, base + loopEnd) }
             rows.append(header)
             rows.append(contentsOf: children)
         }

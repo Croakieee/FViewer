@@ -47,6 +47,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         var sourcePath: String? = nil
         var events: [PreviewEvent]? = nil
         var holding: Bool? = nil
+        var version: Int? = nil
     }
 
     private var metaURL: URL { url.deletingPathExtension().appendingPathExtension("fvmeta.json") }
@@ -57,33 +58,39 @@ final class EffectDocument: ObservableObject, Identifiable {
             savedNames = decoded.names
             gamePath = decoded.gamePath
             sourcePath = decoded.sourcePath ?? ""
-            savedEvents = decoded.events
-            savedHolding = decoded.holding
+            savedEvents = decoded.events.map { decoded.version != nil || decoded.holding == false ? $0 : heldEvents($0) }
         }
         metaLoaded = true
         clock.endingTest = { [weak self] in self?.isEnding($0) ?? false }
-        clock.startsByTrigger = avfxRoot != nil && !schedulerSlots.contains { $0.enabled && $0.timeline >= 0 }
-        clock.loadEvents(savedEvents ?? defaultEvents, holding: savedHolding ?? true)
+        clock.loadEvents(savedEvents ?? defaultEvents)
         clock.onEventsEdited = { [weak self] in
             guard let self else { return }
             self.savedEvents = self.clock.events
-            self.savedHolding = self.clock.holding ? nil : false
             self.saveMeta()
+        }
+    }
+
+    private func heldEvents(_ list: [PreviewEvent]) -> [PreviewEvent] {
+        let startsByTrigger = avfxRoot != nil && !schedulerSlots.contains { $0.enabled && $0.timeline >= 0 }
+        let opening = startsByTrigger ? list.sorted { $0.frame < $1.frame }.first { if case .trigger = $0.kind { return !$0.muted }; return false }?.id : nil
+        return list.map { event in
+            var event = event
+            if event.id != opening, isEnding(event.kind) { event.muted = true }
+            return event
         }
     }
 
     private var savedNames: [String: String] = [:]
     private var savedEvents: [PreviewEvent]?
-    private var savedHolding: Bool?
 
     private(set) var metaError: String?
 
     func saveMeta() {
         do {
-            if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty && savedEvents == nil && savedHolding == nil {
+            if savedNames.isEmpty && gamePath.isEmpty && sourcePath.isEmpty && savedEvents == nil {
                 if FileManager.default.fileExists(atPath: metaURL.path) { try FileManager.default.removeItem(at: metaURL) }
             } else {
-                try JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath, events: savedEvents, holding: savedHolding)).write(to: metaURL, options: .atomic)
+                try JSONEncoder().encode(Meta(names: savedNames, gamePath: gamePath, sourcePath: sourcePath.isEmpty ? nil : sourcePath, events: savedEvents, version: 2)).write(to: metaURL, options: .atomic)
             }
             metaError = nil
         } catch {
