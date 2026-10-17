@@ -128,7 +128,8 @@ final class SpriteCloud {
 
     private func spawn(_ random: inout SeededRandom) -> Sprite {
         let a = anim
-        let index = min(max(points.count - 1, 0), Int(random.next() * Float(points.count)))
+        let index = PreviewRules.isOn("simpleVerticesInOrder") ? created % max(1, points.count)
+            : min(max(points.count - 1, 0), Int(random.next() * Float(points.count)))
         let point: EmitPoint? = a.injectionPosition == 1 && !points.isEmpty ? points[index] : nil
         let path: Vec3? = point != nil && !bindPoints.isEmpty ? bindPoints[index % bindPoints.count].position - point!.position : nil
         var direction: Vec3

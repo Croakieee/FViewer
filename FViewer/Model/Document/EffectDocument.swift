@@ -26,6 +26,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     @Published var selectionID: String? {
         didSet {
             guard selectionID != oldValue else { return }
+            if selectionID != nil, !selectedEvents.isEmpty { selectedEvents = [] }
             activeCurveID = nil
             if soloPreview { applySolo() }
         }
@@ -139,6 +140,47 @@ final class EffectDocument: ObservableObject, Identifiable {
         }
         undoManager.setActionName("Rename")
         if grouped { undoManager.endUndoGrouping() }
+    }
+
+    @Published var selectedEvents: Set<UUID> = []
+
+    private func pushEventUndo(_ title: String, from old: [PreviewEvent], to new: [PreviewEvent]) {
+        let wasClean = !isDirty
+        let grouped = !undoManager.isUndoing && !undoManager.isRedoing
+        if undoManager.isUndoing {
+            if !undoTitles.isEmpty { undoTitles.removeLast() }
+            redoTitles.append(title)
+        } else if undoManager.isRedoing {
+            if !redoTitles.isEmpty { redoTitles.removeLast() }
+            undoTitles.append(title)
+        } else {
+            if let clean = cleanDepth, undoTitles.count < clean { cleanDepth = nil }
+            undoTitles.append(title)
+            redoTitles = []
+            trimUndoTitles()
+        }
+        if wasClean { cleanDepth = undoTitles.count }
+        isDirty = cleanDepth != undoTitles.count
+        if grouped { undoManager.beginUndoGrouping() }
+        undoManager.registerUndo(withTarget: self) { document in
+            document.clock.events = old
+            document.selectedEvents = document.selectedEvents.filter { id in old.contains { $0.id == id } }
+            document.pushEventUndo(title, from: new, to: old)
+        }
+        undoManager.setActionName(title)
+        if grouped { undoManager.endUndoGrouping() }
+    }
+
+    @discardableResult
+    func editEvents(_ title: String, _ change: (inout [PreviewEvent]) -> Void) -> Bool {
+        let before = clock.events
+        var after = before
+        change(&after)
+        after.sort { $0.frame < $1.frame }
+        guard after != before else { return false }
+        clock.events = after
+        pushEventUndo(title, from: before, to: after)
+        return true
     }
 
     func setName(_ name: String, for nodeID: String) {

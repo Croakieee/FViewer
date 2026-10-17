@@ -40,6 +40,7 @@ final class PolylineTrail {
     }
 
     var softness: Float?
+    var maxLength = Float.infinity
     var vFromHead = true
     var jitter: Float = 0
     var jitterPhase = 0
@@ -111,6 +112,23 @@ final class PolylineTrail {
             k <= centerK ? (true, centerK > 0 ? k / centerK : 1) : (false, (k - centerK) / max(1e-6, 1 - centerK))
         }
         var along = (0..<points).map { Float($0) / Float(points - 1) }
+        var chain = self.chain
+        if let source = chain, source.count == points, maxLength.isFinite {
+            var capped = source
+            var left = max(0, maxLength)
+            var cut = false
+            for i in 1..<points {
+                let d = simd_distance(source[i], source[i - 1])
+                if !cut && d <= left {
+                    left -= d
+                } else {
+                    capped[i] = capped[i - 1]
+                    if !cut && d > 0 { capped[i] += (source[i] - capped[i - 1]) * (left / d) }
+                    cut = true
+                }
+            }
+            chain = capped
+        }
         if let chain, chain.count == points {
             var total: Float = 0
             var sums: [Float] = [0]

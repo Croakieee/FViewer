@@ -17,6 +17,24 @@ final class PlaybackKeysView: NSView {
             guard modifiers.isEmpty || modifiers == .shift else { return event }
             let clock = document.clock
             let last = clock.endFrame ?? max(document.duration, clock.lastEventFrame + 10)
+            let events = document.selectedEvents.filter { id in clock.events.contains { $0.id == id } }
+            if !events.isEmpty {
+                switch event.keyCode {
+                case 51, 117, 7 where modifiers.isEmpty:
+                    document.removeEvents(events)
+                    return nil
+                case 46 where modifiers.isEmpty:
+                    document.toggleEventsMuted(events)
+                    return nil
+                case 2 where modifiers == .shift:
+                    document.duplicateEvents(events)
+                    return nil
+                case 53:
+                    document.selectedEvents = []
+                    return nil
+                default: break
+                }
+            }
             switch event.keyCode {
             case 49 where modifiers.isEmpty:
                 clock.playing.toggle()

@@ -456,8 +456,10 @@ private struct RecordTable: View {
                         }
                         .frame(width: 30, alignment: .leading)
                         if group.id.hasSuffix("/Trgr") {
-                            HeaderButton(symbol: "bolt.fill", help: "Add Trigger \(index) to the Events track at the playhead: it fires now and on every replay") {
-                                document.clock.addEvent(.trigger(index))
+                            let placed = document.events(of: .trigger(index)).contains { !$0.muted }
+                            HeaderButton(symbol: placed ? "bolt.fill" : "bolt", active: placed,
+                                         help: placed ? "Move Trigger \(index)'s event to the playhead and play (undo with ⌘Z)" : "Fire Trigger \(index) at the playhead: puts its event on the Game Events lane, it plays now and on every replay") {
+                                document.placeEvent(.trigger(index))
                                 document.clock.playing = true
                             }
                         }

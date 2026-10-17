@@ -8,14 +8,14 @@ struct SequencerView: View {
     @AppStorage("timeline.snap") private var snapping = true
     @State private var locked: Set<String> = []
     @State private var collapsed: Set<Int> = []
-    @State private var selectedEvent: UUID?
+    @State private var editingEvent: UUID?
     @State private var hoverFrame: Double = 0
 
     @State private var dragMode = 0
     @State private var dragRow: SequencerRow?
     @State private var dragStart: Double = 0
     @State private var dragEnd: Double = 0
-    @State private var eventDrag: (id: UUID, frame: Double)?
+    @State private var eventDrag: (anchor: UUID, delta: Double)?
     @State private var labelWidth: CGFloat = 220
     @State private var frozenSpan: Double?
     @GestureState private var pressing = false
@@ -173,8 +173,57 @@ struct SequencerView: View {
     }
 
     private func addEvent(_ kind: PreviewEvent.Kind, at frame: Double? = nil) {
-        selectedEvent = clock.addEvent(kind, at: frame).id
+        document.selectionID = nil
+        document.addEvent(kind, at: frame)
         clock.playing = true
+    }
+
+    private func eventEditor(_ event: PreviewEvent) -> some View {
+        let current = clock.events.first { $0.id == event.id } ?? event
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(eventLabel(current.kind)).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+            HStack(spacing: 6) {
+                Text("Type").font(Theme.font).foregroundStyle(Theme.text).frame(width: 52, alignment: .trailing)
+                Menu {
+                    eventKindButtons({ document.setEventKind([current.id], $0) }, current: current.kind)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(EffectDocument.eventShort(current.kind)).lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
+                    }
+                    .font(Theme.font).foregroundStyle(Theme.text).padding(.horizontal, 6).frame(height: 20)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Theme.gray(0.16)))
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+            }
+            HStack(spacing: 6) {
+                Text("Frame").font(Theme.font).foregroundStyle(Theme.text).frame(width: 52, alignment: .trailing)
+                NumberField(label: nil, value: current.frame, isInteger: true, step: 1, digits: 0, onLive: { _ in },
+                            onCommit: { _, next in document.setEventFrame(current.id, next) })
+            }
+            CheckBox(isOn: current.muted, label: "Muted") { on in document.setEventsMuted([current.id], on) }
+            Text(eventHelp(current)).font(Theme.small).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                SegmentButton(title: "Jump to It", active: false) {
+                    clock.playing = false
+                    clock.time = current.frame
+                }
+                SegmentButton(title: "Play from Here", active: false) {
+                    clock.time = max(clock.startFrame, current.frame - 15)
+                    clock.playing = true
+                }
+                Spacer(minLength: 0)
+                SegmentButton(title: "Delete", active: false) {
+                    editingEvent = nil
+                    document.removeEvents([current.id])
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 280)
+        .background(Theme.panel)
+        .preferredColorScheme(Theme.scheme)
     }
 
     private func jumpToEvent(forward: Bool) {
@@ -225,14 +274,14 @@ struct SequencerView: View {
                     Button("Jump to Previous Event") { jumpToEvent(forward: false) }.disabled(clock.events.isEmpty)
                     Button("Jump to Next Event") { jumpToEvent(forward: true) }.disabled(clock.events.isEmpty)
                     Divider()
-                    Button("Delete Selected Event", role: .destructive) {
-                        if let selectedEvent { clock.removeEvent(selectedEvent) }
-                        selectedEvent = nil
-                    }
-                    .disabled(selectedEvent == nil || !clock.events.contains { $0.id == selectedEvent })
-                    Button("Delete All Events", role: .destructive) { clock.events = [] }.disabled(clock.events.isEmpty)
+                    let selection = document.selectedEvents.filter { id in clock.events.contains { $0.id == id } }
+                    Button("Duplicate Selected at Playhead  ⇧D") { document.duplicateEvents(selection) }.disabled(selection.isEmpty)
+                    Button("Mute or Unmute Selected  M") { document.toggleEventsMuted(selection) }.disabled(selection.isEmpty)
+                    Button("Delete Selected  X", role: .destructive) { document.removeEvents(selection) }.disabled(selection.isEmpty)
+                    Divider()
+                    Button("Delete All Events", role: .destructive) { document.clearEvents() }.disabled(clock.events.isEmpty)
                     if document.avfxRoot != nil {
-                        Button("Reset to the Effect's Start") { clock.events = document.defaultEvents }
+                        Button("Reset to the Effect's Start") { document.resetEvents() }
                     }
                 }
                 headerMenu("Playback") {
@@ -333,10 +382,28 @@ struct SequencerView: View {
         .background(Theme.gray(0.19))
     }
 
+    private func shownFrame(_ event: PreviewEvent) -> Double {
+        guard let drag = eventDrag, document.selectedEvents.contains(event.id) else { return event.frame }
+        return max(0, event.frame + drag.delta)
+    }
+
+    private func selectEvent(_ id: UUID, extend: Bool) {
+        document.selectionID = nil
+        if extend {
+            if document.selectedEvents.contains(id) { document.selectedEvents.remove(id) } else { document.selectedEvents.insert(id) }
+        } else if !document.selectedEvents.contains(id) || document.selectedEvents.count > 1 {
+            document.selectedEvents = [id]
+        }
+    }
+
+    private func eventTargets(_ event: PreviewEvent) -> Set<UUID> {
+        document.selectedEvents.contains(event.id) ? document.selectedEvents : [event.id]
+    }
+
     private func eventMarker(_ event: PreviewEvent, width: CGFloat, span: Double) -> some View {
-        let frame = eventDrag?.id == event.id ? eventDrag?.frame ?? event.frame : event.frame
+        let frame = shownFrame(event)
         let tint = eventColor(event.kind)
-        let selected = selectedEvent == event.id
+        let selected = document.selectedEvents.contains(event.id)
         return HStack(spacing: 3) {
             Image(systemName: "arrowtriangle.down.fill").font(.system(size: 9)).foregroundStyle(tint)
             Text(eventLabel(event.kind)).font(.system(size: 10, weight: selected ? .bold : .medium)).lineLimit(1)
@@ -346,36 +413,49 @@ struct SequencerView: View {
         .padding(.horizontal, 3)
         .frame(height: 16)
         .background(RoundedRectangle(cornerRadius: 3).fill(selected ? tint.opacity(0.45) : Theme.gray(0.16).opacity(0.85)))
+        .overlay(RoundedRectangle(cornerRadius: 3).stroke(selected ? tint : Color.clear, lineWidth: 1))
         .opacity(event.muted ? 0.45 : 1)
         .fixedSize()
         .contentShape(Rectangle())
         .help((event.muted ? "Muted. " : "") + eventHelp(event))
-        .onTapGesture {
-            selectedEvent = event.id
-            clock.playing = false
-            clock.time = event.frame
+        .onTapGesture(count: 2) {
+            document.selectedEvents = [event.id]
+            editingEvent = event.id
         }
+        .onTapGesture { selectEvent(event.id, extend: NSEvent.modifierFlags.contains(.shift)) }
         .gesture(DragGesture(minimumDistance: 3, coordinateSpace: .named("sequencerCanvas"))
             .onChanged { drag in
-                selectedEvent = event.id
+                if !document.selectedEvents.contains(event.id) { selectEvent(event.id, extend: false) }
                 var target = max(0, time(drag.location.x, width, span).rounded())
                 if snapping, abs(target - clock.time.rounded()) <= 7 * (span / viewZoom) / Double(max(width, 1)) { target = clock.time.rounded() }
-                eventDrag = (event.id, target)
+                eventDrag = (event.id, target - event.frame)
             }
             .onEnded { _ in
-                if let drag = eventDrag { clock.moveEvent(drag.id, to: drag.frame) }
+                if let drag = eventDrag { document.moveEvents(document.selectedEvents, by: drag.delta) }
                 eventDrag = nil
             })
+        .popover(isPresented: Binding(get: { editingEvent == event.id }, set: { if !$0 { editingEvent = nil } }), arrowEdge: .bottom) {
+            eventEditor(event)
+        }
         .contextMenu {
-            Section("Frame \(Int(safe: event.frame))") {
-                eventKindButtons({ clock.setEventKind(event.id, $0) }, current: event.kind)
+            let targets = eventTargets(event)
+            let many = targets.count > 1
+            Section(many ? "\(targets.count) Events" : "Frame \(Int(safe: event.frame))") {
+                Menu("Type") { eventKindButtons({ document.setEventKind(targets, $0) }, current: many ? nil : event.kind) }
+            }
+            Button("Edit…") {
+                document.selectedEvents = [event.id]
+                editingEvent = event.id
+            }
+            .disabled(many)
+            Button("Jump to Event") {
+                clock.playing = false
+                clock.time = event.frame
             }
             Divider()
-            Button(event.muted ? "Unmute" : "Mute") { clock.setMuted(event.id, !event.muted) }
-            Button("Delete Event", role: .destructive) {
-                clock.removeEvent(event.id)
-                if selectedEvent == event.id { selectedEvent = nil }
-            }
+            Button(event.muted ? "Unmute" : "Mute") { document.setEventsMuted(targets, !event.muted) }
+            Button("Duplicate at Playhead") { document.duplicateEvents(targets) }
+            Button(many ? "Delete Events" : "Delete Event", role: .destructive) { document.removeEvents(targets) }
         }
         .offset(x: x(frame, width, span) - 7, y: rulerHeight + (markerHeight - 16) / 2)
     }
@@ -400,26 +480,66 @@ struct SequencerView: View {
             .help(help)
     }
 
+    private func fireTrigger(_ index: Int) {
+        document.selectionID = nil
+        document.placeEvent(.trigger(index))
+        clock.playing = true
+    }
+
+    @ViewBuilder private func triggerMenu(_ index: Int, many: Bool) -> some View {
+        let existing = document.events(of: .trigger(index))
+        let name = EffectDocument.triggerName(index)
+        Section(existing.isEmpty ? name + ": no event" : name + ": " + existing.map { "frame \(Int(safe: $0.frame))" + ($0.muted ? " (muted)" : "") }.joined(separator: ", ")) {
+            Button(existing.isEmpty ? "Fire at Playhead" : "Move to Playhead") { fireTrigger(index) }
+            Button("Add Another at Playhead") {
+                document.selectionID = nil
+                document.addEvent(.trigger(index))
+                clock.playing = true
+            }
+            .disabled(existing.isEmpty)
+            if let first = existing.first {
+                Button("Jump to Event") {
+                    clock.playing = false
+                    clock.time = first.frame
+                    document.selectedEvents = Set(existing.map(\.id))
+                }
+                Button(existing.allSatisfy(\.muted) ? "Unmute" : "Mute") { document.toggleEventsMuted(Set(existing.map(\.id))) }
+                Button(existing.count > 1 ? "Delete Its Events" : "Delete Its Event", role: .destructive) { document.removeEvents(Set(existing.map(\.id))) }
+            }
+        }
+    }
+
+    private func fireHelp(_ index: Int) -> String {
+        let name = EffectDocument.triggerName(index)
+        let frames: [String] = document.events(of: .trigger(index)).map { String(Int(safe: $0.frame)) }
+        if frames.isEmpty { return "Fire \(name) at the playhead: puts its event on the Game Events lane and plays. Right-click for more" }
+        return "\(name) is at frame \(frames.joined(separator: ", ")). Click to move it to the playhead; right-click to add another, jump, mute or delete"
+    }
+
     @ViewBuilder private func fireButton(_ row: SequencerRow) -> some View {
         let triggers = row.sources.compactMap { source -> Int? in if case .trigger(let index) = source { return index }; return nil }
         if document.avfxRoot != nil, !triggers.isEmpty {
-            let tint = row.started ? Theme.dim : Theme.playhead
+            let placed = triggers.contains { index in document.events(of: .trigger(index)).contains { !$0.muted } }
+            let tint: Color = placed ? Theme.accent : row.started ? Theme.dim : Theme.playhead
+            let symbol = placed ? "bolt.fill" : "bolt"
             if triggers.count == 1 {
-                Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(tint)
+                let index = triggers[0]
+                Image(systemName: symbol).font(.system(size: 9)).foregroundStyle(tint)
                     .frame(width: 18, height: rowHeight).contentShape(Rectangle())
-                    .onTapGesture { addEvent(.trigger(triggers[0])) }
-                    .help("Fire " + EffectDocument.triggerName(triggers[0]) + ": adds it on the Game Events lane at the playhead and plays")
+                    .onTapGesture { fireTrigger(index) }
+                    .contextMenu { triggerMenu(index, many: false) }
+                    .help(fireHelp(index))
             } else {
                 Menu {
-                    ForEach(triggers, id: \.self) { index in Button("Fire " + EffectDocument.triggerName(index)) { addEvent(.trigger(index)) } }
+                    ForEach(triggers, id: \.self) { index in triggerMenu(index, many: true) }
                 } label: {
-                    Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundStyle(tint).frame(width: 18, height: rowHeight)
+                    Image(systemName: symbol).font(.system(size: 9)).foregroundStyle(tint).frame(width: 18, height: rowHeight)
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Fire one of the triggers that start this timeline")
+                .help("Triggers that start this timeline: fire, move, mute or delete their events")
             }
         }
     }
@@ -676,7 +796,7 @@ struct SequencerView: View {
                 .onChange(of: document.id) { _, _ in
                     locked = []
                     collapsed = []
-                    selectedEvent = nil
+                    document.selectedEvents = []
                     if showDensity { document.scheduleDensity() }
                 }
                 .onChange(of: allRows.count) { _, _ in locked = [] }
@@ -733,11 +853,11 @@ struct SequencerView: View {
                                 drawRow(&context, row, top: top, width: width, span: span, end: end, densityPeak: densityPeak, children: children)
                             }
                             for event in clock.events {
-                                let frame = eventDrag?.id == event.id ? eventDrag?.frame ?? event.frame : event.frame
+                                let frame = shownFrame(event)
                                 var line = Path()
                                 line.move(to: CGPoint(x: x(frame, width, span), y: bodyTop))
                                 line.addLine(to: CGPoint(x: x(frame, width, span), y: canvasSize.height))
-                                context.stroke(line, with: .color(eventColor(event.kind).opacity(event.muted ? 0.15 : selectedEvent == event.id ? 0.8 : 0.45)),
+                                context.stroke(line, with: .color(eventColor(event.kind).opacity(event.muted ? 0.15 : document.selectedEvents.contains(event.id) ? 0.8 : 0.45)),
                                                style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
                             }
                             let startX = x(clock.startFrame, width, span), endX = x(end, width, span)
@@ -831,7 +951,7 @@ struct SequencerView: View {
     private func handleDrag(_ drag: DragGesture.Value, rows: [SequencerRow], end: Double, width: CGFloat, span liveValue: Double) {
         if dragMode == 0 {
             dragMode = 1
-            selectedEvent = nil
+            document.selectedEvents = []
             frozenSpan = liveValue
             liveSpan = liveValue
             let index = Int(floor((drag.startLocation.y - bodyTop) / rowHeight))

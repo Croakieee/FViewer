@@ -177,6 +177,7 @@ final class EmitterInstance {
     var cameraRotation: simd_quatf?
     var cameraPosition: Vec3?
     var born = false
+    var posInWorld = false
     static var birthCreates = true
     static var pastLife = true
     static var ignoreEnabled = true
@@ -221,8 +222,9 @@ final class EmitterInstance {
         let position = Eval.axes(schema.position, time, 0, seed, 1)
         let rotation = Eval.axes(schema.rotation, time, 0, seed, 4)
         let scale = Eval.axes(schema.scale, time, 1, seed, 8)
-        var out = anchor() * Math3D.compose(position, Math3D.euler(rotation, order: schema.rotationOrder), scale,
+        var out = anchor() * Math3D.compose(posInWorld ? .zero : position, Math3D.euler(rotation, order: schema.rotationOrder), scale,
                                             order: PreviewRules.isOn("coordComputeOrder") ? schema.coordOrder : 0)
+        if posInWorld { out.columns.3 += Vec4(position.x, position.y, position.z, 0) }
         if let cameraRotation, schema.rotationBase == Base.cameraBillboardAxisY, PreviewRules.isOn("emitterCameraBillboard") {
             let parts = Math3D.decompose(out)
             out = Math3D.compose(parts.position, cameraRotation * Math3D.euler(rotation, order: schema.rotationOrder), parts.scale)
@@ -861,10 +863,13 @@ final class AvfxSimulation {
             let turn = Math3D.decompose(source()).rotation
             let path = binder.type == 2 && PreviewRules.isOn("splineBinderRings") ? splinePath(binder, carry) : nil
             let start = time
+            let lastValue = carry.keys.last.map { abs($0.z) > 1e-6 ? $0.z : 1 } ?? 1
+            let normalise: Float = binder.type == 2 && PreviewRules.isOn("splineBinderRings") ? lastValue : 1
             return { [weak self] in
-                let from = Math3D.position(source()), to = Math3D.position(goalPoint())
-                let k = Eval.curve(carry, CurveTime((self?.time ?? start) - start), 0)
-                let at = path?(from, to, k) ?? from + (to - from) * k
+                let place = source()
+                let from = Math3D.position(place), to = Math3D.position(goalPoint())
+                let k = Eval.curve(carry, CurveTime((self?.time ?? start) - start), 0) / normalise
+                let at = path?(from, to, Math3D.decompose(place).rotation, k) ?? from + (to - from) * k
                 return Math3D.compose(at, turn, Vec3(1, 1, 1)) * revised
             }
         }
@@ -894,45 +899,33 @@ final class AvfxSimulation {
         }
     }
 
-    private func splinePath(_ binder: RBinder, _ carry: RCurve) -> ((Vec3, Vec3, Float) -> Vec3)? {
+    private func splinePath(_ binder: RBinder, _ carry: RCurve) -> ((Vec3, Vec3, simd_quatf, Float) -> Vec3)? {
         guard !binder.rings.isEmpty else { return nil }
-        var jitters: [Vec3] = []
-        var knots: [Float] = [0]
-        for ring in binder.rings {
-            var jitter = Vec3.zero
-            if ring.radius > 0 {
-                let a = random.next() * 2 * .pi, b = acos(random.next() * 2 - 1), r = ring.radius * cbrt(random.next())
-                jitter = Vec3(sin(b) * cos(a), cos(b), sin(b) * sin(a)) * r
-            }
-            jitters.append(jitter)
-            knots.append(Eval.curve(carry, CurveTime(Float(ring.time)), 0))
-        }
-        knots.append(1)
-        if zip(knots, knots.dropFirst()).contains(where: { $0 >= $1 }) { knots = (0..<knots.count).map { Float($0) / Float(knots.count - 1) } }
+        let end = Float(max(1, carry.keys.last?.time ?? 1))
+        let knots = [Float(0)] + binder.rings.map { min(0.999, max(0.001, Float($0.time) / end)) } + [1]
+        let plane = PreviewRules.isOn("splineRingRadiusPlane")
+        let turns = binder.rings.map { _ in random.next() * 2 * .pi }
         let rings = binder.rings
-        return { from, to, u in
-            var flat = to - from
-            flat.y = 0
-            let forward = simd_length_squared(flat) > 1e-8 ? simd_normalize(flat) : Vec3(0, 0, 1)
-            let up = Vec3(0, 1, 0), side = simd_normalize(simd_cross(up, forward))
+        return { from, to, turn, u in
             var points = [from]
-            for (ring, jitter) in zip(rings, jitters) {
-                points.append(from + (to - from) * ring.position.z + side * ring.position.x + up * ring.position.y + jitter)
+            for (ring, angle) in zip(rings, turns) {
+                let r = plane ? ring.radius : 0
+                let side = turn.act(Vec3(ring.position.x + r * cos(angle), ring.position.y + r * sin(angle), 0))
+                points.append(from + (to - from) * ring.position.z + side)
             }
             points.append(to)
             let n = points.count
             func tangent(_ i: Int) -> Vec3 {
                 let a = max(0, i - 1), b = min(n - 1, i + 1)
-                return (points[b] - points[a]) / max(1e-5, knots[b] - knots[a])
+                return (points[b] - points[a]) / max(1e-6, knots[b] - knots[a])
             }
-            if u <= knots[0] { return points[0] + tangent(0) * (u - knots[0]) }
-            if u >= knots[n - 1] { return points[n - 1] + tangent(n - 1) * (u - knots[n - 1]) }
+            let uc = min(1, max(0, u))
             var i = 0
-            while i < n - 2 && u > knots[i + 1] { i += 1 }
-            let span = knots[i + 1] - knots[i], f = (u - knots[i]) / span
+            while i < n - 2 && uc > knots[i + 1] { i += 1 }
+            let span = knots[i + 1] - knots[i]
+            let f = span > 0 ? (uc - knots[i]) / span : 1
             let f2 = f * f, f3 = f2 * f
-            let h00 = 2 * f3 - 3 * f2 + 1, h10 = f3 - 2 * f2 + f, h01 = -2 * f3 + 3 * f2, h11 = f3 - f2
-            return points[i] * h00 + tangent(i) * (h10 * span) + points[i + 1] * h01 + tangent(i + 1) * (h11 * span)
+            return points[i] * (2 * f3 - 3 * f2 + 1) + tangent(i) * span * (f3 - 2 * f2 + f) + points[i + 1] * (-2 * f3 + 3 * f2) + tangent(i + 1) * span * (f3 - f2)
         }
     }
 
@@ -1186,11 +1179,13 @@ final class AvfxSimulation {
                     if follow {
                         anchor = current
                     } else if withOptions {
+                        let measuredPose = PreviewRules.isOn("withOptionsChildPose")
+                        let copyTurn = measuredPose && k != 0 && item.injectionAngle != .zero
+                            ? Math3D.euler(item.injectionAngle * Float(k), order: child.rotationOrder) : simd_quatf(angle: 0, axis: Vec3(0, 1, 0))
                         anchor = {
                             let now = Math3D.decompose(current())
                             let origin = keepPosition ? now.position : Math3D.position(fixed)
-                            return Math3D.compose(origin, item.inheritRotation ? now.rotation : simd_quatf(angle: 0, axis: Vec3(0, 1, 0)),
-                                                  item.inheritScale ? now.scale : revisedScale)
+                            return Math3D.compose(origin, item.inheritRotation ? now.rotation : copyTurn, item.inheritScale ? now.scale : revisedScale)
                         }
                     } else {
                         anchor = { spawnFrame }
@@ -1209,6 +1204,7 @@ final class AvfxSimulation {
                     let inheritLife = item.inheritParentLife && e.lifetime.isFinite && PreviewRules.isOn("inheritParentLife")
                     let c = EmitterInstance(schema: child, anchor: grounded, endFrames: inheritLife ? max(1, e.lifetime - e.age) : 0, random: &random)
                     if item.generateDelayByOne && item.generateDelay > 0 { c.age = -Float(n * item.generateDelay); c.totalAge = c.age }
+                    c.posInWorld = item.influenceCoord == Influence.withOptions && PreviewRules.isOn("withOptionsChildPose")
                     c.timeline = e.timeline
                     c.instance = e.instance
                     c.binder = e.binder
@@ -1418,8 +1414,10 @@ final class AvfxSimulation {
             p.link = schema.particles[item.parameterLink]
         }
         let startFrame = PreviewRules.isOn("itemStartFrame") ? item.startFrame : 0
-        let preRun = startFrame > 0 && !(item.startFrameNullUpdate && PreviewRules.isOn("startFrameNullUpdate")) ? startFrame : 0
-        if startFrame > 0 && preRun == 0 {
+        let measured = PreviewRules.isOn("startFrameNullUpdate")
+        let startAt = startFrame > 0 && !(measured && item.startFrameNullUpdate)
+        let preRun = startAt && !measured ? startFrame : 0
+        if measured ? startAt : startFrame > 0 && preRun == 0 {
             p.age = Float(startFrame)
             p.totalAge = p.age
         }
@@ -1997,6 +1995,7 @@ final class AvfxSimulation {
                 if line.createType == 1 {
                     let chain = PreviewRules.isOn("polylineChain")
                     trail.softness = chain ? Eval.curve(line.softness, t, 0) : nil
+                    trail.maxLength = chain && PreviewRules.isOn("polylineLengthCap") ? Eval.curve(line.length, t, .infinity) : .infinity
                     trail.historyFrames = chain ? Float(line.pointCount) / 2 + 2
                         : p.lifetime.isFinite && PreviewRules.isOn("trailWholePath") ? .infinity : Float(line.pointCount) / 2
                     var head = Math3D.position(m)
@@ -2085,7 +2084,6 @@ final class AvfxSimulation {
                 if let far = s.clipFar { color.w *= pow(share(far.start, far.end), 1.5) }
             }
 
-            let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
             var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? stagePlaces.caster : m, color: color)
             if projected {
                 draw.decal = (decalInfo, m.inverse, groundY)
@@ -2094,7 +2092,7 @@ final class AvfxSimulation {
             }
             draw.parent = parent
             draw.depthCentre = trailHead
-            draw.order = s.drawPriority * 1000 + ((mode == 0 || mode == 8) && PreviewRules.isOn("blendAfterAdditive") ? 500 : 0) + s.index
+            draw.order = s.drawPriority * 1000 + s.index
             draw.sequence = p.sequence
             draw.overScene = overScene
             if (s.fresnelType == 2 || s.fresnelType == 3), PreviewRules.isOn("fresnelAxis") {

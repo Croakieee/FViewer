@@ -74,8 +74,10 @@ struct LifecycleEditorView: View {
                 }
             }
             if case .trigger(let index) = slot.source, slot.timeline >= 0 {
-                HeaderButton(symbol: "bolt.fill", help: "Add Trigger \(index) to the Events row at the playhead and play") {
-                    clock.addEvent(.trigger(index))
+                let placed = document.events(of: .trigger(index)).contains { !$0.muted }
+                HeaderButton(symbol: placed ? "bolt.fill" : "bolt", active: placed,
+                             help: placed ? "Move Trigger \(index)'s event to the playhead and play (undo with ⌘Z)" : "Fire Trigger \(index) at the playhead: puts its event on the Game Events lane and plays") {
+                    document.placeEvent(.trigger(index))
                     clock.playing = true
                 }
             }

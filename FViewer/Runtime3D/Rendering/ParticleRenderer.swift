@@ -312,7 +312,8 @@ final class ParticleRenderer {
         }
         func channel(_ layer: RTextureLayer?) -> Float { isModel ? Float(min(max(layer?.uvSet ?? 0, 0), 3)) : 0 }
         m.uniforms.channels = Vec4(channel(layers[0]), channel(layers[1]), channel(distortion), channel(layers[2]))
-        m.uniforms.misc = Vec4(channel(layers[3]), 0, 0, ps.depthOffset)
+        let spriteDepth = ps.simple != nil && ps.depthOffset < 0 && PreviewRules.isOn("depthOffsetCentre")
+        m.uniforms.misc = Vec4(channel(layers[3]), 0, 0, spriteDepth ? 0 : ps.depthOffset)
         let mode = ps.drawMode >= 9 && ps.drawMode <= 12 ? ps.drawMode - 8 : ps.drawMode
         switch mode {
         case 1: m.blend = 1
