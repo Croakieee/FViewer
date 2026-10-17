@@ -27,6 +27,7 @@ struct LightDraw {
     var decay: Float
     var reach: Float = 0
     var point = false
+    var shadow: (near: Float, far: Float)?
 }
 
 struct DissolveState {
@@ -57,6 +58,7 @@ struct ParticleDraw {
     var distortPower: Float = 0
     var paletteOffset: Float = 0
     var depthCentre: Vec3?
+    var decal: (info: Vec4, inverse: Mat4, ground: Float)?
     var spriteColor = Vec4(1, 1, 1, 1)
     var spriteCell = Vec4(0, 0, 1, 1)
     var isSprite = false
@@ -1636,7 +1638,8 @@ final class AvfxSimulation {
             result.append(LightDraw(position: Math3D.point(e.world, Eval.axes(effector.position, t, 0, e.seed, 1)),
                                     color: Vec3(color.x, color.y, color.z) / peak * strength, distance: scaleDistance,
                                     decay: maxAttenuation ? 0 : Float(effector.attenuation + 1),
-                                    reach: scaleDistance > 0 ? max(0, Eval.curve(effector.color.bri, t, 1)) / scaleDistance : 1e6, point: true))
+                                    reach: scaleDistance > 0 ? max(0, Eval.curve(effector.color.bri, t, 1)) / scaleDistance : 1e6, point: true,
+                                    shadow: PreviewRules.isOn("pointLightShadows") ? effector.shadow : nil))
         }
         return result
     }
@@ -1677,8 +1680,9 @@ final class AvfxSimulation {
                 centre = bounds.centre
                 radius = bounds.radius
             }
+            if draw.overScene || simd_distance(centre, origin) <= radius { continue }
             let along = simd_dot(centre - origin, direction)
-            guard along > 0 else { continue }
+            guard along > 0, radius < along else { continue }
             let miss = simd_length(centre - (origin + direction * along))
             guard miss <= radius else { continue }
             let score = miss / radius + along * 0.001
@@ -1914,9 +1918,13 @@ final class AvfxSimulation {
                 let width = Eval.withRandom(s.laserWidth, s.laserWidthRandom, t, 1, p.seed.get(16))
                 m = laserMatrix(m, base: s.rotationBase, length: length, width: width, camera: camera.position, p)
             }
+            let projected = (s.type == ParticleKind.decal || s.type == ParticleKind.decalRing) && PreviewRules.isOn("decalProjection")
+            var decalInfo = Vec4(1, 0, 0, 0)
             if s.type == ParticleKind.decalRing {
                 let width = Eval.withRandom(s.ringWidth, s.ringWidthRandom, t, 0, p.seed.get(14))
-                shape = GeometryBuilder.ring(fan: s.ringFan, inner: 0.5 - width, outer: 0.5 + width)
+                let outer = max(0, 0.5 + width)
+                decalInfo = Vec4(2, max(0, min(outer, 0.5 - width)), outer, GeometryBuilder.ringAngle(fan: s.ringFan) / 2)
+                if !projected { shape = GeometryBuilder.ring(fan: s.ringFan, inner: 0.5 - width, outer: 0.5 + width) }
             }
             if let disc = s.disc {
                 let inner = disc.colorInner.map { Eval.color($0, t, p.seed) } ?? Vec4(1, 1, 1, 1)
@@ -1935,7 +1943,9 @@ final class AvfxSimulation {
                     }
                 }
                 var parts = Math3D.decompose(m)
-                if abs(parts.position.y - groundY) <= abs(parts.scale.y) / 2 {
+                if projected {
+                    shape = GeometryBuilder.box
+                } else if abs(parts.position.y - groundY) <= abs(parts.scale.y) / 2 {
                     parts.position.y = groundY
                     m = Math3D.compose(parts.position, parts.rotation, parts.scale)
                 } else {
@@ -2046,6 +2056,11 @@ final class AvfxSimulation {
 
             let mode = s.drawMode >= 9 && s.drawMode <= 12 ? s.drawMode - 8 : s.drawMode
             var draw = ParticleDraw(particle: s.index, geometry: shape, model: s.type == 14 ? matrix_identity_float4x4 : m, color: color)
+            if projected {
+                draw.decal = (decalInfo, m.inverse, groundY)
+                let reach = max(1, 2 * decalInfo.z)
+                draw.model = m * Math3D.compose(.zero, simd_quatf(angle: 0, axis: Vec3(0, 1, 0)), Vec3(reach, 1, reach))
+            }
             draw.parent = parent
             draw.depthCentre = trailHead
             draw.order = s.drawPriority * 1000 + ((mode == 0 || mode == 8) && PreviewRules.isOn("blendAfterAdditive") ? 500 : 0) + s.index
@@ -2150,8 +2165,20 @@ final class AvfxSimulation {
                 orders[$0] != orders[$1] ? orders[$0] < orders[$1] : depths[$0] != depths[$1] ? depths[$0] > depths[$1] : $0 < $1
             }.map { draws[$0] }
         }
-        return draws.indices.sorted {
-            orders[$0] != orders[$1] ? orders[$0] < orders[$1] : sequences[$0] != sequences[$1] ? sequences[$0] < sequences[$1] : $0 < $1
-        }.map { draws[$0] }
+        var runs: [Range<Int>] = []
+        var start = 0
+        for i in draws.indices.dropFirst() where orders[i] != orders[start] || sequences[i] != sequences[start] {
+            runs.append(start..<i)
+            start = i
+        }
+        if !draws.isEmpty { runs.append(start..<draws.count) }
+        runs.sort {
+            let a = $0.lowerBound, b = $1.lowerBound
+            return orders[a] != orders[b] ? orders[a] < orders[b] : sequences[a] != sequences[b] ? sequences[a] < sequences[b] : a < b
+        }
+        var sorted: [ParticleDraw] = []
+        sorted.reserveCapacity(draws.count)
+        for run in runs { sorted.append(contentsOf: draws[run]) }
+        return sorted
     }
 }

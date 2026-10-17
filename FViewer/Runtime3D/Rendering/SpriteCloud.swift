@@ -66,13 +66,15 @@ final class SpriteCloud {
     func step(_ frames: Float, alive: Bool, random: inout SeededRandom) {
         let a = anim
         let clock = frames * (PreviewRules.isOn("simpleClockRate") ? 1.2 : 1)
+        let flattery = SpriteCloud.flatteryScale
+        let keep = Vec3(
+            pow(max(0, 1 - (1 - a.coordAccuracy.x) * flattery), frames),
+            pow(max(0, 1 - (1 - a.coordAccuracy.y) * flattery), frames),
+            pow(max(0, 1 - (1 - a.coordAccuracy.z) * flattery), frames))
+        let fall = a.gravity * frames
         for i in sprites.indices {
             sprites[i].age += clock
-            sprites[i].fall += a.gravity * frames
-            let keep = Vec3(
-                pow(max(0, 1 - (1 - a.coordAccuracy.x) * SpriteCloud.flatteryScale), frames),
-                pow(max(0, 1 - (1 - a.coordAccuracy.y) * SpriteCloud.flatteryScale), frames),
-                pow(max(0, 1 - (1 - a.coordAccuracy.z) * SpriteCloud.flatteryScale), frames))
+            sprites[i].fall += fall
             sprites[i].velocity *= keep
             sprites[i].position += (sprites[i].velocity + sprites[i].fall) * frames
             if let path = sprites[i].path { sprites[i].position += path * (pathShare(sprites[i].age) - pathShare(sprites[i].age - clock)) }
@@ -171,8 +173,7 @@ final class SpriteCloud {
         return sprite
     }
 
-    private func color(at age: Float) -> Vec4 {
-        let colors = anim.colors, frames = anim.frames
+    private static func color(_ colors: [Vec4], _ frames: [Float], _ age: Float) -> Vec4 {
         guard !colors.isEmpty else { return Vec4(1, 1, 1, 1) }
         var i = 0
         while i < frames.count - 1 && age > frames[i + 1] { i += 1 }
@@ -193,6 +194,11 @@ final class SpriteCloud {
         var out: [SpriteInstance] = []
         out.reserveCapacity(sprites.count)
         let full: Float = PreviewRules.isOn("simpleSpriteHalfSize") ? 2 : 1
+        let baseDirection = PreviewRules.isOn("simpleBaseDirection") ? a.baseDirection : 0
+        let reverse = a.uvReverse && PreviewRules.isOn("simpleUvReverse")
+        let colors = a.colors, frames = a.frames
+        let cu = 1 / Float(a.uvCellsU), cv = 1 / Float(a.uvCellsV)
+        let scaleX = a.scaleByParent ? particleScale.x : revisedScale.x, scaleY = a.scaleByParent ? particleScale.y : revisedScale.y
         for i in sprites.indices {
             if let u = sprites[i].guide, guide.count >= 2 {
                 let x = u * Float(guide.count - 1), j = min(Int(x), guide.count - 2)
@@ -214,12 +220,12 @@ final class SpriteCloud {
             }
             let s = sprites[i]
             var position = s.world ? s.position : Math3D.point(frame, s.position)
-            var w = (a.scaleStart.x + (a.scaleEnd.x - a.scaleStart.x) * e) * s.scaleX * (a.scaleByParent ? particleScale.x : revisedScale.x) * full
-            var h = (a.scaleStart.y + (a.scaleEnd.y - a.scaleStart.y) * e) * s.scaleY * (a.scaleByParent ? particleScale.y : revisedScale.y) * full
+            var w = (a.scaleStart.x + (a.scaleEnd.x - a.scaleStart.x) * e) * s.scaleX * scaleX * full
+            var h = (a.scaleStart.y + (a.scaleEnd.y - a.scaleStart.y) * e) * s.scaleY * scaleY * full
             let angle = s.rotation + s.spin * s.age
             var rotation = cameraRotation * simd_quatf(angle: angle, axis: Vec3(0, 0, 1))
-            if PreviewRules.isOn("simpleBaseDirection"), a.baseDirection != 0 {
-                if a.baseDirection == 1 || a.baseDirection == 3 {
+            if baseDirection != 0 {
+                if baseDirection == 1 || baseDirection == 3 {
                     rotation = simd_quatf(angle: angle, axis: Vec3(0, 1, 0)) * simd_quatf(angle: -.pi / 2, axis: Vec3(1, 0, 0))
                 } else {
                     let yaw = simd_quatf(angle: atan2(cameraPosition.x - position.x, cameraPosition.z - position.z), axis: Vec3(0, 1, 0))
@@ -244,10 +250,8 @@ final class SpriteCloud {
             let pivot = rotation.act(Vec3(a.pivot.x * w / 2, a.pivot.y * h / 2, 0))
             position += pivot
             let steps = a.uvInterval > 0 ? Int(s.age / Float(a.uvInterval)) : 0
-            let reverse = a.uvReverse && PreviewRules.isOn("simpleUvReverse")
             let cell = cells > 1 ? ((s.cell + (reverse ? -steps : steps)) % cells + cells) % cells : 0
-            let cu = 1 / Float(a.uvCellsU), cv = 1 / Float(a.uvCellsV)
-            out.append(SpriteInstance(model: Math3D.compose(position, rotation, Vec3(w, h, 1)), color: color(at: s.age),
+            out.append(SpriteInstance(model: Math3D.compose(position, rotation, Vec3(w, h, 1)), color: SpriteCloud.color(colors, frames, s.age),
                                       cell: Vec4(Float(cell % a.uvCellsU) * cu, Float(cell / a.uvCellsU) * cv, cu, cv)))
         }
         return out

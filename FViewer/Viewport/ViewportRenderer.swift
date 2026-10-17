@@ -76,6 +76,9 @@ private struct Uniforms {
     var dissolveShape = matrix_identity_float4x4
     var dissolveInfo = SIMD4<Float>(0, 0, 0, 0)
     var dissolveBands: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = (.zero, .zero, .zero)
+    var shadow = SIMD4<Float>(-1, 0, 0, 0)
+    var shadowFaces: (simd_float4x4, simd_float4x4, simd_float4x4, simd_float4x4, simd_float4x4, simd_float4x4) =
+        (matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4, matrix_identity_float4x4)
 }
 
 private struct DrawItem {
@@ -164,6 +167,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private let inFlight = DispatchSemaphore(value: 1)
     private var backdrop: (token: Int, aspect: Float, item: DrawItem)?
     static var bloom: (on: Bool, threshold: Float, intensity: Float, radius: Float) = (false, 0.7, 0.8, 0.03)
+    static var scene = PreviewScene()
+    static var sceneToken = 0
     static var backgroundColor: SIMD3<Double>?
     static var backgroundImage: CGImage?
     static var backgroundToken = 0
@@ -171,6 +176,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     static var referenceToken = 0
     private var referenceToken = -1
     private var reference: [DrawItem] = []
+    private var shadowPipeline: MTLRenderPipelineState?
+    private var shadowMap: MTLTexture?
+    private var shadowDepth: MTLTexture?
+    private var noShadow: MTLTexture?
+    private var shadowState: (index: Int, near: Float, far: Float, faces: [simd_float4x4])?
     static var referenceParts: [(start: Int, count: Int, texture: DecodedTexture?)] = []
     private var postSource: MTLTexture?
     private var postSampler: MTLSamplerState?
@@ -214,6 +224,21 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         layout.layouts[0].stride = MemoryLayout<MeshVertex>.stride
         descriptor.vertexDescriptor = layout
         pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+        let shadow = MTLRenderPipelineDescriptor()
+        shadow.vertexFunction = library.makeFunction(name: "shadowVertex")
+        shadow.fragmentFunction = library.makeFunction(name: "shadowFragment")
+        shadow.colorAttachments[0].pixelFormat = .r32Float
+        shadow.depthAttachmentPixelFormat = .depth32Float
+        shadow.vertexDescriptor = layout
+        shadowPipeline = try? device.makeRenderPipelineState(descriptor: shadow)
+        let blank = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: 1, height: 1, mipmapped: false)
+        blank.textureType = .type2DArray
+        blank.arrayLength = 6
+        noShadow = device.makeTexture(descriptor: blank)
+        for slice in 0..<6 {
+            var far: Float = 1e9
+            noShadow?.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, slice: slice, withBytes: &far, bytesPerRow: 4, bytesPerImage: 4)
+        }
         descriptor.depthAttachmentPixelFormat = .invalid
         descriptor.rasterSampleCount = 1
         topPipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
@@ -390,6 +415,58 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
     private var linesNow: Set<Int> = []
     private var framePool: [MTLBuffer] = []
     private var frameSlot = 0
+
+    private func renderShadow(_ buffer: MTLCommandBuffer, lights: [LightDraw]) {
+        shadowState = nil
+        guard !reference.isEmpty, let shadowPipeline, let index = lights.firstIndex(where: { $0.shadow != nil }), let range = lights[index].shadow else { return }
+        let size = 1024
+        if shadowMap == nil {
+            let color = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: size, height: size, mipmapped: false)
+            color.textureType = .type2DArray
+            color.arrayLength = 6
+            color.usage = [.renderTarget, .shaderRead]
+            color.storageMode = .private
+            shadowMap = device.makeTexture(descriptor: color)
+            let depth = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .depth32Float, width: size, height: size, mipmapped: false)
+            depth.usage = [.renderTarget]
+            depth.storageMode = .private
+            shadowDepth = device.makeTexture(descriptor: depth)
+        }
+        guard let shadowMap, let shadowDepth, let depthState else { return }
+        let eye = lights[index].position
+        let projection = ViewportRenderer.perspective(fovY: .pi / 2, aspect: 1, near: 0.02, far: range.far + 1)
+        let axes: [(SIMD3<Float>, SIMD3<Float>)] = [(SIMD3(1, 0, 0), SIMD3(0, 1, 0)), (SIMD3(-1, 0, 0), SIMD3(0, 1, 0)), (SIMD3(0, 1, 0), SIMD3(0, 0, 1)),
+                                                    (SIMD3(0, -1, 0), SIMD3(0, 0, 1)), (SIMD3(0, 0, 1), SIMD3(0, 1, 0)), (SIMD3(0, 0, -1), SIMD3(0, 1, 0))]
+        var faces: [simd_float4x4] = []
+        for (slice, axis) in axes.enumerated() {
+            var face = projection * ViewportRenderer.lookAt(eye: eye, target: eye + axis.0, up: axis.1)
+            faces.append(face)
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = shadowMap
+            pass.colorAttachments[0].slice = slice
+            pass.colorAttachments[0].loadAction = .clear
+            pass.colorAttachments[0].clearColor = MTLClearColor(red: 1e9, green: 0, blue: 0, alpha: 0)
+            pass.colorAttachments[0].storeAction = .store
+            pass.depthAttachment.texture = shadowDepth
+            pass.depthAttachment.loadAction = .clear
+            pass.depthAttachment.clearDepth = 1
+            pass.depthAttachment.storeAction = .dontCare
+            guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
+            encoder.setRenderPipelineState(shadowPipeline)
+            encoder.setDepthStencilState(depthState)
+            encoder.setCullMode(.none)
+            var light = SIMD4<Float>(eye.x, eye.y, eye.z, 0)
+            encoder.setFragmentBytes(&light, length: MemoryLayout<SIMD4<Float>>.stride, index: 0)
+            encoder.setVertexBytes(&face, length: MemoryLayout<simd_float4x4>.stride, index: 1)
+            for item in reference {
+                guard let indices = item.indices else { continue }
+                encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
+                encoder.drawIndexedPrimitives(type: .triangle, indexCount: item.count, indexType: .uint32, indexBuffer: indices, indexBufferOffset: 0)
+            }
+            encoder.endEncoding()
+        }
+        shadowState = (index, range.near, range.far, faces)
+    }
 
     private func beginFrameBuffers() {
         frameSlot = 0
@@ -772,6 +849,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         signature.append(contentsOf: [Double(view.drawableSize.width), Double(view.drawableSize.height)])
         signature.append(contentsOf: [Double(PreviewRules.token), Double(ViewportRenderer.bloom.on ? 1 : 0), Double(ViewportRenderer.bloom.threshold),
                                       Double(ViewportRenderer.bloom.intensity), Double(ViewportRenderer.bloom.radius)])
+        signature.append(Double(ViewportRenderer.sceneToken))
         signature.append(Double(String(describing: ViewportRenderer.backgroundColor).hashValue % 100_000))
         signature.append(Double(String(describing: document?.visibilityFilter).hashValue % 100_000))
         if signature != idleSignature {
@@ -818,6 +896,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
         }
         if waited { buffer.addCompletedHandler { [inFlight] _ in inFlight.signal() } }
         beginFrameBuffers()
+        renderShadow(buffer, lights: Array(lights))
         let depthTarget = descriptor.depthAttachment.texture
         let resolved = descriptor.colorAttachments[0].resolveTexture ?? descriptor.colorAttachments[0].texture
         let canSplit = split && depthTarget != nil && resolved != nil && descriptor.colorAttachments[0].resolveTexture != nil
@@ -844,6 +923,11 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             uniforms.lightPosition = (positions[0], positions[1], positions[2], positions[3])
             uniforms.lightColor = (colors[0], colors[1], colors[2], colors[3])
             uniforms.options.w = lights.isEmpty ? 0 : 1
+            if let shadowState {
+                uniforms.shadow = SIMD4(Float(shadowState.index), shadowState.near, shadowState.far, 0.04)
+                let f = shadowState.faces
+                uniforms.shadowFaces = (f[0], f[1], f[2], f[3], f[4], f[5])
+            }
         }
         let ground = showFloor ? [floor].compactMap { $0 } : []
         if referenceToken != ViewportRenderer.referenceToken {
@@ -888,6 +972,7 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
                     uniforms.dissolveBands = (dissolving.colors[0], dissolving.colors[1], dissolving.colors[2])
                 }
                 encoder.setFragmentTexture(dissolveMap ?? white, index: 1)
+                encoder.setFragmentTexture(shadowState != nil ? shadowMap : noShadow, index: 2)
                 encoder.setDepthStencilState(pass == 1 || item.wire || item.textured ? overlayDepthState : depthState)
                 encoder.setTriangleFillMode(item.wire ? .lines : .fill)
                 encoder.setVertexBuffer(item.vertices, offset: 0, index: 0)
@@ -928,6 +1013,8 @@ final class ViewportRenderer: NSObject, MTKViewDelegate {
             particleRenderer.clip = SIMD2(near, 2000)
             particleRenderer.orthographic = camera.ortho
             particleRenderer.softDistance = player?.simulation?.schema.softFadeRange ?? 0.5
+            particleRenderer.scene = ViewportRenderer.scene
+            particleRenderer.globalFog = player?.simulation?.schema.globalFog ?? 0
             particleRenderer.draw(encoder, draws: effect.draws, particles: effect.particles, view: viewMatrix, projection: projection, camera: camera.eye,
                                   shading: effectShading)
             if !highlightDraws.isEmpty {

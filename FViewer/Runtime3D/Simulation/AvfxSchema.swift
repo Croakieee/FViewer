@@ -336,6 +336,10 @@ nonisolated final class RParticle: @unchecked Sendable {
     var lit = false
     var lightType = 0
     var pointLightType = 0
+    var toneMap = false
+    var fog = false
+    var environmentRate: Float = 0
+    var directionalRate: Float = 0
     var reflection: RTextureLayer?
     var normalLayer: RTextureLayer?
     var normalPower: RCurve?
@@ -509,6 +513,7 @@ struct REffector {
     var effectStrength: RCurve?
     var singleSide = false
     var angleStrength: RCurve?
+    var shadow: (near: Float, far: Float)?
 }
 
 struct REffectSchema {
@@ -527,6 +532,7 @@ struct REffectSchema {
     var effectors: [REffector] = []
     var emitterEffectors: [Int] = []
     var softFadeRange: Float = 0.5
+    var globalFog: Float = 0
     var angleFade: [(enabled: Bool, inner: Float, outer: Float)] = []
     var drawLayer = 2
     var drawOrder = 0
@@ -760,6 +766,10 @@ enum AvfxSchemaReader {
             }
             particle.normalLayer = layer(p.child("TN"))
             particle.reflection = layer(p.child("TR"))
+            particle.toneMap = p.bool("bATM")
+            particle.fog = p.bool("bAFg")
+            particle.environmentRate = Float(min(max(p.int("EvAR"), 0), 100)) / 100
+            particle.directionalRate = Float(min(max(p.int("DlAR"), 0), 100)) / 100
             particle.normalPower = curve(p.child("TN")?.child("NPow"))
             particle.movementParticle = p.int("PrVT") == 8 && data?.bool("bMP") == true
             if p.int("PrVT") == 14 {
@@ -817,6 +827,10 @@ enum AvfxSchemaReader {
                              fadeStart: data?.float("FSDc") ?? 0, fadeEnd: data?.float("FEDc") ?? 0,
                              rotation: curve3(data?.child("Rot")), power: curve(data?.child("Pow")))
         }
+        for (index, block) in root.childrenNamed("Efct").enumerated() where index < result.effectors.count && block.int("EfVT") == 0 {
+            guard let data = block.child("Data"), data.bool("bSdw"), data.bool("bChS") else { continue }
+            result.effectors[index].shadow = (max(data.float("SCDN", 0.5), 0.01), max(data.float("SCDF", 15), 0.1))
+        }
         result.emitterEffectors = root.childrenNamed("Emit").map { $0.int("EfNo", -1) }
         for (index, block) in root.childrenNamed("Emit").enumerated() where index < result.emitters.count { result.emitters[index].coordOrder = block.int("CCOT") }
         for (index, block) in root.childrenNamed("Ptcl").enumerated() where index < result.particles.count { result.particles[index].coordOrder = block.int("CCOT") }
@@ -851,6 +865,7 @@ enum AvfxSchemaReader {
             result.effectors[index].angleStrength = curve(data?.child("AStr"))
         }
         if let range = root.child("SPFR"), range.children == nil, range.data.count >= 4 { result.softFadeRange = max(0.001, root.float("SPFR", 0.5)) }
+        if root.bool("bGFE") { result.globalFog = min(max(root.float("GFIM", 1), 0), 1) }
         return result
     }
 }

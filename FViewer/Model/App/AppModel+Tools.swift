@@ -547,6 +547,11 @@ extension AppModel {
             ViewportRenderer.backgroundImage = image
             ViewportRenderer.backgroundToken += 1
         }
+        if let values = defaults.array(forKey: "preview.scene") as? [Double], values.count == 13 {
+            let f = values.map { Float($0) }
+            ViewportRenderer.scene = PreviewScene(brightness: f[0], environment: Vec3(f[1], f[2], f[3]), sunlight: Vec3(f[4], f[5], f[6]), fog: f[7] > 0.5,
+                                                  fogColor: Vec3(f[8], f[9], f[10]), fogStart: f[11], fogEnd: f[12])
+        }
         if defaults.object(forKey: "preview.bloom.threshold") != nil {
             ViewportRenderer.bloom = (defaults.bool(forKey: "preview.bloom.on"), defaults.float(forKey: "preview.bloom.threshold"),
                                       defaults.float(forKey: "preview.bloom.intensity"), defaults.float(forKey: "preview.bloom.radius"))
@@ -583,6 +588,20 @@ extension AppModel {
         ViewportRenderer.backgroundImage = nil
         ViewportRenderer.backgroundToken += 1
         if let target = backgroundImageURL { try? FileManager.default.removeItem(at: target) }
+        objectWillChange.send()
+    }
+
+    func setScene(_ change: (inout PreviewScene) -> Void) {
+        var scene = ViewportRenderer.scene
+        change(&scene)
+        scene.brightness = min(max(scene.brightness, 0.05), 20)
+        scene.fogStart = max(scene.fogStart, 0)
+        scene.fogEnd = max(scene.fogEnd, scene.fogStart + 0.1)
+        ViewportRenderer.scene = scene
+        ViewportRenderer.sceneToken += 1
+        let values = [scene.brightness, scene.environment.x, scene.environment.y, scene.environment.z, scene.sunlight.x, scene.sunlight.y, scene.sunlight.z,
+                      scene.fog ? 1 : 0, scene.fogColor.x, scene.fogColor.y, scene.fogColor.z, scene.fogStart, scene.fogEnd].map { Double($0) }
+        UserDefaults.standard.set(values, forKey: "preview.scene")
         objectWillChange.send()
     }
 

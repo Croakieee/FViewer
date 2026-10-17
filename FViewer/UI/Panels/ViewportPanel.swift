@@ -164,14 +164,15 @@ struct PreviewMenu: View {
         HStack(spacing: 4) {
             Image(systemName: "sparkles.rectangle.stack").font(.system(size: 10))
             Text(bloom.on ? "Preview · Bloom" : "Preview").font(Theme.font)
+            if ViewportRenderer.scene != PreviewScene() { Text("· Scene").font(Theme.font) }
         }
         .foregroundStyle(Theme.text)
         .padding(.horizontal, 7)
         .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(shown || bloom.on ? Theme.accent : Theme.gray(0.22)))
+        .background(RoundedRectangle(cornerRadius: 4).fill(shown || bloom.on || ViewportRenderer.scene != PreviewScene() ? Theme.accent : Theme.gray(0.22)))
         .contentShape(Rectangle())
         .pressable { shown.toggle() }
-        .help("Preview background and bloom. Neither is saved into the effect")
+        .help("Preview background, bloom and the scene stand-ins. None of them is saved into the effect")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Background").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
@@ -210,6 +211,46 @@ struct PreviewMenu: View {
                                 onCommit: { _, next in app.setBloom(radius: Float(next) / 100) })
                 }
                 Text("Bloom is a preview aid: it shows how bright parts would glow, the game applies its own.").font(Theme.small).foregroundStyle(Theme.dim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                let scene = ViewportRenderer.scene
+                Text("Scene").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+                row("Brightness") {
+                    NumberField(label: nil, value: Double(scene.brightness), step: 0.01, digits: 2, onLive: { v in app.setScene { $0.brightness = Float(v) } },
+                                onCommit: { _, next in app.setScene { $0.brightness = Float(next) } })
+                }
+                row("Environment") {
+                    ColorField(color: SIMD4(Double(scene.environment.x), Double(scene.environment.y), Double(scene.environment.z), 1), alpha: false,
+                               onLive: { c in app.setScene { $0.environment = Vec3(Float(c.x), Float(c.y), Float(c.z)) } },
+                               onCommit: { _, c in app.setScene { $0.environment = Vec3(Float(c.x), Float(c.y), Float(c.z)) } })
+                }
+                row("Sunlight") {
+                    ColorField(color: SIMD4(Double(scene.sunlight.x), Double(scene.sunlight.y), Double(scene.sunlight.z), 1), alpha: false,
+                               onLive: { c in app.setScene { $0.sunlight = Vec3(Float(c.x), Float(c.y), Float(c.z)) } },
+                               onCommit: { _, c in app.setScene { $0.sunlight = Vec3(Float(c.x), Float(c.y), Float(c.z)) } })
+                }
+                CheckBox(isOn: scene.fog, label: "Fog") { on in app.setScene { $0.fog = on } }
+                row("Fog Color") {
+                    ColorField(color: SIMD4(Double(scene.fogColor.x), Double(scene.fogColor.y), Double(scene.fogColor.z), 1), alpha: false,
+                               onLive: { c in app.setScene { $0.fogColor = Vec3(Float(c.x), Float(c.y), Float(c.z)) } },
+                               onCommit: { _, c in app.setScene { $0.fogColor = Vec3(Float(c.x), Float(c.y), Float(c.z)) } })
+                }
+                .opacity(scene.fog ? 1 : 0.4)
+                .allowsHitTesting(scene.fog)
+                row("Fog Start") {
+                    NumberField(label: nil, value: Double(scene.fogStart), suffix: " m", step: 0.5, digits: 1, onLive: { v in app.setScene { $0.fogStart = Float(v) } },
+                                onCommit: { _, next in app.setScene { $0.fogStart = Float(next) } })
+                }
+                .opacity(scene.fog ? 1 : 0.4)
+                .allowsHitTesting(scene.fog)
+                row("Fog End") {
+                    NumberField(label: nil, value: Double(scene.fogEnd), suffix: " m", step: 0.5, digits: 1, onLive: { v in app.setScene { $0.fogEnd = Float(v) } },
+                                onCommit: { _, next in app.setScene { $0.fogEnd = Float(next) } })
+                }
+                .opacity(scene.fog ? 1 : 0.4)
+                .allowsHitTesting(scene.fog)
+                Text("Stand-ins for the zone: Brightness drives Apply Tone Map, Environment and Sunlight the Apply Rate values, Fog the Apply Fog and Global Fog settings. The game takes them from the area the effect plays in.")
+                    .font(Theme.small).foregroundStyle(Theme.dim)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)

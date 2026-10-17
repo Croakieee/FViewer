@@ -34,6 +34,22 @@ private struct ParticleUniforms {
     var pointColor: (Vec4, Vec4) = (.zero, .zero)
     var normalInfo = Vec4.zero
     var reflectInfo = Vec4.zero
+    var decalInverse = matrix_identity_float4x4
+    var decalInfo = Vec4.zero
+    var decalPlane = Vec4.zero
+    var sceneTint = Vec4(1, 1, 1, 1)
+    var sceneFog = Vec4.zero
+    var fogColor = Vec4.zero
+}
+
+struct PreviewScene: Equatable {
+    var brightness: Float = 1
+    var environment = Vec3(1, 1, 1)
+    var sunlight = Vec3(1, 1, 1)
+    var fog = false
+    var fogColor = Vec3(0.55, 0.6, 0.68)
+    var fogStart: Float = 20
+    var fogEnd: Float = 120
 }
 
 struct LoadedTexture {
@@ -109,6 +125,8 @@ final class ParticleRenderer {
     var viewport = SIMD2<Float>(1, 1)
     var clip = SIMD2<Float>(0.1, 2000)
     var softDistance: Float = 0.5
+    var scene = PreviewScene()
+    var globalFog: Float = 0
     var orthographic = false
     private var materials: [Int: PreparedMaterial] = [:]
     private var buffers: [ObjectIdentifier: GeometryBuffers] = [:]
@@ -363,7 +381,8 @@ final class ParticleRenderer {
     }
 
     func needsScene(_ particles: [RParticle]) -> Bool {
-        particles.contains { $0.softParticle || ($0.tc1?.enabled == true && $0.tc1?.screenCopy == true) }
+        let decals = PreviewRules.isOn("decalProjection")
+        return particles.contains { $0.softParticle || ($0.tc1?.enabled == true && $0.tc1?.screenCopy == true) || (decals && ($0.type == 10 || $0.type == 11)) }
     }
 
     func draw(_ encoder: MTLRenderCommandEncoder, draws: [ParticleDraw], particles: [RParticle], view: Mat4, projection: Mat4, camera: Vec3,
@@ -441,10 +460,35 @@ final class ParticleRenderer {
             u.scene = Vec4(sceneReady && material.soft ? softDistance : 0, sceneReady ? material.screenCopy : 0, viewport.x, viewport.y)
             u.scene2 = Vec4(clip.x, clip.y, softDepthOffset, orthographic ? 1 : 0)
             if material.screenCopy > 0, !sceneReady, !wire { u.color.w = 0 }
+            if !wire {
+                let ps = particles[draw.particle]
+                var tint = Vec3(1, 1, 1)
+                if PreviewRules.isOn("sceneLightRates") {
+                    tint *= Vec3(1, 1, 1) + (scene.environment - Vec3(1, 1, 1)) * ps.environmentRate
+                    tint *= Vec3(1, 1, 1) + (scene.sunlight - Vec3(1, 1, 1)) * ps.directionalRate
+                }
+                if ps.toneMap, PreviewRules.isOn("sceneToneMap") { tint /= sqrt(max(scene.brightness, 0.01)) }
+                u.sceneTint = Vec4(tint.x, tint.y, tint.z, 1)
+                let fogShare = max(ps.fog ? 1 : 0, globalFog)
+                if scene.fog, fogShare > 0, PreviewRules.isOn("sceneFog") {
+                    let mode = ps.drawMode >= 9 && ps.drawMode <= 12 ? ps.drawMode - 8 : ps.drawMode
+                    let kind: Float = [2, 3, 4, 7].contains(mode) ? 1 : mode == 1 || mode == 6 ? 2 : 0
+                    u.sceneFog = Vec4(scene.fogStart, max(scene.fogEnd, scene.fogStart + 0.01), fogShare, kind)
+                    u.fogColor = Vec4(scene.fogColor.x, scene.fogColor.y, scene.fogColor.z, 0)
+                }
+            }
+            if let decal = draw.decal, !wire {
+                u.decalInverse = decal.inverse
+                u.decalInfo = decal.info
+                u.decalPlane = Vec4(decal.ground, 1, sceneReady ? 1 : 0, 0)
+                u.scene.x = 0
+                u.misc.w = 0
+            }
             if wire { u.debugColor = wireColor ?? ParticleRenderer.debugColor(draw.particle); u.misc.w = 0 }
             let pipeline = wire ? pipelines[0] : pipelines[material.blend]
-            let depth = wire || draw.overScene ? depthStates[0] : depthStates[(material.depthTest ? 2 : 0) + (material.depthWrite ? 1 : 0)]
-            let cull: MTLCullMode = wire ? .none : material.cull
+            let projected = draw.decal != nil && !wire
+            let depth = wire || draw.overScene || projected ? depthStates[0] : depthStates[(material.depthTest ? 2 : 0) + (material.depthWrite ? 1 : 0)]
+            let cull: MTLCullMode = wire ? .none : projected ? (simd_determinant(draw.model) < 0 ? .back : .front) : material.cull
             if boundPipeline != ObjectIdentifier(pipeline) {
                 encoder.setRenderPipelineState(pipeline)
                 boundPipeline = ObjectIdentifier(pipeline)

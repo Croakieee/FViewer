@@ -72,6 +72,15 @@ enum GeometryBuilder {
         return g
     }()
 
+    static let box: RenderGeometry = {
+        let g = RenderGeometry()
+        for i in 0..<8 {
+            g.add(Vec3(i & 1 == 0 ? -0.5 : 0.5, i & 2 == 0 ? -0.5 : 0.5, i & 4 == 0 ? -0.5 : 0.5), normal: Vec3(0, 1, 0), uv: .zero)
+        }
+        g.indices = [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5]
+        return g
+    }()
+
     static let laser: RenderGeometry = {
         let g = RenderGeometry()
         let positions = [Vec3(-0.5, 0, 0), Vec3(0.5, 0, 0), Vec3(-0.5, 0, 1), Vec3(0.5, 0, 1)]

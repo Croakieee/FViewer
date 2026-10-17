@@ -46,6 +46,12 @@ struct U {
     float4 pointColor[2];
     float4 normalInfo;
     float4 reflectInfo;
+    float4x4 decalInverse;
+    float4 decalInfo;
+    float4 decalPlane;
+    float4 sceneTint;
+    float4 sceneFog;
+    float4 fogColor;
 };
 
 struct VOut {
@@ -148,6 +154,46 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
     if (u.pixelUv.z > 0.5) uv3 = transformUv(u, 2, pixel);
     if (u.pixelUv.w > 0.5) uv4 = transformUv(u, 3, pixel);
     if (u.flags4.z > 0.5) uv5 = transformUv(u, 4, pixel);
+    float decalFade = 1.0;
+    if (u.decalInfo.x > 0.5) {
+        float3 forward = -float3(u.view[0][2], u.view[1][2], u.view[2][2]);
+        float3 o = in.worldPosition;
+        float3 r = u.scene2.w > 0.5 ? forward : normalize(o - u.cameraPosition.xyz);
+        float zo = -(u.view * float4(o, 1.0)).z;
+        float rf = max(dot(r, forward), 1e-4);
+        float best = 1e30;
+        float sd = u.decalPlane.z > 0.5 ? sceneDepth.read(uint2(in.position.xy), 0) : 1.0;
+        if (sd < 1.0) {
+            float zc = u.scene2.y / (u.scene2.x - u.scene2.y);
+            float sz = u.scene2.w > 0.5 ? mix(u.scene2.x, u.scene2.y, sd) : zc * u.scene2.x / (sd + zc);
+            best = (sz - zo) / rf;
+        }
+        if (u.decalPlane.y > 0.5 && abs(r.y) > 1e-6) {
+            float tp = (u.decalPlane.x - o.y) / r.y;
+            if (zo + tp * rf > u.scene2.x && tp < best) best = tp;
+        }
+        if (best > 1e29) discard_fragment();
+        float3 l = (u.decalInverse * float4(o + r * best, 1.0)).xyz;
+        if (abs(l.y) > 0.5) discard_fragment();
+        float2 duv;
+        if (u.decalInfo.x > 1.5) {
+            float radius = length(l.xz);
+            float angle = atan2(l.x, l.z);
+            float band = u.decalInfo.z - u.decalInfo.y;
+            if (band < 1e-6 || radius < u.decalInfo.y || radius > u.decalInfo.z || abs(angle) > u.decalInfo.w) discard_fragment();
+            duv = float2((u.decalInfo.z - radius) / band - 0.5, angle / 6.2831853);
+        } else {
+            if (abs(l.x) > 0.5 || abs(l.z) > 0.5) discard_fragment();
+            duv = float2(-l.x, -l.z);
+        }
+        decalFade = min(1.0, 5.0 * (0.5 - abs(l.y)));
+        uv1 = transformUv(u, 0, duv);
+        uv2 = transformUv(u, 1, duv);
+        uv3 = transformUv(u, 2, duv);
+        uv4 = transformUv(u, 3, duv);
+        uv5 = transformUv(u, 4, duv);
+        if (u.flags.z > 0.5) uv1 = u.spriteCell.xy + uv1 * u.spriteCell.zw;
+    }
     float2 b1 = uv1, b2 = uv2, b4 = uv4, b5 = uv5;
     bool footprint = u.flags4.w > 0.5 && u.flags2.y > 0.5;
     float2 d = float2(0.0);
@@ -265,6 +311,12 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
         c *= mix(u.colorEnd, u.colorBegin, 1.0 - facing);
     }
     if (u.flags.w > 0.5) c *= mix(u.colorEnd, u.colorBegin, in.along);
+    c.rgb *= u.sceneTint.xyz;
+    if (u.sceneFog.z > 0.0) {
+        float f = clamp((in.viewDistance - u.sceneFog.x) / (u.sceneFog.y - u.sceneFog.x), 0.0, 1.0) * u.sceneFog.z;
+        int fogKind = int(u.sceneFog.w + 0.5);
+        c.rgb = fogKind == 1 ? c.rgb * (1.0 - f) : fogKind == 2 ? mix(c.rgb, float3(1.0), f) : mix(c.rgb, u.fogColor.rgb, f);
+    }
     if (u.scene.x > 0.0) {
         float d = sceneDepth.read(uint2(in.position.xy), 0);
         if (d < 1.0) {
@@ -275,6 +327,7 @@ fragment float4 particleFragment(VOut in [[stage_in]], constant U &u [[buffer(1)
             c.a *= soft;
         }
     }
+    c.a *= decalFade;
     if (c.a <= 0.002) discard_fragment();
     float3 rgb = max(c.rgb, float3(0.0));
     float a = clamp(c.a, 0.0, 1.0);

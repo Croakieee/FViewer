@@ -33,7 +33,25 @@ struct Uniforms {
     float4x4 dissolveShape;
     float4 dissolveInfo;
     float4 dissolveBands[3];
+    float4 shadow;
+    float4x4 shadowFaces[6];
 };
+
+struct ShadowOut {
+    float4 position [[position]];
+    float3 world;
+};
+
+vertex ShadowOut shadowVertex(VertexIn in [[stage_in]], constant float4x4 &face [[buffer(1)]]) {
+    ShadowOut out;
+    out.world = in.position;
+    out.position = face * float4(in.position, 1.0);
+    return out;
+}
+
+fragment float shadowFragment(ShadowOut in [[stage_in]], constant float4 &light [[buffer(0)]]) {
+    return length(in.world - light.xyz);
+}
 
 vertex VertexOut viewportVertex(VertexIn in [[stage_in]], constant Uniforms &u [[buffer(1)]]) {
     VertexOut out;
@@ -48,7 +66,8 @@ vertex VertexOut viewportVertex(VertexIn in [[stage_in]], constant Uniforms &u [
 }
 
 fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u [[buffer(1)]],
-                                 texture2d<float> map [[texture(0)]], texture2d<float> dissolveMap [[texture(1)]], sampler mapSampler [[sampler(0)]]) {
+                                 texture2d<float> map [[texture(0)]], texture2d<float> dissolveMap [[texture(1)]], sampler mapSampler [[sampler(0)]],
+                                 texture2d_array<float> shadowMap [[texture(2)]]) {
     float4 color = in.color;
     float glow = -1.0;
     float4 band = float4(0.0);
@@ -95,6 +114,20 @@ fragment float4 viewportFragment(VertexOut in [[stage_in]], constant Uniforms &u
             float range = u.lightColor[i].w;
             float decay = u.lightPosition[i].w;
             float falloff = range > 0.0 ? pow(clamp(1.0 - d / range, 0.0, 1.0), decay) : 1.0 / pow(max(d, 0.25), decay);
+            if (i == int(u.shadow.x + 0.5) && u.shadow.x > -0.5 && d > u.shadow.y && d < u.shadow.z) {
+                float3 away = -toLight;
+                float3 a = abs(away);
+                int face = a.x >= a.y && a.x >= a.z ? (away.x > 0.0 ? 0 : 1) : a.y >= a.z ? (away.y > 0.0 ? 2 : 3) : (away.z > 0.0 ? 4 : 5);
+                float4 clip = u.shadowFaces[face] * float4(in.world, 1.0);
+                float2 suv = clip.xy / clip.w * float2(0.5, -0.5) + 0.5;
+                constexpr sampler shadowSampler(filter::nearest, address::clamp_to_edge);
+                float seen = 0.0;
+                for (int k = 0; k < 9; k++) {
+                    float2 tap = suv + float2(float(k % 3) - 1.0, float(k / 3) - 1.0) / 1024.0;
+                    seen += d > shadowMap.sample(shadowSampler, tap, face).r + u.shadow.w ? 0.0 : 1.0;
+                }
+                falloff *= seen / 9.0;
+            }
             added += u.lightColor[i].rgb * falloff * max(dot(n, toLight / d), 0.0);
         }
         color.rgb += in.color.rgb * added * 1.27;
