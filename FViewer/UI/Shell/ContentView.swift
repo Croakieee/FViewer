@@ -67,12 +67,6 @@ struct TopBar: View {
                     Button("Effects of Timeline by Game Path…") { app.listEffectsOfGamePath() }.disabled(app.gameRoot == nil)
                     Button("Effects of Timeline File (.tmb, .pap)…") { app.listEffectsOfFile() }
                     Divider()
-                    Button("Load Skeleton (.sklb)…") { app.loadSkeletonPanel() }
-                    Button("Remove Skeleton") { app.clearSkeleton() }.disabled(app.skeletonName == nil)
-                    Button("Load Model (.mdl)…") { app.loadReferenceModelPanel() }
-                    Button("Load Model of This Effect") { app.loadModelForEffect() }.disabled(app.document == nil)
-                    Button("Remove Model") { app.clearReferenceModel() }.disabled(app.referenceModelName == nil)
-                    Divider()
                     Button("Inspect Game File…") { app.inspectGameFilePanel() }
                     Button("Inspect File by Game Path…") { app.inspectGameFileByPath() }.disabled(app.gameRoot == nil)
                 }

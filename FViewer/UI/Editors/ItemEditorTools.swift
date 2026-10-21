@@ -236,7 +236,7 @@ struct LayerStackPanel: View {
         var out = [Float](repeating: 1, count: size * size * 4)
         var any = false
         var plainUv = false
-        if case .avfx(let particle, _, _) = particleNode.payload, PreviewRules.isOn("plainUv") {
+        if case .avfx(let particle, _, _) = particleNode.payload {
             let type = particle.int("PrVT")
             plainUv = type == 2 || (type == 1 && !(particle.child("bSCt").map { $0.data.first == 1 } ?? false))
         }
@@ -245,10 +245,10 @@ struct LayerStackPanel: View {
                   let texture = app.decodedTexture(for: path), texture.width > 0, texture.height > 0 else { continue }
             var colorMode = Int(field(layer.fields, "TCCT")?.read().number ?? 0)
             let alphaMode = Int(field(layer.fields, "TCAT")?.read().number ?? 0)
-            if layer.tag != "TC1", (colorMode == 1 && texture.alphaOnly && PreviewRules.isOn("addAlphaOnly")) || (colorMode == 5 && PreviewRules.isOn("calcColorFive")) {
+            if layer.tag != "TC1", (colorMode == 1 && texture.alphaOnly) || colorMode == 5 {
                 colorMode = 9
             }
-            let luminance = layer.tag == "TC1" && colorMode == 0 && PreviewRules.isOn("tc1Luminance")
+            let luminance = layer.tag == "TC1" && colorMode == 0
             let toAlpha = field(layer.fields, "bC2A")?.read() == .bool(true)
             for y in 0..<size {
                 for x in 0..<size {
@@ -368,7 +368,7 @@ struct LayerStackPanel: View {
                     VStack(spacing: 4) {
                         ZStack {
                             CheckerBackground()
-                            if let image = LayerStackPanel.memo.value("\(document.id)|\(document.revision)|\(PreviewRules.token)|\(app.textureRevision)|\(app.libraryToken)|\(particleNode.id)", { composite(list) }) {
+                            if let image = LayerStackPanel.memo.value("\(document.id)|\(document.revision)|\(app.textureRevision)|\(app.libraryToken)|\(particleNode.id)", { composite(list) }) {
                                 Image(decorative: image, scale: 1).resizable().interpolation(.medium).aspectRatio(contentMode: .fit)
                             }
                         }

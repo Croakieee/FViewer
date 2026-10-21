@@ -58,7 +58,7 @@ struct UvSetPreview: View {
         let ox = value("Scr", "X", fallback: 0, at: time), oy = value("Scr", "Y", fallback: 0, at: time)
         let rotation = value("Rot", nil, fallback: 0, at: time)
         let text = String(format: "Scale %.2f × %.2f · Scroll %.2f, %.2f · Rotation %.1f°", sx, sy, ox, oy, rotation * 180 / .pi)
-        let angle = (PreviewRules.isOn("uvRotationReversed") ? -1 : 1) * rotation
+        let angle = -rotation
         let c = cos(angle), s = sin(angle)
         var pixels = [UInt8](repeating: 255, count: side * side * 4)
         for y in 0..<side {
@@ -97,7 +97,7 @@ struct UvSetPreview: View {
         let path = users.isEmpty ? nil : users[chosen].path
         let border = users.isEmpty ? (0, 0) : users[chosen].border
         let shownTime = max(0, clock.time)
-        let key = "\(ObjectIdentifier(uvSet).hashValue)|\(document.revision)|\(path ?? "-")|\(border)|\(app.textureRevision)|\(PreviewRules.token)|" + parameters(at: shownTime)
+        let key = "\(ObjectIdentifier(uvSet).hashValue)|\(document.revision)|\(path ?? "-")|\(border)|\(app.textureRevision)|" + parameters(at: shownTime)
         let result = UvSetPreview.memo.value(key) { render(path.flatMap { app.decodedTexture(for: $0) }, border: border, side: 160, time: shownTime) }
         VStack(alignment: .leading, spacing: 6) {
             ZStack {

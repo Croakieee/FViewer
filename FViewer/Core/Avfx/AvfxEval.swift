@@ -35,23 +35,8 @@ extension RCurve {
         let span = Float(b.time - a.time)
         if span <= 0 { return vb }
         let f = (t - Float(a.time)) / span
-        let onArrival = PreviewRules.hot.stepKeyOnArrival
-        if !color, onArrival ? b.type == 2 : a.type == 2 { return onArrival && t >= Float(b.time) ? vb : va }
+        if !color, b.type == 2 { return t >= Float(b.time) ? vb : va }
         if color || a.type == 1 || a.type == 2 { return va + (vb - va) * f }
-        if !PreviewRules.hot.splineKeyTangents {
-            func bezier(_ p1: Float, _ h1: Float, _ h2: Float, _ p2: Float, _ u: Float) -> Float {
-                let v = 1 - u
-                return v * v * v * p1 + 3 * v * v * u * h1 + 3 * v * u * u * h2 + u * u * u * p2
-            }
-            let mid = span / 2, start = Float(a.time), end = Float(b.time)
-            let h1 = start + a.x * mid, h2 = end - a.y * mid
-            var lo: Float = 0, hi: Float = 1
-            for _ in 0..<24 {
-                let m = (lo + hi) / 2
-                if bezier(start, h1, h2, end, m) < t { lo = m } else { hi = m }
-            }
-            return va + (vb - va) * bezier(0, 0, 1, 1, (lo + hi) / 2)
-        }
         let f2 = f * f, f3 = f2 * f
         let h00 = 2 * f3 - 3 * f2 + 1, h10 = f3 - 2 * f2 + f, h01 = -2 * f3 + 3 * f2, h11 = f3 - f2
         let before: Float? = i >= 2 ? Float(a.time - keys[i - 2].time) : nil
@@ -67,7 +52,7 @@ extension RCurve {
         let first = keys[0]
         if count == 1 { return value(first) }
         let last = keys[count - 1]
-        var t = post == 2 && PreviewRules.hot.periodicCurves ? time.total : time.t
+        var t = post == 2 ? time.total : time.t
         let start = Float(first.time), end = Float(last.time)
         let duration = end - start
         var cycles: Float = 0
@@ -103,9 +88,9 @@ enum Eval {
 
     static func randomOffset(_ random: RCurve?, type: Int, _ time: CurveTime, _ seed: Float) -> Float {
         guard let random else { return 0 }
-        let type = random.random != 0 && PreviewRules.hot.randomTypeOnRandom ? random.random : type
+        let type = random.random != 0 ? random.random : type
         var seed = seed
-        if type >= 3, PreviewRules.hot.randomAlwaysPerFrame {
+        if type >= 3 {
             let mixed = sin(seed * 12.9898 + Float(Int(time.t.rounded(.down))) * 78.233) * 43758.5453
             seed = mixed - mixed.rounded(.down)
         }
@@ -139,22 +124,19 @@ enum Eval {
             return Vec3(x, y, z)
         }
         let base = Vec3(curve(c.x, time, fallback), curve(c.y, time, fallback), curve(c.z, time, fallback))
-        var offsets = Vec3(randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot)),
+        let offsets = Vec3(randomOffset(c.rx, type: c.x?.random ?? 0, time, seed.get(slot)),
                            randomOffset(c.ry, type: c.y?.random ?? 0, time, seed.get(slot + 1)),
                            randomOffset(c.rz, type: c.z?.random ?? 0, time, seed.get(slot + 2)))
-        if PreviewRules.hot.axisConnectRandom { offsets = linked(offsets, c.connectRandom) }
-        return linked(base + offsets, c.connect)
+        return linked(base + linked(offsets, c.connectRandom), c.connect)
     }
 
     static func color(_ c: RColor, _ time: CurveTime, _ seed: RandomSeed) -> Vec4 {
         var rgb = c.rgb?.eval3(time) ?? Vec3(1, 1, 1)
         var alpha = curve(c.a, time, 1)
         let brightness = curve(c.bri, time, 1) + randomOffset(c.ranBri, type: c.bri?.random ?? 0, time, seed.get(7))
-        if PreviewRules.hot.colorRandom {
-            rgb += Vec3(randomOffset(c.ranR, type: 0, time, seed.get(32)), randomOffset(c.ranG, type: 0, time, seed.get(33)),
-                        randomOffset(c.ranB, type: 0, time, seed.get(34)))
-            alpha += randomOffset(c.ranA, type: c.a?.random ?? 0, time, seed.get(35))
-        }
+        rgb += Vec3(randomOffset(c.ranR, type: 0, time, seed.get(32)), randomOffset(c.ranG, type: 0, time, seed.get(33)),
+                    randomOffset(c.ranB, type: 0, time, seed.get(34)))
+        alpha += randomOffset(c.ranA, type: c.a?.random ?? 0, time, seed.get(35))
         return Vec4(rgb.x * curve(c.sclR, time, 1) * brightness, rgb.y * curve(c.sclG, time, 1) * brightness,
                     rgb.z * curve(c.sclB, time, 1) * brightness, alpha * curve(c.sclA, time, 1))
     }

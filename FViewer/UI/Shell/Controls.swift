@@ -136,7 +136,6 @@ struct CheckBox: View {
     let isOn: Bool
     let label: String
     var mixed = false
-    var dimmed = false
     let action: (Bool) -> Void
     @State private var hovering = false
 
@@ -148,7 +147,7 @@ struct CheckBox: View {
                 if mixed { Image(systemName: "minus").font(.system(size: 8, weight: .heavy)).foregroundStyle(Theme.dim) }
             }
             .frame(width: 14, height: 14)
-            Text(label).font(Theme.font).foregroundStyle(dimmed ? Theme.dim : Theme.text).lineLimit(1)
+            Text(label).font(Theme.font).foregroundStyle(Theme.text).lineLimit(1)
             Spacer(minLength: 0)
         }
         .frame(height: 20)
@@ -559,7 +558,11 @@ struct CurveValueRows: View {
         }
     }
 
-    private var unseen: Bool { document.format == .avfx && PreviewCoverage.ignoresCurve(group.tag) }
+    private var headerHelp: String {
+        let base = group.title + " [" + group.tag + "]"
+        guard let stat = FieldStats.stat(group.stat) else { return base }
+        return base + "\n" + FieldStats.summary(stat)
+    }
 
     private var header: some View {
         let active = document.activeCurveID == group.id
@@ -568,10 +571,10 @@ struct CurveValueRows: View {
                 ForEach(group.channels.prefix(4)) { channel in Rectangle().fill(channel.color).frame(width: 3, height: 12) }
             }
             .frame(width: 18, alignment: .leading)
-            Text(group.title).font(Theme.font).foregroundStyle(changed ? Theme.changed : unseen ? Theme.dim : Theme.text).lineLimit(1).minimumScaleFactor(0.8)
+            Text(group.title).font(Theme.font).foregroundStyle(changed ? Theme.changed : Theme.text).lineLimit(1).minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
-                .help(unseen ? group.title + " [" + group.tag + "]\n" + PreviewCoverage.note : group.title + " [" + group.tag + "]")
+                .help(headerHelp)
             if changed { ChangeDot() }
             modeMenu(group.channels, CurveValueRows.mode(group))
             if let remove = group.remove {

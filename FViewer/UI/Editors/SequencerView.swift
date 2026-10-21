@@ -461,7 +461,6 @@ struct SequencerView: View {
     }
 
     private func stateDot(_ row: SequencerRow) -> some View {
-        let state = row.timeline.flatMap { clock.timelineStates[$0] }
         let waiting = !row.started
         let triggers = row.sources.compactMap { source -> Int? in if case .trigger(let index) = source { return index }; return nil }
         let help: String = {
@@ -469,11 +468,11 @@ struct SequencerView: View {
                 if triggers.isEmpty { return "Nothing starts this timeline" }
                 return "Waits for " + triggers.map { EffectDocument.triggerName($0) }.joined(separator: " or ") + ". Fire it with the bolt or add it on the Game Events lane"
             }
-            return state.map(LifecycleBadge.help) ?? "Idle on this frame"
+            return "Started by the scheduler"
         }()
         return Circle()
             .strokeBorder(waiting ? Theme.dim : Color.clear, lineWidth: 1)
-            .background(Circle().fill(waiting ? Color.clear : state.map(LifecycleBadge.color) ?? Theme.gray(0.3)))
+            .background(Circle().fill(waiting ? Color.clear : Theme.gray(0.3)))
             .frame(width: 7, height: 7)
             .frame(width: 12, height: rowHeight)
             .contentShape(Rectangle())

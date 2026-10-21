@@ -76,7 +76,7 @@ struct FieldControl: View {
                         })
         case .bool:
             let unset: Bool = { if case .int = value { return true }; return false }()
-            CheckBox(isOn: value == .bool(true), label: label ?? "", mixed: unset, dimmed: field.unseen) { _ in
+            CheckBox(isOn: value == .bool(true), label: label ?? "", mixed: unset) { _ in
                 let next: FieldValue = unset ? .bool(true) : value == .bool(true) ? .bool(false) : field.triState ? .int(255) : .bool(true)
                 document.commit(field, from: value, to: next)
             }
@@ -123,20 +123,42 @@ struct FieldRows: View {
             }
         }
         if let unassign = field.unassign { Button("Remove from File", role: .destructive, action: unassign) }
+        if let stat = FieldStats.stat(field.stat) { gameMenu(field, stat) }
     }
 
-    private func label(_ text: String, _ field: PropField?, unseen: Bool = false) -> some View {
+    @ViewBuilder private func gameMenu(_ field: PropField, _ stat: FieldStat) -> some View {
+        let current = field.read()
+        let settable = field.write != nil && FieldStats.value(stat.values.first?.raw ?? "", for: field.kind) != nil
+        Divider()
+        Menu("Common in the Game") {
+            ForEach(Array(stat.values.enumerated()), id: \.offset) { _, entry in
+                let mark = FieldStats.matches(entry.raw, current, kind: field.kind) ? "✓ " : ""
+                Button(mark + FieldStats.name(entry.raw, kind: field.kind) + " — " + entry.files.formatted() + " effects") {
+                    if let next = FieldStats.value(entry.raw, for: field.kind), next != current { document.commit(field, from: current, to: next) }
+                }
+                .disabled(!settable)
+            }
+        }
+        Menu("Open Example Effect") {
+            ForEach(Array(stat.values.prefix(6).enumerated()), id: \.offset) { _, entry in
+                Button(FieldStats.name(entry.raw, kind: field.kind) + " · " + (entry.example as NSString).lastPathComponent) {
+                    AppDelegate.model?.openEffect(gamePath: entry.example)
+                }
+            }
+        }
+    }
+
+    private func label(_ text: String, _ field: PropField?) -> some View {
         let isChanged = field.map(changed) ?? false
-        let muted = unseen || field?.unseen == true
         let before = isChanged ? field.flatMap { document.originalValue(of: $0, in: nodeID) } : nil
         var help = field.map { "\($0.label) [\($0.tag)]" } ?? text
         if field?.tag == "SdNo" { help += " · -1 if no sound" }
         if isChanged { help += " · was " + (before.map(document.describe) ?? "not in the file") }
-        if muted { help += "\n" + PreviewCoverage.note }
+        if let field, let stat = FieldStats.stat(field.stat) { help += "\n" + FieldStats.summary(stat, current: field.read(), kind: field.kind) }
         return HStack(spacing: 4) {
             Spacer(minLength: 0)
             if isChanged { ChangeDot(added: before == nil) }
-            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : muted ? Theme.dim : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
+            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
         }
         .frame(width: labelWidth, height: 20)
         .help(help)
@@ -164,7 +186,7 @@ struct FieldRows: View {
                 }
             case .vector(let prefix, let parts):
                 HStack(alignment: .top, spacing: 8) {
-                    label(prefix, nil, unseen: parts.allSatisfy(\.unseen))
+                    label(prefix, nil)
                     VStack(spacing: 1) {
                         ForEach(Array(parts.enumerated()), id: \.element.id) { index, field in
                             HStack(spacing: 4) {
@@ -514,7 +536,7 @@ struct InspectorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        ForEach(document.report(textureURL: { app.textureURL($0) }, soundURL: { EmitterSounds.locate?($0) })) { section in
+        ForEach(document.report(textureURL: { app.textureURL($0) }, soundURL: { app.locateSound($0) })) { section in
             Panel(title: section.title, trailing: section.lines.count > 1 ? "\(section.lines.count)" : "", memory: "report." + section.title) {
                 ForEach(section.lines) { line in
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -537,7 +559,6 @@ struct InspectorView: View {
                 }
             }
         }
-        ClipLogPanel(clock: document.clock)
         if let root = document.avfxRoot {
             Panel(title: "Raw Blocks") { RawBlockRow(block: root, depth: 0) }
         }
@@ -548,20 +569,6 @@ struct InspectorView: View {
                         .foregroundStyle(app.textureURL(slot.path) == nil ? Color.orange : Color.green)
                     Text(slot.path).font(Theme.small).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.head)
                     Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-}
-
-struct ClipLogPanel: View {
-    @ObservedObject var clock: PlaybackClock
-
-    var body: some View {
-        if !clock.clipLog.isEmpty {
-            Panel(title: "Clip Log", trailing: "\(clock.clipLog.count)") {
-                ForEach(Array(clock.clipLog.suffix(40).enumerated()), id: \.offset) { _, line in
-                    Text(line).font(Theme.font).foregroundStyle(Theme.text).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

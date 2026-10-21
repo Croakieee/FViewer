@@ -122,9 +122,7 @@ struct ViewportFooter: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            readout("effect", clock.status.isEmpty ? "—" : clock.status)
             readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(safe: clock.time.rounded())))
-            if clock.frameMilliseconds > 0 { readout("timing", String(format: "%.1f ms · %.0f fps", clock.frameMilliseconds, clock.framesPerSecond)) }
             Spacer(minLength: 4)
             HeaderButton(symbol: "arrow.counterclockwise", help: "Reset View: the default angle, framed on the whole effect") { reset() }
             CheckBox(isOn: camera.ortho, label: "ortho") { camera.ortho = $0 }.fixedSize()
@@ -160,25 +158,25 @@ struct PreviewMenu: View {
     }
 
     var body: some View {
-        let bloom = ViewportRenderer.bloom
+        let look = PreviewSettings.look
+        let changed = look != PreviewLook()
         HStack(spacing: 4) {
             Image(systemName: "sparkles.rectangle.stack").font(.system(size: 10))
-            Text(bloom.on ? "Preview · Bloom" : "Preview").font(Theme.font)
-            if ViewportRenderer.scene != PreviewScene() { Text("· Scene").font(Theme.font) }
+            Text(changed ? "Preview · Look" : "Preview").font(Theme.font)
         }
         .foregroundStyle(Theme.text)
         .padding(.horizontal, 7)
         .frame(height: 20)
-        .background(RoundedRectangle(cornerRadius: 4).fill(shown || bloom.on || ViewportRenderer.scene != PreviewScene() ? Theme.accent : Theme.gray(0.22)))
+        .background(RoundedRectangle(cornerRadius: 4).fill(shown || changed ? Theme.accent : Theme.gray(0.22)))
         .contentShape(Rectangle())
         .pressable { shown.toggle() }
-        .help("Preview background, bloom and the scene stand-ins. None of them is saved into the effect")
+        .help("Background and look of the preview. None of them is saved into the effect")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Background").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
                 FlowLayout(spacing: 4) {
                     ForEach(Array(AppModel.backgrounds.enumerated()), id: \.offset) { index, entry in
-                        SegmentButton(title: entry.name, active: ViewportRenderer.backgroundColor == nil && app.viewportBackground == index) {
+                        SegmentButton(title: entry.name, active: PreviewSettings.backgroundColor == nil && app.viewportBackground == index) {
                             app.viewportBackground = index
                             app.setPreviewColor(nil)
                         }
@@ -186,85 +184,26 @@ struct PreviewMenu: View {
                 }
                 row("Color") {
                     let shade = AppModel.backgrounds[min(max(app.viewportBackground, 0), AppModel.backgrounds.count - 1)].value
-                    let current = ViewportRenderer.backgroundColor ?? SIMD3(shade, shade, shade)
+                    let current = PreviewSettings.backgroundColor ?? SIMD3(shade, shade, shade)
                     ColorField(color: SIMD4(current.x, current.y, current.z, 1), alpha: false,
                                onLive: { app.setPreviewColor(SIMD3($0.x, $0.y, $0.z)) },
                                onCommit: { _, next in app.setPreviewColor(SIMD3(next.x, next.y, next.z)) })
                 }
-                row("Image") {
-                    SegmentButton(title: ViewportRenderer.backgroundImage == nil ? "Choose…" : "Replace…", active: false) { app.choosePreviewImage() }
-                    if ViewportRenderer.backgroundImage != nil { SegmentButton(title: "Remove", active: false) { app.clearPreviewImage() } }
-                    Spacer(minLength: 0)
-                }
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
-                CheckBox(isOn: bloom.on, label: "Bloom") { app.setBloom(on: $0) }
-                row("Threshold") {
-                    NumberField(label: nil, value: Double(bloom.threshold), step: 0.01, digits: 2, onLive: { app.setBloom(threshold: Float($0)) },
-                                onCommit: { _, next in app.setBloom(threshold: Float(next)) })
-                }
-                row("Intensity") {
-                    NumberField(label: nil, value: Double(bloom.intensity), step: 0.01, digits: 2, onLive: { app.setBloom(intensity: Float($0)) },
-                                onCommit: { _, next in app.setBloom(intensity: Float(next)) })
-                }
-                row("Scatter") {
-                    NumberField(label: nil, value: Double(bloom.radius * 100), step: 0.05, digits: 1, onLive: { app.setBloom(radius: Float($0) / 100) },
-                                onCommit: { _, next in app.setBloom(radius: Float(next) / 100) })
-                }
-                Text("Bloom is a preview aid: it shows how bright parts would glow, the game applies its own.").font(Theme.small).foregroundStyle(Theme.dim)
-                    .fixedSize(horizontal: false, vertical: true)
-                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
-                let scene = ViewportRenderer.scene
-                Text("Scene").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
-                row("Brightness") {
-                    NumberField(label: nil, value: Double(scene.brightness), step: 0.01, digits: 2, onLive: { v in app.setScene { $0.brightness = Float(v) } },
-                                onCommit: { _, next in app.setScene { $0.brightness = Float(next) } })
-                }
-                row("Environment") {
-                    ColorField(color: SIMD4(Double(scene.environment.x), Double(scene.environment.y), Double(scene.environment.z), 1), alpha: false,
-                               onLive: { c in app.setScene { $0.environment = Vec3(Float(c.x), Float(c.y), Float(c.z)) } },
-                               onCommit: { _, c in app.setScene { $0.environment = Vec3(Float(c.x), Float(c.y), Float(c.z)) } })
-                }
-                row("Sunlight") {
-                    ColorField(color: SIMD4(Double(scene.sunlight.x), Double(scene.sunlight.y), Double(scene.sunlight.z), 1), alpha: false,
-                               onLive: { c in app.setScene { $0.sunlight = Vec3(Float(c.x), Float(c.y), Float(c.z)) } },
-                               onCommit: { _, c in app.setScene { $0.sunlight = Vec3(Float(c.x), Float(c.y), Float(c.z)) } })
-                }
-                CheckBox(isOn: scene.fog, label: "Fog") { on in app.setScene { $0.fog = on } }
-                row("Fog Color") {
-                    ColorField(color: SIMD4(Double(scene.fogColor.x), Double(scene.fogColor.y), Double(scene.fogColor.z), 1), alpha: false,
-                               onLive: { c in app.setScene { $0.fogColor = Vec3(Float(c.x), Float(c.y), Float(c.z)) } },
-                               onCommit: { _, c in app.setScene { $0.fogColor = Vec3(Float(c.x), Float(c.y), Float(c.z)) } })
-                }
-                .opacity(scene.fog ? 1 : 0.4)
-                .allowsHitTesting(scene.fog)
-                row("Fog Start") {
-                    NumberField(label: nil, value: Double(scene.fogStart), suffix: " m", step: 0.5, digits: 1, onLive: { v in app.setScene { $0.fogStart = Float(v) } },
-                                onCommit: { _, next in app.setScene { $0.fogStart = Float(next) } })
-                }
-                .opacity(scene.fog ? 1 : 0.4)
-                .allowsHitTesting(scene.fog)
-                row("Fog End") {
-                    NumberField(label: nil, value: Double(scene.fogEnd), suffix: " m", step: 0.5, digits: 1, onLive: { v in app.setScene { $0.fogEnd = Float(v) } },
-                                onCommit: { _, next in app.setScene { $0.fogEnd = Float(next) } })
-                }
-                .opacity(scene.fog ? 1 : 0.4)
-                .allowsHitTesting(scene.fog)
                 row("Light Power") {
-                    NumberField(label: nil, value: Double(scene.lightIntensity), step: 0.1, digits: 1, onLive: { v in app.setScene { $0.lightIntensity = Float(v) } },
-                                onCommit: { _, next in app.setScene { $0.lightIntensity = Float(next) } })
+                    NumberField(label: nil, value: Double(look.lightIntensity), step: 0.1, digits: 1, onLive: { v in app.setLook { $0.lightIntensity = Float(v) } },
+                                onCommit: { _, next in app.setLook { $0.lightIntensity = Float(next) } })
                 }
-                .help("How bright the effect's Point and Directional Lights make the floor and the loaded model. The game's level depends on the zone's exposure; 4 matches the reference previewer")
-                CheckBox(isOn: scene.toneMap, label: "Scene Tone Map") { on in app.setScene { $0.toneMap = on } }
-                    .help("The floor and the loaded model go through the game's tone curve (colour × (1 − e^−Y) / Y by luminance Y); particles skip it, as in the game")
+                .help("How bright the effect's Point and Directional Lights make the floor and the mannequins")
+                CheckBox(isOn: look.toneMap, label: "Scene Tone Map") { on in app.setLook { $0.toneMap = on } }
+                    .help("The floor and the mannequins go through the game's scene tone curve; particles never do")
                 row("Exposure") {
-                    NumberField(label: nil, value: Double(scene.exposure), suffix: " EV", step: 0.05, digits: 2, onLive: { v in app.setScene { $0.exposure = Float(v) } },
-                                onCommit: { _, next in app.setScene { $0.exposure = Float(next) } })
+                    NumberField(label: nil, value: Double(look.exposure), suffix: " EV", step: 0.05, digits: 2, onLive: { v in app.setLook { $0.exposure = Float(v) } },
+                                onCommit: { _, next in app.setLook { $0.exposure = Float(next) } })
                 }
-                .opacity(scene.toneMap ? 1 : 0.4)
-                .allowsHitTesting(scene.toneMap)
-                Text("Stand-ins for the zone: Brightness drives Apply Tone Map, Environment and Sunlight the Apply Rate values, Fog the Apply Fog and Global Fog settings. The game takes them from the area the effect plays in.")
-                    .font(Theme.small).foregroundStyle(Theme.dim)
-                    .fixedSize(horizontal: false, vertical: true)
+                .opacity(look.toneMap ? 1 : 0.4)
+                .allowsHitTesting(look.toneMap)
+                SegmentButton(title: "Reset Look", active: false) { app.setLook { $0 = PreviewLook() } }
             }
             .padding(12)
             .frame(width: 290)
@@ -291,7 +230,7 @@ struct StageMenu: View {
     }
 
     @ViewBuilder private func mover(_ title: String, _ path: WritableKeyPath<PreviewStage, StageMover>) -> some View {
-        let m = AvfxSimulation.stage[keyPath: path]
+        let m = PreviewSettings.stage[keyPath: path]
         Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
         row("Motion") {
             ChoiceField(choices: StageMover.Motion.allCases.map { FieldChoice(name: $0.title, value: $0.rawValue) }, value: m.motion.rawValue) { value in
@@ -314,7 +253,7 @@ struct StageMenu: View {
     }
 
     var body: some View {
-        let stage = AvfxSimulation.stage
+        let stage = PreviewSettings.stage
         let moving = stage.caster.motion != .still || stage.target.motion != .still || stage.caster.jump || stage.target.jump
         HStack(spacing: 4) {
             Image(systemName: "figure.stand").font(.system(size: 10))
@@ -326,7 +265,7 @@ struct StageMenu: View {
         .background(RoundedRectangle(cornerRadius: 4).fill(shown || moving ? Theme.accent : Theme.gray(0.22)))
         .contentShape(Rectangle())
         .pressable { shown.toggle() }
-        .help("Caster and target the effect binds to: where the target stands and how both move on the effect's clock")
+        .help("Caster and target mannequins the effect binds to: where the target stands and how both move on the effect's clock")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Target").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
@@ -340,9 +279,6 @@ struct StageMenu: View {
                 mover("Target Motion", \.target)
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
                 SegmentButton(title: "Reset Stage", active: false) { app.setStage { $0 = PreviewStage() } }
-                Text("Motion runs on the effect's clock, so it restarts with the effect and pauses with it. Binders on the caster or the target follow them, springs and Coordinate Update Frame included.")
-                    .font(Theme.small).foregroundStyle(Theme.dim)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)
             .frame(width: 280)
@@ -356,7 +292,7 @@ struct GizmoMenu: View {
     @EnvironmentObject var app: AppModel
     @State private var shown = false
 
-    private var states: [Bool] { [app.showGizmo, app.highlightSelection, app.showEmitters, app.showBindPoints, app.showFloor] }
+    private var states: [Bool] { [app.showEmitters, app.showBindPoints, app.showFloor, app.showRelief] }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -373,11 +309,11 @@ struct GizmoMenu: View {
         .help("Choose which helpers are drawn in the viewport")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
-                CheckBox(isOn: app.showGizmo, label: "Move, rotate, scale and shape handles") { app.showGizmo = $0 }
-                CheckBox(isOn: app.highlightSelection, label: "Wire of the selected emitter or particle") { app.highlightSelection = $0 }
-                CheckBox(isOn: app.showEmitters, label: "Emitter axes and shape points") { app.showEmitters = $0 }
-                CheckBox(isOn: app.showBindPoints, label: "Reference figure and bind points") { app.showBindPoints = $0 }
-                CheckBox(isOn: app.showFloor, label: "Floor") { app.showFloor = $0 }
+                CheckBox(isOn: app.showEmitters, label: "Emitter markers") { app.showEmitters = $0 }
+                CheckBox(isOn: app.showBindPoints, label: "Mannequin and bind points") { app.showBindPoints = $0 }
+                CheckBox(isOn: app.showFloor, label: "Floor and grid") { app.showFloor = $0 }
+                CheckBox(isOn: app.showRelief, label: "Uneven ground: steps, ramp, wall") { app.showRelief = $0 }
+                    .help("Shows how projected decals lie on steps, a slope and a wall ahead of the caster")
             }
             .padding(12)
             .background(Theme.panel)
@@ -390,23 +326,15 @@ struct ViewportPanel: View {
     @EnvironmentObject var app: AppModel
     @ObservedObject var document: EffectDocument
     @StateObject private var camera = ViewportCamera()
+    @State private var bridge = PlayerBridge()
     @State private var framedKey = ""
-    @State private var effectView: (yaw: Float, pitch: Float, distance: Float, target: SIMD3<Float>)?
 
     private var scene: ViewportScene {
         var scene = ViewportScene()
         scene.shading = app.viewportMode
-        scene.effectShading = app.effectShading
-        scene.showEmitters = app.showEmitters
-        scene.showBindPoints = app.showBindPoints
-        scene.showFloor = app.showFloor
-        scene.showGizmo = app.showGizmo
-        scene.filter = document.visibilityFilter
-        scene.highlight = app.highlightSelection ? document.visibilityKey(forNodeID: document.selectionID) : nil
         let selected = document.selectionID ?? ""
         var key = "\(document.id)|\(document.previewRevision)|\(app.viewportMode)|"
-        let meshes = app.meshes(for: document)
-        for entry in meshes.filter({ selected.hasPrefix($0.id) }) {
+        for entry in app.meshes(for: document).filter({ selected.hasPrefix($0.id) }) {
             scene.meshes.append((entry.mesh, true))
             key += entry.id + ";"
         }
@@ -415,7 +343,6 @@ struct ViewportPanel: View {
             scene.meshes = []
             key += "tex:" + slot.path
         }
-        scene.showEffect = scene.meshes.isEmpty && scene.texture == nil
         scene.revision = key.hashValue
         return scene
     }
@@ -432,11 +359,32 @@ struct ViewportPanel: View {
             lo = SIMD3(-1, 0.2, 0)
             hi = SIMD3(1, 2.2, 0)
         }
-        if let bounds = ViewportRenderer.main?.effectBounds() {
-            lo = lo.map { simd_min($0, bounds.min) } ?? bounds.min
-            hi = hi.map { simd_max($0, bounds.max) } ?? bounds.max
-        }
         if let lo, let hi { camera.frame((lo, hi)) } else { camera.frame(nil) }
+    }
+
+    private var playerKey: Int {
+        var hasher = Hasher()
+        hasher.combine(document.id)
+        hasher.combine(document.previewRevision)
+        hasher.combine(document.showOriginal)
+        hasher.combine(document.visibilityFilter.hidden)
+        hasher.combine(document.visibilityFilter.isolated)
+        hasher.combine(app.viewportBackground)
+        hasher.combine(app.effectShading)
+        hasher.combine(app.showEmitters)
+        hasher.combine(app.showBindPoints)
+        hasher.combine(app.showFloor)
+        hasher.combine(app.showRelief)
+        hasher.combine(app.libraryToken)
+        hasher.combine(PreviewSettings.token)
+        return hasher.finalize()
+    }
+
+    private var playerShadingButtons: some View {
+        HStack(spacing: 1) {
+            HeaderButton(symbol: "circle.fill", active: app.effectShading == 0, help: "Textured") { app.effectShading = 0 }
+            HeaderButton(symbol: "circle.grid.cross", active: app.effectShading != 0, help: "Textured with the particles' wireframe drawn over") { app.effectShading = 2 }
+        }
     }
 
     private var shadingButtons: some View {
@@ -484,12 +432,6 @@ struct ViewportPanel: View {
                     HeaderButton(symbol: "circle.lefthalf.filled", help: "Cycle the background") {
                         app.viewportBackground = (app.viewportBackground + 1) % AppModel.backgrounds.count
                     }
-                    if document.format == .avfx, document.isDirty || document.showOriginal {
-                        HeaderButton(symbol: "clock.arrow.circlepath", active: document.showOriginal,
-                                     help: "Play the effect as it was opened, to compare with your changes") {
-                            document.showOriginal.toggle()
-                        }
-                    }
                     PlaneButton(document: document, clock: document.clock)
                     isolateButton
                     shadingButtons
@@ -502,13 +444,22 @@ struct ViewportPanel: View {
     }
 
     private var viewport3D: some View {
-        VStack(spacing: 0) {
+        let mesh = scene
+        let showEffect = mesh.isEmpty
+        return VStack(spacing: 0) {
             EditorHeader(symbol: "view.3d", title: "3D Viewport") {
                 Menu {
-                    Button("Front") { camera.setView(yaw: 0, pitch: 0) }
-                    Button("Right") { camera.setView(yaw: .pi / 2, pitch: 0) }
-                    Button("Top") { camera.setView(yaw: 0, pitch: 1.55) }
-                    Button("Frame All") { frameAll() }
+                    if showEffect {
+                        Button("Front") { bridge.look(from: SIMD3(0, 0, 1)) }
+                        Button("Right") { bridge.look(from: SIMD3(1, 0, 0)) }
+                        Button("Top") { bridge.look(from: SIMD3(0, 1, 0.001)) }
+                        Button("Reset View") { bridge.resetCamera() }
+                    } else {
+                        Button("Front") { camera.setView(yaw: 0, pitch: 0) }
+                        Button("Right") { camera.setView(yaw: .pi / 2, pitch: 0) }
+                        Button("Top") { camera.setView(yaw: 0, pitch: 1.55) }
+                        Button("Frame All") { frameAll() }
+                    }
                     Divider()
                     ForEach(Array(AppModel.backgrounds.enumerated()), id: \.offset) { index, entry in
                         Button((app.viewportBackground == index ? "✓ " : "") + "Background: " + entry.name) { app.viewportBackground = index }
@@ -522,14 +473,15 @@ struct ViewportPanel: View {
                 .fixedSize()
                 visibilityNote
                 Spacer()
-                if scene.showEffect {
-                    HelpBadge(text: "Drag: orbit\n⇧ Drag or right drag: pan\nScroll: orbit on a trackpad, zoom with a mouse wheel\nPinch or ⌘ Scroll: zoom\n1 / 3 / 7: front, right, top\n. : frame all")
+                if showEffect {
+                    HelpBadge(text: "Drag: orbit\n⇧ or ⌘ Drag, or right drag: pan\nScroll: zoom\n1 / 3 / 7: front, right, top\n. : reset view")
                     PreviewMenu()
                     StageMenu()
                     GizmoMenu()
                     isolateButton
-                    shadingButtons
+                    playerShadingButtons
                 } else {
+                    HelpBadge(text: "Drag: orbit\n⇧ Drag or right drag: pan\nScroll: orbit on a trackpad, zoom with a mouse wheel\nPinch or ⌘ Scroll: zoom\n1 / 3 / 7: front, right, top\n. : frame all")
                     HStack(spacing: 1) {
                         HeaderButton(symbol: "square.grid.3x3", active: app.viewportMode == 0, help: "Wireframe") { app.viewportMode = 0 }
                         HeaderButton(symbol: "circle.fill", active: app.viewportMode == 1, help: "Solid") { app.viewportMode = 1 }
@@ -540,42 +492,41 @@ struct ViewportPanel: View {
                 }
             }
             ZStack(alignment: .topLeading) {
-                MetalViewport(camera: camera, scene: scene, document: document, app: app, background: app.viewportBackground)
+                PlayerViewport(bridge: bridge, document: document, app: app, revision: playerKey)
+                if showEffect {
+                    PlayerStatus(bridge: bridge)
+                } else {
+                    MeshViewport(camera: camera, scene: mesh, background: app.viewportBackground)
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    ProjectionLabel(camera: camera)
+                    if !showEffect { ProjectionLabel(camera: camera) }
                     Text(document.selectedNode.map { "\(document.title) | \($0.title)" } ?? document.title).font(Theme.small)
                 }
                 .foregroundStyle(Color.white.opacity(0.8))
                 .shadow(color: .black, radius: 1)
                 .padding(10)
                 .allowsHitTesting(false)
-                AxisGizmo(camera: camera).frame(maxWidth: .infinity, alignment: .topTrailing).padding(8)
+                if !showEffect { AxisGizmo(camera: camera).frame(maxWidth: .infinity, alignment: .topTrailing).padding(8) }
             }
-            ViewportFooter(clock: document.clock, camera: camera) {
-                camera.setView(yaw: 0.7, pitch: 0.45)
-                frameAll()
+            if showEffect {
+                PlayerFooter(bridge: bridge, clock: document.clock)
+            } else {
+                ViewportFooter(clock: document.clock, camera: camera) {
+                    camera.setView(yaw: 0.7, pitch: 0.45)
+                    frameAll()
+                }
             }
         }
-        .onAppear { frameAll() }
         .onChange(of: document.selectionID) { _, _ in
-            let preview = !scene.showEffect
-            if preview, effectView == nil { effectView = (camera.yaw, camera.pitch, camera.distance, camera.target) }
             let key = scene.meshes.count.description + (scene.texture == nil ? "" : "t") + (document.selectionID ?? "")
-            if key != framedKey, scene.texture != nil || document.selectionID?.contains("Modl") == true {
+            if !scene.isEmpty, key != framedKey {
                 framedKey = key
                 frameAll()
             }
-            if !preview, let saved = effectView {
-                camera.yaw = saved.yaw
-                camera.pitch = saved.pitch
-                camera.distance = saved.distance
-                camera.target = saved.target
-                effectView = nil
-                framedKey = ""
-            }
         }
-        .onChange(of: document.id) { _, _ in frameAll() }
-        .onReceive(NotificationCenter.default.publisher(for: .viewportFrameAll)) { _ in frameAll() }
+        .onReceive(NotificationCenter.default.publisher(for: .viewportFrameAll)) { _ in
+            if scene.isEmpty { bridge.resetCamera() } else { frameAll() }
+        }
     }
 }
 

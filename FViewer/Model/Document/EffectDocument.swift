@@ -632,7 +632,7 @@ final class EffectDocument: ObservableObject, Identifiable {
         return names
     }
 
-    static var channelColors: [Color] { PreviewRules.curveColors() ?? defaultChannelColors }
+    static var channelColors: [Color] { CurveColors.stored() ?? defaultChannelColors }
 
     static let defaultChannelColors: [Color] = [
         Color(red: 0.93, green: 0.33, blue: 0.31), Color(red: 0.47, green: 0.80, blue: 0.33), Color(red: 0.31, green: 0.56, blue: 0.95),

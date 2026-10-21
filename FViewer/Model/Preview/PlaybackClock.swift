@@ -37,20 +37,20 @@ final class PlaybackClock: ObservableObject {
             objectWillChange.send()
             lastPublished = CACurrentMediaTime()
             storedTime = newValue
+            seekToken += 1
+            seekFrame = newValue
         }
     }
+    private(set) var seekToken = 0
+    private(set) var seekFrame: Double = 0
     @Published var playing = true { didSet { if playing, !oldValue { resumed = true } } }
     private var resumed = false
     @Published var loop = true
-    @Published var status = ""
     @Published var endFrame: Double?
     @Published var startFrame: Double = 0
     @Published var speed: Double = 1
     var rate: Double = 30
     @Published var seed = 1
-    @Published var clipLog: [String] = []
-    @Published var frameMilliseconds: Double = 0
-    @Published var framesPerSecond: Double = 0
     @Published var lockSeed = true
     @Published var events: [PreviewEvent] = [] { didSet {
         guard events != oldValue else { return }
@@ -67,7 +67,6 @@ final class PlaybackClock: ObservableObject {
     func isPlayed(_ event: PreviewEvent) -> Bool { !event.muted }
 
     var playedEvents: [PreviewEvent] { events.filter(isPlayed) }
-    @Published var timelineStates: [Int: String] = [:]
     var restartToken = 0
     private var lastTick: Double = 0
 
@@ -112,6 +111,15 @@ final class PlaybackClock: ObservableObject {
         loadingEvents = true
         events = list.sorted { $0.frame < $1.frame }
         loadingEvents = false
+    }
+
+    func follow(_ frame: Double, publish: Bool = false) {
+        let now = CACurrentMediaTime()
+        storedTime = frame
+        if publish || now - lastPublished >= 1.0 / 24 {
+            objectWillChange.send()
+            lastPublished = now
+        }
     }
 
     func advance(_ seconds: Double, duration: Double, finished: Bool, held: Bool) {

@@ -20,7 +20,7 @@ final class PlaybackKeysView: NSView {
             let events = document.selectedEvents.filter { id in clock.events.contains { $0.id == id } }
             if !events.isEmpty {
                 switch event.keyCode {
-                case 51, 117, 7 where modifiers.isEmpty:
+                case 51 where modifiers.isEmpty, 117 where modifiers.isEmpty, 7 where modifiers.isEmpty:
                     document.removeEvents(events)
                     return nil
                 case 46 where modifiers.isEmpty:

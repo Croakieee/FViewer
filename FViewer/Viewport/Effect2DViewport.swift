@@ -22,7 +22,6 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
     private var lastFrame = CACurrentMediaTime()
     private var lastActivity = CACurrentMediaTime()
     private var idleSignature: [Double] = []
-    private var statusTick = 0
     private var loadedFilter = VisibilityFilter()
     private var linePipeline: MTLRenderPipelineState?
     private let device: MTLDevice?
@@ -114,9 +113,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
             appliedParams = [:]
             created.play()
             core = created
-            document.clock.status = ""
         } catch {
-            document.clock.status = "Effect error: \(error)"
             Log.document.error("2D effect \(document.title) failed to load: \(error)")
         }
         appliedEvents = []
@@ -151,9 +148,7 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
         var signature: [Double] = [Double(document?.previewRevision ?? 0), Double(document?.revision ?? 0), Double(document?.selectionID?.hashValue ?? 0)]
         signature.append(contentsOf: [Double(mouse.x), Double(mouse.y), Double(NSEvent.pressedMouseButtons), document?.clock.time ?? 0, Double(document?.clock.seed ?? 0)])
         signature.append(contentsOf: [Double(view.drawableSize.width), Double(view.drawableSize.height)])
-        signature.append(contentsOf: [Double(PreviewRules.token), Double(ViewportRenderer.bloom.on ? 1 : 0), Double(ViewportRenderer.bloom.threshold),
-                                      Double(ViewportRenderer.bloom.intensity), Double(ViewportRenderer.bloom.radius)])
-        signature.append(Double(String(describing: ViewportRenderer.backgroundColor).hashValue % 100_000))
+        signature.append(Double(String(describing: PreviewSettings.backgroundColor).hashValue % 100_000))
         signature.append(Double(String(describing: document?.visibilityFilter).hashValue % 100_000))
         if signature != idleSignature {
             idleSignature = signature
@@ -201,13 +196,6 @@ final class Effect2DRenderer: NSObject, MTKViewDelegate {
                 if steps == 0 {
                     applyEvents(core, clock)
                     core.update(0)
-                }
-                statusTick += 1
-                if statusTick % 12 == 0 {
-                    let missing = renderer?.missingTextures.count ?? 0
-                    var status = "\(core.particleCount) particles" + (missing > 0 ? " · \(missing) missing textures" : "")
-                    if let error = core.error { status = "Error: \(error)" }
-                    if clock.status != status { clock.status = status }
                 }
             }
         }

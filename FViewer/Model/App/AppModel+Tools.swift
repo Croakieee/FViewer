@@ -458,7 +458,8 @@ extension AppModel {
     func scheduleThumbnail(for file: URL) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
             guard let self, self.document?.url == file else { return }
-            ViewportRenderer.main?.captureRequest = { [weak self] image in self?.saveThumbnail(image, for: file) }
+            guard let bridge = PlayerBridge.main, bridge.webView?.window != nil else { return }
+            bridge.snapshot { [weak self] image in if let image { self?.saveThumbnail(image, for: file) } }
         }
     }
 
@@ -507,9 +508,17 @@ extension AppModel {
             notice = "Save the effect first: the snapshot is kept with its file"
             return
         }
-        ViewportRenderer.main?.captureRequest = { [weak self] image in
-            self?.saveThumbnail(image, for: file)
-            self?.notice = "Snapshot saved as the thumbnail of \(file.lastPathComponent)"
+        guard let bridge = PlayerBridge.main, bridge.webView?.window != nil else {
+            notice = "Open the 3D viewport first: the snapshot is taken from it"
+            return
+        }
+        bridge.snapshot { [weak self] image in
+            guard let self, let image else {
+                self?.notice = "The preview could not be captured"
+                return
+            }
+            self.saveThumbnail(image, for: file)
+            self.notice = "Snapshot saved as the thumbnail of \(file.lastPathComponent)"
         }
     }
 
@@ -557,44 +566,22 @@ extension AppModel {
         }
     }
 
-    private var backgroundImageURL: URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let folder = base.appendingPathComponent("FViewer", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder.appendingPathComponent("preview-background.png")
-    }
-
     func loadPreviewSettings() {
         let defaults = UserDefaults.standard
         if let parts = defaults.string(forKey: "preview.color")?.split(separator: ",").compactMap({ Double($0) }), parts.count == 3 {
-            ViewportRenderer.backgroundColor = SIMD3(parts[0], parts[1], parts[2])
+            PreviewSettings.backgroundColor = SIMD3(parts[0], parts[1], parts[2])
         }
-        if let url = backgroundImageURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            ViewportRenderer.backgroundImage = image
-            ViewportRenderer.backgroundToken += 1
-        }
-        if let values = defaults.array(forKey: "preview.scene") as? [Double], values.count >= 13 {
-            let f = values.map { Float($0) }
-            ViewportRenderer.scene = PreviewScene(brightness: f[0], environment: Vec3(f[1], f[2], f[3]), sunlight: Vec3(f[4], f[5], f[6]), fog: f[7] > 0.5,
-                                                  fogColor: Vec3(f[8], f[9], f[10]), fogStart: f[11], fogEnd: f[12])
-            if f.count >= 16 {
-                ViewportRenderer.scene.toneMap = f[13] > 0.5
-                ViewportRenderer.scene.exposure = f[14]
-                ViewportRenderer.scene.lightIntensity = f[15]
-            }
+        if let data = defaults.data(forKey: "preview.look"), let look = try? JSONDecoder().decode(PreviewLook.self, from: data) {
+            PreviewSettings.look = look
         }
         if let data = defaults.data(forKey: "preview.stage"), let stage = try? JSONDecoder().decode(PreviewStage.self, from: data) {
-            AvfxSimulation.stage = stage
-        }
-        if defaults.object(forKey: "preview.bloom.threshold") != nil {
-            ViewportRenderer.bloom = (defaults.bool(forKey: "preview.bloom.on"), defaults.float(forKey: "preview.bloom.threshold"),
-                                      defaults.float(forKey: "preview.bloom.intensity"), defaults.float(forKey: "preview.bloom.radius"))
+            PreviewSettings.stage = stage
         }
     }
 
     func setPreviewColor(_ color: SIMD3<Double>?) {
-        ViewportRenderer.backgroundColor = color
+        PreviewSettings.backgroundColor = color
+        PreviewSettings.token += 1
         if let color {
             UserDefaults.standard.set("\(color.x),\(color.y),\(color.z)", forKey: "preview.color")
         } else {
@@ -603,48 +590,19 @@ extension AppModel {
         objectWillChange.send()
     }
 
-    func choosePreviewImage() {
-        let panel = NSOpenPanel()
-        panel.title = "Preview Background Image"
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url, let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
-        ViewportRenderer.backgroundImage = image
-        ViewportRenderer.backgroundToken += 1
-        if let target = backgroundImageURL, let destination = CGImageDestinationCreateWithURL(target as CFURL, "public.png" as CFString, 1, nil) {
-            CGImageDestinationAddImage(destination, image, nil)
-            CGImageDestinationFinalize(destination)
-        }
-        objectWillChange.send()
-    }
-
-    func clearPreviewImage() {
-        ViewportRenderer.backgroundImage = nil
-        ViewportRenderer.backgroundToken += 1
-        if let target = backgroundImageURL { try? FileManager.default.removeItem(at: target) }
-        objectWillChange.send()
-    }
-
-    func setScene(_ change: (inout PreviewScene) -> Void) {
-        var scene = ViewportRenderer.scene
-        change(&scene)
-        scene.brightness = min(max(scene.brightness, 0.05), 20)
-        scene.fogStart = max(scene.fogStart, 0)
-        scene.fogEnd = max(scene.fogEnd, scene.fogStart + 0.1)
-        scene.exposure = min(max(scene.exposure, -4), 4)
-        scene.lightIntensity = min(max(scene.lightIntensity, 0), 100)
-        ViewportRenderer.scene = scene
-        ViewportRenderer.sceneToken += 1
-        let values = [scene.brightness, scene.environment.x, scene.environment.y, scene.environment.z, scene.sunlight.x, scene.sunlight.y, scene.sunlight.z,
-                      scene.fog ? 1 : 0, scene.fogColor.x, scene.fogColor.y, scene.fogColor.z, scene.fogStart, scene.fogEnd,
-                      scene.toneMap ? 1 : 0, scene.exposure, scene.lightIntensity].map { Double($0) }
-        UserDefaults.standard.set(values, forKey: "preview.scene")
+    func setLook(_ change: (inout PreviewLook) -> Void) {
+        var look = PreviewSettings.look
+        change(&look)
+        look.exposure = min(max(look.exposure, -4), 4)
+        look.lightIntensity = min(max(look.lightIntensity, 0), 100)
+        PreviewSettings.look = look
+        PreviewSettings.token += 1
+        if let data = try? JSONEncoder().encode(look) { UserDefaults.standard.set(data, forKey: "preview.look") }
         objectWillChange.send()
     }
 
     func setStage(_ change: (inout PreviewStage) -> Void) {
-        var stage = AvfxSimulation.stage
+        var stage = PreviewSettings.stage
         change(&stage)
         stage.distance = min(max(stage.distance, 0), 60)
         stage.side = min(max(stage.side, -30), 30)
@@ -654,24 +612,9 @@ extension AppModel {
             stage[keyPath: keyPath].jumpHeight = min(max(stage[keyPath: keyPath].jumpHeight, 0), 10)
             stage[keyPath: keyPath].jumpPeriod = min(max(stage[keyPath: keyPath].jumpPeriod, 0.2), 60)
         }
-        AvfxSimulation.stage = stage
-        ViewportRenderer.sceneToken += 1
+        PreviewSettings.stage = stage
+        PreviewSettings.token += 1
         if let data = try? JSONEncoder().encode(stage) { UserDefaults.standard.set(data, forKey: "preview.stage") }
-        objectWillChange.send()
-    }
-
-    func setBloom(on: Bool? = nil, threshold: Float? = nil, intensity: Float? = nil, radius: Float? = nil) {
-        var bloom = ViewportRenderer.bloom
-        if let on { bloom.on = on }
-        if let threshold { bloom.threshold = min(max(threshold, 0), 1) }
-        if let intensity { bloom.intensity = min(max(intensity, 0), 4) }
-        if let radius { bloom.radius = min(max(radius, 0.002), 0.2) }
-        ViewportRenderer.bloom = bloom
-        let defaults = UserDefaults.standard
-        defaults.set(bloom.on, forKey: "preview.bloom.on")
-        defaults.set(bloom.threshold, forKey: "preview.bloom.threshold")
-        defaults.set(bloom.intensity, forKey: "preview.bloom.intensity")
-        defaults.set(bloom.radius, forKey: "preview.bloom.radius")
         objectWillChange.send()
     }
 }

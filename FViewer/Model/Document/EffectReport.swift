@@ -17,13 +17,13 @@ struct ReportSection: Identifiable {
 }
 
 extension EffectDocument {
-    private static var reportCache: [ObjectIdentifier: (revision: Int, token: Int, sections: [ReportSection])] = [:]
+    private static var reportCache: [ObjectIdentifier: (revision: Int, sections: [ReportSection])] = [:]
 
     func report(textureURL: (String) -> URL?, soundURL: (String) -> URL?) -> [ReportSection] {
         let key = ObjectIdentifier(self)
-        if let cached = EffectDocument.reportCache[key], cached.revision == revision, cached.token == PreviewRules.token { return cached.sections }
+        if let cached = EffectDocument.reportCache[key], cached.revision == revision { return cached.sections }
         let sections = avfxRoot.map { buildReport($0, textureURL: textureURL, soundURL: soundURL) } ?? jsonReport()
-        EffectDocument.reportCache[key] = (revision, PreviewRules.token, sections)
+        EffectDocument.reportCache[key] = (revision, sections)
         return sections
     }
 
@@ -155,55 +155,12 @@ extension EffectDocument {
             }
         }
 
-        var coverage: [ReportLine] = []
-        for (i, particle) in particles.enumerated() {
-            let type = particle.int("PrVT")
-            let target = "avfx/Ptcl/\(i)"
-            switch type {
-            case 0: coverage.append(ReportLine(level: .info, text: "Particle \(i) · Parameter", detail: "has no geometry, nothing to draw (as in the game)", target: target))
-            case 3 where particle.int("bSCt") == 0:
-                coverage.append(ReportLine(level: .info, text: "Particle \(i) · Line", detail: "without Simple Animation it is a helper and is not drawn (as in the game)", target: target))
-            case 14: coverage.append(ReportLine(level: .info, text: "Particle \(i) · Model Skin", detail: "drawn over the loaded model (File → Game → Load Model)", target: target))
-            case 15: coverage.append(ReportLine(level: .info, text: "Particle \(i) · Dissolve", detail: "dissolves the loaded model (File → Game → Load Model)", target: target))
-            case 10, 11: coverage.append(ReportLine(level: .info, text: "Particle \(i) · \(name("ParticleType", type))", detail: "projects onto the floor and the loaded model; walls of the game's scene are not there", target: target))
-            default: break
-            }
-        }
-        for (i, effector) in effectors.enumerated() {
-            let kind = effector.int("EfVT")
-            let target = "avfx/Efct/\(i)"
-            switch kind {
-            case 2, 8: coverage.append(ReportLine(level: .warning, text: "Effector \(i) · \(name("EffectorType", kind))", detail: "not previewed", target: target))
-            case 0 where effector.child("Data")?.int("bSdw") != 0:
-                coverage.append(ReportLine(level: .info, text: "Effector \(i) · Point Light with shadow", detail: "only the loaded model casts it", target: target))
-            default: break
-            }
-        }
-        if !schema.emitters.filter({ !$0.sound.isEmpty }).isEmpty, soundLines.contains(where: { $0.level != .ok }) {
-            coverage.append(ReportLine(level: .warning, text: "Emitter sounds", detail: "some .scd files are not in the open folder, they stay silent"))
-        }
-        var unused: [String: [String]] = [:]
-        func visit(_ node: OutlineNode) {
-            for section in sections(for: node) {
-                for field in section.fields where field.unseen && field.read().number != 0 {
-                    unused[field.label + " (\(field.tag))", default: []].append(node.title)
-                }
-            }
-            node.children.forEach(visit)
-        }
-        outline.forEach(visit)
-        let unusedLines = unused.sorted { $0.key < $1.key }.map { key, holders in
-            ReportLine(level: .info, text: key, detail: holders.prefix(4).joined(separator: ", ") + (holders.count > 4 ? " +\(holders.count - 4)" : ""))
-        }
-
         var out = [summary]
         out.append(ReportSection(title: "Problems", lines: problems.isEmpty ? [ReportLine(level: .ok, text: "No broken references or missing files")] : problems))
         if !textureLines.isEmpty { out.append(ReportSection(title: "Textures", lines: textureLines)) }
         if !modelLines.isEmpty { out.append(ReportSection(title: "Models", lines: modelLines)) }
         if !soundLines.isEmpty { out.append(ReportSection(title: "Sounds", lines: soundLines)) }
         if !binderLines.isEmpty { out.append(ReportSection(title: "Binders", lines: binderLines)) }
-        out.append(ReportSection(title: "Preview Coverage", lines: coverage.isEmpty ? [ReportLine(level: .ok, text: "Everything in this effect is drawn by the preview")] : coverage))
-        if !unusedLines.isEmpty { out.append(ReportSection(title: "Set but Not Previewed", lines: unusedLines)) }
         return out
     }
 }

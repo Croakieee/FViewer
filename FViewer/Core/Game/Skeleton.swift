@@ -100,13 +100,4 @@ struct GameSkeleton {
         return best
     }
 
-    func bindPoints(_ eid: [EidPoint]) -> [Int: SIMD3<Float>] {
-        var result: [Int: SIMD3<Float>] = [:]
-        for point in eid {
-            guard let bone = names.firstIndex(of: point.bone) else { continue }
-            let p = world[bone] * SIMD4(point.position.x, point.position.y, point.position.z, 1)
-            result[point.pointID] = SIMD3(p.x, p.y, p.z)
-        }
-        return result
-    }
 }

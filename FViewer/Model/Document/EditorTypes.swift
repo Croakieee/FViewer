@@ -44,7 +44,7 @@ struct PropField: Identifiable {
     var animate: (() -> Void)?
     var unassign: (() -> Void)? = nil
     var triState = false
-    var unseen = false
+    var stat: String? = nil
 }
 
 struct PropSection: Identifiable {
@@ -76,6 +76,7 @@ struct CurveGroup: Identifiable {
     var remove: (() -> Void)?
     var missing: [MissingCurve] = []
     var unassign: [String: () -> Void] = [:]
+    var stat: String? = nil
 }
 
 struct MissingCurve: Identifiable {

@@ -20,7 +20,6 @@ private final class SilentFactory: ViewFactory {
 final class DensityJob {
     private let frames: Int
     private var frame = 0
-    private var simulation: AvfxSimulation?
     private var core: EffectCore?
     private let factory = SilentFactory()
     private(set) var values: [String: [Float]] = [:]
@@ -28,19 +27,11 @@ final class DensityJob {
 
     init?(document: EffectDocument, frames: Int) {
         self.frames = frames
-        if let root = document.avfxRoot {
-            simulation = AvfxSimulation(schema: AvfxSchemaReader.read(root))
-            simulation?.seed = UInt64(max(0, document.clock.seed))
-            simulation?.events = document.clock.playedEvents
-            simulation?.restart()
-        } else if document.jsonRoot != nil {
-            let data = document.pixiData(filter: VisibilityFilter())
-            guard let created = try? EffectCore(json: data, options: EffectCoreOptions(views: factory, models: [:], seed: UInt32(max(1, document.clock.seed)))) else { return nil }
-            created.play()
-            core = created
-        } else {
-            return nil
-        }
+        guard document.jsonRoot != nil else { return nil }
+        let data = document.pixiData(filter: VisibilityFilter())
+        guard let created = try? EffectCore(json: data, options: EffectCoreOptions(views: factory, models: [:], seed: UInt32(max(1, document.clock.seed)))) else { return nil }
+        created.play()
+        core = created
     }
 
     private func record(_ counts: [String: Int]) {
@@ -55,12 +46,7 @@ final class DensityJob {
     func step(_ budget: Int) -> Bool {
         var done = 0
         while frame < frames, done < budget {
-            if let simulation {
-                var counts: [String: Int] = [:]
-                for particle in simulation.particles { counts["e\(particle.emitter.schema.index)", default: 0] += 1 }
-                record(counts)
-                simulation.advance(1)
-            } else if let core {
+            if let core {
                 core.update(1.0 / core.fps)
                 record(core.particleCounts())
             }

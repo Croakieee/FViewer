@@ -358,11 +358,11 @@ extension EffectDocument {
             seen[block.tag] = n + 1
             if list == nil, let target = EffectDocument.indexListTarget(block, cls: cls) { return indexListFields(block, target: target, id: id) }
             guard var field = avfxField(block, cls: cls, id: "\(id)#\(block.tag)\(n)", list: list) else { return [] }
+            field.stat = cls.map { $0 + "." + block.tag }
             if list == nil, field.write != nil, let parent = block.parent, !AvfxCatalog.typeTags.contains(block.tag) {
                 let label = field.label
                 field.unassign = { [weak self] in self?.removeChild(block, from: parent, title: "Remove " + label) }
             }
-            field.unseen = PreviewCoverage.ignores(cls, block.tag)
             return [field]
         }
     }
@@ -671,7 +671,7 @@ extension EffectDocument {
             }
             groups.append(CurveGroup(id: id, title: title, tag: child.tag, isAngle: isAngle, channels: channels, settings: settings,
                                      remove: { [weak self] in self?.removeChild(child, from: block, title: "Remove " + title) },
-                                     missing: missing, unassign: unassign))
+                                     missing: missing, unassign: unassign, stat: cls.map { $0 + "." + child.tag }))
         }
         return groups
     }

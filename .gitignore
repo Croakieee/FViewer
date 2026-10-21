@@ -1,15 +1,22 @@
-/ffxiv-docs
-Tools/
+/*
+!/.github/
+!/.gitignore
+!/CONTRIBUTING.md
+!/Config/
+!/FViewer/
+!/FViewer.xcodeproj/
+!/LICENSE
+!/Packages/
+!/PlayerHost/
+!/README.md
+!/Screenshots/
 
 .DS_Store
-
 xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
 *.xccheckout
-
 DerivedData/
 build/
 .build/
-
 Config/Local.xcconfig

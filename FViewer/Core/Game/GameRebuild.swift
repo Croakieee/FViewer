@@ -570,61 +570,6 @@ extension GameRecords {
         return model.serialized()
     }
 
-    static func physicsLines(_ b: [UInt8], skeleton: GameSkeleton) -> [(SIMD3<Float>, SIMD3<Float>)] {
-        guard let model = PhybModel.parse(b) else { return [] }
-        var lines: [(SIMD3<Float>, SIMD3<Float>)] = []
-        func bone(_ blob: [UInt8], _ at: Int) -> simd_float4x4? {
-            let name = GameFiles.string(blob, at, max: 32)
-            guard let index = skeleton.names.firstIndex(of: name), index < skeleton.world.count else { return nil }
-            return skeleton.world[index]
-        }
-        func point(_ matrix: simd_float4x4, _ blob: [UInt8], _ at: Int) -> SIMD3<Float> {
-            let v = matrix * SIMD4(GameFiles.f32(blob, at), GameFiles.f32(blob, at + 4), GameFiles.f32(blob, at + 8), 1)
-            return SIMD3(v.x, v.y, v.z)
-        }
-        func ball(_ center: SIMD3<Float>, _ radius: Float) {
-            guard radius > 0 else { return }
-            for axis in 0..<3 {
-                var last: SIMD3<Float>?
-                for step in 0...20 {
-                    let turn = Float(step) / 20 * 2 * .pi
-                    var offset = SIMD3<Float>(0, 0, 0)
-                    offset[(axis + 1) % 3] = cos(turn) * radius
-                    offset[(axis + 2) % 3] = sin(turn) * radius
-                    if let last { lines.append((last, center + offset)) }
-                    last = center + offset
-                }
-            }
-        }
-        for blob in model.shapes[0] {
-            guard let start = bone(blob, 32), let end = bone(blob, 64) else { continue }
-            let a = point(start, blob, 96), c = point(end, blob, 108), radius = GameFiles.f32(blob, 120)
-            lines.append((a, c))
-            ball(a, radius)
-            ball(c, radius)
-        }
-        for blob in model.shapes[4] {
-            guard let matrix = bone(blob, 32) else { continue }
-            ball(point(matrix, blob, 64), GameFiles.f32(blob, 76) / 2)
-        }
-        for simulator in model.simulators {
-            for chain in simulator.chains {
-                var last: SIMD3<Float>?
-                for node in chain.nodes {
-                    guard let matrix = bone(node, 0) else {
-                        last = nil
-                        continue
-                    }
-                    let c = matrix.columns.3
-                    let here = SIMD3(c.x, c.y, c.z)
-                    if let last { lines.append((last, here)) }
-                    ball(here, GameFiles.f32(node, 32))
-                    last = here
-                }
-            }
-        }
-        return lines
-    }
 }
 
 struct KdbModel {

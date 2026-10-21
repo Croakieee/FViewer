@@ -613,7 +613,7 @@ enum AvfxSchemaReader {
                              borderV: block.int("TBVT"), calcColor: block.int("TCCT"), calcAlpha: block.int("TCAT"),
                              textures: textures.filter { $0 >= 0 }, texN: curve(block.child("TxN")), texNRandom: curve(block.child("TxNR")),
                              targets: [block.bool("bT1"), block.bool("bT2"), block.bool("bT3"), block.bool("bT4")], power: curve(block.child("DPow")),
-                             screenCopy: block.bool("bUSC") || (block.bool("bPFC") && PreviewRules.isOn("previousFrameCopy")), filter: block.int("TFT", 1))
+                             screenCopy: block.bool("bUSC") || block.bool("bPFC"), filter: block.int("TFT", 1))
     }
 
     static func simple(_ block: AvfxBlock?) -> RSimple? {
@@ -640,7 +640,7 @@ enum AvfxSchemaReader {
             rotVelocity: f("RVZ"), blockCount: max(1, i("BlkN", 1)), velocityMin: f("VMin"), velocityMax: f("VMax"),
             uvCellsU: max(1, i("UvCU", 1)), uvCellsV: max(1, i("UvCV", 1)), uvInterval: i("UvIv", 1), uvRandom: i("UvNR"),
             pivot: SIMD2(f("PvtX"), f("PvtY")), interval: i("CrI", 1), intervalRandom: i("CrIR"), intervalCount: max(1, i("CrIC", 1)),
-            life: i("CrIL", 1) < 0 || (i("CrIL", 1) == 0 && PreviewRules.isOn("simpleLifeZeroEndless")) ? -1 : Float(max(1, i("CrIL", 1))), colors: colors, frames: frames,
+            life: i("CrIL", 1) < 0 || i("CrIL", 1) == 0 ? -1 : Float(max(1, i("CrIL", 1))), colors: colors, frames: frames,
             injectionDirection: i("SIDT"), radialFrom: f("IRD0"), radialTo: f("IRD1"), bindModel: i("VBMN", -1), flatterySpeed: f("FltS"), spinAdd: f("RAZ"),
             lifeRandom: Float(max(0, i("CrLR"))), baseDirection: i("SBDT"), tiltStart: SIMD2(f("RIX"), f("RIY")), tiltRandom: SIMD2(f("RBX"), f("RBY")),
             tiltAdd: SIMD2(f("RAX"), f("RAY")), tiltVelocity: SIMD2(f("RVX"), f("RVY")), uvLoopCount: max(0, i("UvLC")), uvReverse: block.child("bRUV")?.data.first == 1,
@@ -730,7 +730,7 @@ enum AvfxSchemaReader {
         }
         let particles = root.childrenNamed("Ptcl").enumerated().map { index, p -> RParticle in
             let data = p.child("Data")
-            let type = p.int("PrVT") == 9 && PreviewRules.isOn("polygonAsQuad") ? 8 : p.int("PrVT")
+            let type = p.int("PrVT") == 9 ? 8 : p.int("PrVT")
             var palette: RPalette?
             if let tp = p.child("TP"), tp.children != nil {
                 palette = RPalette(enabled: tp.bool("bEna"), border: tp.int("TBT"), texture: tp.int("TxNo", -1), offset: curve(tp.child("POff")),
@@ -761,7 +761,7 @@ enum AvfxSchemaReader {
                 clipFromCaster: p.int("FaBP") == 1)
             particle.collision = p.int("Coll", -1)
             particle.fresnelRotation = curve3(data?.child("FrRt"))
-            if p.int("PrVT") == 1, data?.bool("bLgt") == true, PreviewRules.isOn("powderLighting") {
+            if p.int("PrVT") == 1, data?.bool("bLgt") == true {
                 particle.lit = true
                 particle.lightType = data?.int("LgtT") ?? 0
             }

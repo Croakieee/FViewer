@@ -209,24 +209,6 @@ private struct GameFileContent: View {
                 if file.dirty { ChangeDot() }
                 Spacer(minLength: 8)
                 if let note = file.note { Text(note).font(Theme.small).foregroundStyle(Color.orange).lineLimit(1) }
-                if file.kind == .phyb {
-                    SegmentButton(title: "Show in Viewport", active: app.physicsShown == file.url) { app.togglePhysics(file) }
-                }
-                if file.url.pathExtension.lowercased() == "mdl" {
-                    SegmentButton(title: "Show in Viewport", active: app.referenceModelName == file.url.lastPathComponent) {
-                        if app.referenceModelName == file.url.lastPathComponent {
-                            app.clearReferenceModel()
-                        } else {
-                            do { try app.loadReferenceModel(file.url) } catch { file.note = error.localizedDescription }
-                        }
-                    }
-                }
-                if file.url.pathExtension.lowercased() == "sklb" {
-                    SegmentButton(title: "Show in Viewport", active: app.skeletonName == file.url.lastPathComponent) {
-                        do { try app.loadSkeleton(file.url) } catch { file.note = error.localizedDescription }
-                    }
-                }
-                if file.kind == .eid { SegmentButton(title: "Show in Viewport", active: false) { app.showBindPoints(of: file) } }
                 if ["tex", "atex", "mdl"].contains(file.url.pathExtension.lowercased()) {
                     SegmentButton(title: "Find Effects", active: false) { app.findFiles(containing: file.url.lastPathComponent, effects: true) }
                 }

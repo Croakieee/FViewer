@@ -2,13 +2,13 @@
 
 A macOS editor for FINAL FANTASY XIV visual effects (`.avfx`). It opens an effect, plays it in a 3D viewport, lets you change every value the file holds, and writes the result back to a new file. It also reads and edits the game files an effect depends on: timelines, materials, skeleton data and others.
 
-Built with SwiftUI and Metal. Requires macOS 15.7 or later and Xcode to build.
+Built with SwiftUI and Metal; the 3D preview of an effect is the player from [dev_ffxiv_avfx_preview](https://github.com/zerobyted/dev_ffxiv_avfx_preview) in a web view. Requires macOS 15.7 or later and Xcode to build.
 
 ![Main window](Screenshots/main.png)
 
 ## Building
 
-Open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. There are no external dependencies. The 2D runtime is a local Swift package in `Packages/VfxRuntime`.
+Clone [dev_ffxiv_avfx_preview](https://github.com/zerobyted/dev_ffxiv_avfx_preview) into `ffxiv-docs/dev_ffxiv_avfx_preview` and run `yarn install` and `yarn build:player` there, then open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. The 2D runtime is a local Swift package in `Packages/VfxRuntime`.
 
 ### Signing
 
@@ -28,7 +28,7 @@ Originals are never overwritten. **Save** writes a copy next to the source with 
 | Area | What it does |
 |---|---|
 | Outliner | The effect as a tree: scheduler, timelines, emitters, particles, effectors, binders, textures, models. Items can be added, duplicated, deleted and hidden. |
-| Viewport | Live preview. Drag to orbit, right-drag to pan, scroll to zoom; `1`, `3`, `7` switch to front, side and top views. The selected item gets move, rotate and scale handles. |
+| Viewport | Live preview. Drag to orbit, right-drag to pan, scroll to zoom; `1`, `3`, `7` switch to front, side and top views. |
 | Properties | Every field of the selected item with its name from VFXEditor. A dot marks values that differ from the file on disk. |
 | File Browser | The open folder. Other tabs show the node library, history, texture and model assets, and the remaining game files of the folder. |
 | Bottom area | Timeline, Lifecycle, Node Editor, Item Editor, Material Editor. |
@@ -37,7 +37,7 @@ Originals are never overwritten. **Save** writes a copy next to the source with 
 
 ### Timeline
 
-Strips show when each emitter of a timeline starts and ends. Drag a strip to move it, drag its edge to change its length. The curve inside a strip is the number of live particles on each frame. The timeline row shows the total.
+Strips show when each emitter of a timeline starts and ends. Drag a strip to move it, drag its edge to change its length. For Pixi effects the curve inside a strip is the number of live particles on each frame, and the timeline row shows the total.
 
 Playback controls set the frame, the end frame, speed, loop and the random seed. A **Release** event on the Game Events lane of the Timeline lets held particles and emitters play out, as when the game ends an effect.
 
@@ -61,14 +61,9 @@ One particle, emitter or other item on a single page: parameters, texture layers
 
 ## Preview
 
-The viewport plays the effect: emitters, particles, texture layers with their blend and UV settings, distortion, palette, soft particles, trails, light effectors, screen blur effectors and camera quake. It follows the reference previewers, not the game itself, so small differences from the game are possible.
+The viewport plays the effect with the player from dev_ffxiv_avfx_preview, on a mannequin caster and target. Every edit reloads it on the same frame. It follows the reference previewers, not the game itself, so small differences from the game are possible.
 
-- **File → Game → Load Skeleton** shows a game skeleton with its bind points, so an effect bound to a point is drawn at that point.
-- **File → Game → Load Model** shows a game model with its texture as a reference object. **Load Model of This Effect** finds the model and skeleton from the effect's path.
-- **Settings → Preview Rules** lists the rules the preview follows. Each can be switched off.
-- **Effect Info → Preview Notes** lists what the preview does not draw for the open effect.
-
-Not drawn: Black Hole effectors, normal and reflection textures.
+The build copies the player from `ffxiv-docs/dev_ffxiv_avfx_preview/dist/player`, so that checkout must be built first (`yarn build:player`).
 
 ## Textures
 
@@ -89,7 +84,7 @@ Textures are read from `.atex` and `.tex` (BC1–BC5, BC7 and uncompressed forma
 | `.kdb` | Nodes, connections, bones and weights. |
 | `.skp`, `.atch`, `.imc` | Look-at and slope parameters, weapon attach points, model variants. |
 | `.scd` | Lists sounds, plays PCM and MS ADPCM, replaces a sound from an audio file. |
-| `.mdl`, `.sklb`, `.tex` | View only; models and skeletons can be sent to the viewport. |
+| `.mdl`, `.sklb`, `.tex` | View only. |
 
 ## Exporting mods
 

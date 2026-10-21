@@ -23,22 +23,16 @@ final class AppModel: ObservableObject {
     @Published var showEmitters = false
     @Published var showBindPoints = true
     @Published var showFloor = false
-    @Published var showGizmo = true
+    @Published var showRelief = false
     @Published var themeToken = 0
-    @Published var referenceModelName: String?
-    @Published var physicsShown: URL?
-    var loadedSkeleton: GameSkeleton?
-    var referenceTextured = 0
     @Published var showCatalog = false
     @Published var catalogNote: String?
     @Published var viewportBackground = 0
-    @Published var highlightSelection = true
     @Published var gameRoot: URL?
     @Published var convertImages = false
     @Published var effectList: EffectList?
     @Published var modList: [PenumbraMod]?
     @Published var gameFile: GameFileDocument?
-    @Published var skeletonName: String?
     var modelEditorCount = 0
     @Published var timelineHits: [URL]?
     @Published var timelineHitsTitle = "Timelines Using This Effect"
@@ -78,9 +72,7 @@ final class AppModel: ObservableObject {
             open(URL(fileURLWithPath: arguments[flag + 1]))
         }
         AppDelegate.model = self
-        EmitterSounds.locate = { [weak self] in self?.locateSound($0) }
         restoreGameFolder()
-        restoreSkeleton()
         startAutosave()
         loadPreviewSettings()
     }

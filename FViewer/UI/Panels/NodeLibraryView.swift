@@ -360,8 +360,6 @@ struct GameFilesView: View {
                             let ext = file.url.pathExtension.lowercased()
                             Button("Inspect") { app.inspectGameFile(file.url) }
                             if ext == "tmb" || ext == "pap" { Button("Effects of This Timeline") { app.listEffects(of: file.url) } }
-                            if ext == "sklb" { Button("Load as Skeleton") { do { try app.loadSkeleton(file.url) } catch { app.errorMessage = error.localizedDescription } } }
-                            if ext == "mdl" { Button("Show Model in Viewport") { do { try app.loadReferenceModel(file.url) } catch { app.errorMessage = error.localizedDescription } } }
                             Button("Copy Game Path") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(app.gamePath(forAsset: file.url) ?? file.name, forType: .string)
@@ -467,7 +465,6 @@ struct SettingsView: View {
                 shortcuts
                 editorKeys
                 appearance
-                rules
             }
             .padding(.vertical, 8)
             .background(Color.clear.opacity(refresh >= 0 ? 0 : 0))
@@ -513,7 +510,7 @@ struct SettingsView: View {
             ForEach(0..<3, id: \.self) { index in
                 row(["X / Value", "Y", "Z"][index]) {
                     ColorPicker("", selection: Binding(get: { EffectDocument.channelColors[index] }, set: { color in
-                        PreviewRules.setCurveColor(index, color)
+                        CurveColors.set(index, color)
                         refresh += 1
                         app.document?.liveChanged()
                     }), supportsOpacity: false).labelsHidden()
@@ -521,7 +518,7 @@ struct SettingsView: View {
             }
             row("") {
                 SegmentButton(title: "Reset Colours", active: false) {
-                    PreviewRules.resetCurveColors()
+                    CurveColors.reset()
                     refresh += 1
                     app.document?.liveChanged()
                 }
@@ -640,21 +637,6 @@ struct SettingsView: View {
                 }
                 Spacer()
                 HelpBadge(text: "Bar Color replaces the colour of item strips in the timeline; without it each strip takes the colour of what it plays.")
-            }
-        }
-    }
-
-    private var rules: some View {
-        Panel(title: "Preview Rules") {
-            ForEach(PreviewRules.all, id: \.key) { rule in
-                HStack(spacing: 6) {
-                    CheckBox(isOn: PreviewRules.isOn(rule.key), label: rule.title) { on in
-                        PreviewRules.set(rule.key, on)
-                        refresh += 1
-                        app.document?.liveChanged()
-                    }
-                    HelpBadge(text: rule.help)
-                }
             }
         }
     }
