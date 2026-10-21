@@ -8,7 +8,7 @@ Built with SwiftUI and Metal; the 3D preview of an effect is the player from [de
 
 ## Building
 
-Clone [dev_ffxiv_avfx_preview](https://github.com/zerobyted/dev_ffxiv_avfx_preview) into `ffxiv-docs/dev_ffxiv_avfx_preview` and run `yarn install` and `yarn build:player` there, then open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. The 2D runtime is a local Swift package in `Packages/VfxRuntime`.
+Open `FViewer.xcodeproj` in Xcode and run the `FViewer` scheme. The 2D runtime is a local Swift package in `Packages/VfxRuntime`.
 
 ### Signing
 
@@ -63,7 +63,7 @@ One particle, emitter or other item on a single page: parameters, texture layers
 
 The viewport plays the effect with the player from dev_ffxiv_avfx_preview, on a mannequin caster and target. Every edit reloads it on the same frame. It follows the reference previewers, not the game itself, so small differences from the game are possible.
 
-The build copies the player from `ffxiv-docs/dev_ffxiv_avfx_preview/dist/player`, so that checkout must be built first (`yarn build:player`).
+The built player and its field statistics are kept in `ffxiv-docs/player`. A checkout of dev_ffxiv_avfx_preview in `ffxiv-docs/dev_ffxiv_avfx_preview` refreshes them from its git hooks after every pull.
 
 ## Textures
 

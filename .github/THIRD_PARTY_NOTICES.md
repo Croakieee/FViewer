@@ -22,7 +22,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## dev_ffxiv_avfx_preview and three.js
 
-The 3D preview is the player of [dev_ffxiv_avfx_preview](https://github.com/zerobyted/dev_ffxiv_avfx_preview). Its build (`dist/player/avfx-player.iife.js`) and its field statistics (`docs/field_stats.json`) are copied into the app when FViewer is built; they are not part of this repository.
+The 3D preview is the player of [dev_ffxiv_avfx_preview](https://github.com/zerobyted/dev_ffxiv_avfx_preview). Its build (`ffxiv-docs/player/avfx-player.iife.js`) and its field statistics (`ffxiv-docs/player/field_stats.json`) are kept in this repository and copied into the app.
 
 The player bundles [three.js](https://github.com/mrdoob/three.js), distributed under the MIT License:
 

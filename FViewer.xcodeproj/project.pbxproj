@@ -72,7 +72,7 @@
 				4E87A467307BDFDF00F9F69E /* Sources */,
 				4E87A468307BDFDF00F9F69E /* Frameworks */,
 				4E87A469307BDFDF00F9F69E /* Resources */,
-				4E87D0013090000000F9F69E /* Copy dev_ffxiv_avfx_preview Files */,
+				4E87D0013090000000F9F69E /* Copy Player */,
 			);
 			buildRules = (
 			);
@@ -138,7 +138,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		4E87D0013090000000F9F69E /* Copy dev_ffxiv_avfx_preview Files */ = {
+		4E87D0013090000000F9F69E /* Copy Player */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -146,12 +146,12 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/ffxiv-docs/dev_ffxiv_avfx_preview/dist/player/avfx-player.iife.js",
-				"$(SRCROOT)/ffxiv-docs/dev_ffxiv_avfx_preview/docs/field_stats.json",
+				"$(SRCROOT)/ffxiv-docs/player/avfx-player.iife.js",
+				"$(SRCROOT)/ffxiv-docs/player/field_stats.json",
 				"$(SRCROOT)/PlayerHost/host.html",
 				"$(SRCROOT)/PlayerHost/host.js",
 			);
-			name = "Copy dev_ffxiv_avfx_preview Files";
+			name = "Copy Player";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -162,7 +162,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nOUT=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Player\"\nmkdir -p \"$OUT\"\ncp \"$SRCROOT/ffxiv-docs/dev_ffxiv_avfx_preview/dist/player/avfx-player.iife.js\" \"$SRCROOT/ffxiv-docs/dev_ffxiv_avfx_preview/docs/field_stats.json\" \"$SRCROOT/PlayerHost/host.html\" \"$SRCROOT/PlayerHost/host.js\" \"$OUT/\"\n";
+			shellScript = "set -e\nOUT=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Player\"\nmkdir -p \"$OUT\"\ncp \"$SRCROOT/ffxiv-docs/player/avfx-player.iife.js\" \"$SRCROOT/ffxiv-docs/player/field_stats.json\" \"$SRCROOT/PlayerHost/host.html\" \"$SRCROOT/PlayerHost/host.js\" \"$OUT/\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

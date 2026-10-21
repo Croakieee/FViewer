@@ -4,8 +4,7 @@
 
 1. Open `FViewer.xcodeproj` in Xcode 26 or later.
 2. Copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and set your team and a bundle ID suffix.
-3. Clone [dev_ffxiv_avfx_preview](https://github.com/zerobyted/dev_ffxiv_avfx_preview) into `ffxiv-docs/dev_ffxiv_avfx_preview` and run `yarn install` and `yarn build:player` there. The build copies its player and `docs/field_stats.json` into the app.
-4. Run the `FViewer` scheme.
+3. Run the `FViewer` scheme.
 
 Do not pick a team in Signing & Capabilities. If `DEVELOPMENT_TEAM` or `PRODUCT_BUNDLE_IDENTIFIER` shows up in a diff of `project.pbxproj`, remove it before committing.
 

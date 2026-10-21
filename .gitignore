@@ -8,6 +8,9 @@
 !/LICENSE
 !/Packages/
 !/PlayerHost/
+!/ffxiv-docs/
+/ffxiv-docs/*
+!/ffxiv-docs/player/
 !/README.md
 !/Screenshots/
 
