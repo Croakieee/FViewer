@@ -568,6 +568,9 @@ extension AppModel {
 
     func loadPreviewSettings() {
         let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("rule.") || key.hasPrefix("preview.bloom.") || key == "preview.scene" {
+            defaults.removeObject(forKey: key)
+        }
         if let parts = defaults.string(forKey: "preview.color")?.split(separator: ",").compactMap({ Double($0) }), parts.count == 3 {
             PreviewSettings.backgroundColor = SIMD3(parts[0], parts[1], parts[2])
         }

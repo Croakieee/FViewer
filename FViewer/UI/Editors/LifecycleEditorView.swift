@@ -62,6 +62,7 @@ struct LifecycleEditorView: View {
                          help: ending ? "Its timeline releases loops or kills what the scheduler started: the game sends it to end the effect"
                              : "Its timeline starts something: the game sends it to switch the effect into a state")
                 }
+                if let state = clock.timelineStates[slot.timeline] { LifecycleBadge(state: state) }
             } else {
                 Text("empty").font(Theme.small).foregroundStyle(Theme.dim)
             }
@@ -207,6 +208,7 @@ struct LifecycleEditorView: View {
                         document.selectionID = "avfx/TmLn/\($0)"
                     }
                     .frame(width: 150)
+                    if let state = clock.timelineStates[current] { LifecycleBadge(state: state) }
                     Spacer(minLength: 0)
                     if count > 0 { addClipMenu }
                 }

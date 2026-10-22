@@ -73,6 +73,7 @@
 				4E87A468307BDFDF00F9F69E /* Frameworks */,
 				4E87A469307BDFDF00F9F69E /* Resources */,
 				4E87D0013090000000F9F69E /* Copy Player */,
+				4E87D0023090000000F9F69E /* Install Player Hooks */,
 			);
 			buildRules = (
 			);
@@ -138,6 +139,30 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		4E87D0023090000000F9F69E /* Install Player Hooks */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/ffxiv-docs/hooks/player-hook",
+			);
+			name = "Install Player Hooks";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/ffxiv-docs/dev_ffxiv_avfx_preview/.git/hooks/post-merge",
+				"$(SRCROOT)/ffxiv-docs/dev_ffxiv_avfx_preview/.git/hooks/post-checkout",
+				"$(SRCROOT)/ffxiv-docs/dev_ffxiv_avfx_preview/.git/hooks/post-rewrite",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nREPO=\"$SRCROOT/ffxiv-docs/dev_ffxiv_avfx_preview\"\nHOOKS=\"$REPO/.git/hooks\"\nif [ ! -f \"$REPO/.git/HEAD\" ]; then\n  rmdir \"$HOOKS\" \"$REPO/.git\" \"$REPO\" 2>/dev/null || true\n  exit 0\nfi\nfor name in post-merge post-checkout post-rewrite; do\n  cmp -s \"$SRCROOT/ffxiv-docs/hooks/player-hook\" \"$HOOKS/$name\" || cp \"$SRCROOT/ffxiv-docs/hooks/player-hook\" \"$HOOKS/$name\"\n  chmod +x \"$HOOKS/$name\"\ndone\n";
+			showEnvVarsInLog = 0;
+		};
 		4E87D0013090000000F9F69E /* Copy Player */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;

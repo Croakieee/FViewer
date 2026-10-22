@@ -11,6 +11,7 @@
 !/ffxiv-docs/
 /ffxiv-docs/*
 !/ffxiv-docs/player/
+!/ffxiv-docs/hooks/
 !/README.md
 !/Screenshots/
 

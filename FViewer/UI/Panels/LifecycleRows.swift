@@ -51,6 +51,14 @@ struct TimelineLifecycleRows: View {
         let sources = document.sources(of: timeline)
         let stoppers = document.clipsTargeting(timeline)
         VStack(alignment: .leading, spacing: 3) {
+            if let state = clock.timelineStates[timeline] {
+                HStack(spacing: 6) {
+                    Text("Now").font(Theme.small).foregroundStyle(Theme.dim).frame(width: 60, alignment: .leading)
+                    LifecycleBadge(state: state)
+                    Spacer()
+                }
+                .frame(height: 20)
+            }
             Text("Started by").font(Theme.small).foregroundStyle(Theme.dim)
             if sources.isEmpty {
                 Text("Nothing starts this timeline: link it to a scheduler item or a trigger").font(Theme.small).foregroundStyle(Theme.changed)
@@ -79,6 +87,36 @@ struct TimelineLifecycleRows: View {
                 }
             }
         }
+    }
+}
+
+struct LifecycleBadge: View {
+    let state: String
+
+    static func color(_ state: String) -> Color {
+        switch state {
+        case "held": return Color(red: 1, green: 0.8, blue: 0.3)
+        case "fading": return Color(red: 0.95, green: 0.42, blue: 0.38)
+        case "released": return Color(red: 0.45, green: 0.8, blue: 0.5)
+        default: return Theme.accent
+        }
+    }
+
+    static func help(_ state: String) -> String {
+        switch state {
+        case "held": return "Held: loops repeat until something releases them (Unlock Loop Point, End, or a Release event)"
+        case "fading": return "Fading: a Kill clip is fading it out"
+        case "released": return "Released: loops are let go, it plays to the end"
+        default: return "Playing"
+        }
+    }
+
+    var body: some View {
+        Text(state).font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.black.opacity(0.8))
+            .padding(.horizontal, 5)
+            .frame(height: 14)
+            .background(Capsule().fill(LifecycleBadge.color(state)))
+            .help(LifecycleBadge.help(state))
     }
 }
 

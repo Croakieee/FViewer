@@ -286,6 +286,12 @@ struct SequencerView: View {
                 }
                 headerMenu("Playback") {
                     Button { clock.loop.toggle() } label: { toggleLabel("Loop", clock.loop) }
+                    Menu("Loop Delay") {
+                        ForEach([0.0, 5, 10, 15, 30, 60], id: \.self) { value in
+                            Button { clock.loopDelay = value } label: { toggleLabel(value == 0 ? "None" : String(format: "%g frames", value), abs(clock.loopDelay - value) < 0.001) }
+                        }
+                    }
+                    .help("Frames of rest between the end of the effect and the next loop")
                     Menu("Speed") {
                         ForEach([0.1, 0.25, 0.5, 1, 2], id: \.self) { value in
                             Button { clock.speed = value } label: { toggleLabel(value == 1 ? "1×" : String(format: "%g×", value), abs(clock.speed - value) < 0.001) }
@@ -461,6 +467,7 @@ struct SequencerView: View {
     }
 
     private func stateDot(_ row: SequencerRow) -> some View {
+        let state = row.timeline.flatMap { clock.timelineStates[$0] }
         let waiting = !row.started
         let triggers = row.sources.compactMap { source -> Int? in if case .trigger(let index) = source { return index }; return nil }
         let help: String = {
@@ -468,11 +475,11 @@ struct SequencerView: View {
                 if triggers.isEmpty { return "Nothing starts this timeline" }
                 return "Waits for " + triggers.map { EffectDocument.triggerName($0) }.joined(separator: " or ") + ". Fire it with the bolt or add it on the Game Events lane"
             }
-            return "Started by the scheduler"
+            return state.map { LifecycleBadge.help($0) } ?? "Idle on this frame"
         }()
         return Circle()
             .strokeBorder(waiting ? Theme.dim : Color.clear, lineWidth: 1)
-            .background(Circle().fill(waiting ? Color.clear : Theme.gray(0.3)))
+            .background(Circle().fill(waiting ? Color.clear : state.map { LifecycleBadge.color($0) } ?? Theme.gray(0.3)))
             .frame(width: 7, height: 7)
             .frame(width: 12, height: rowHeight)
             .contentShape(Rectangle())

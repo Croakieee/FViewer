@@ -9,7 +9,7 @@ struct RCurve {
     var color: Bool
 }
 
-struct RCurve3 {
+nonisolated struct RCurve3 {
     var x: RCurve?
     var y: RCurve?
     var z: RCurve?

@@ -29,6 +29,8 @@ final class PlayerSchemeHandler: NSObject, WKURLSchemeHandler {
             serveGame(task, url, rest)
         case "doc":
             answer(task, url, bridge?.documentData(rest), mime: "application/octet-stream")
+        case "file":
+            load(task, url, parts.count > 1 ? bridge?.sharedFile(parts[1]) : nil)
         default:
             answer(task, url, nil, mime: "")
         }

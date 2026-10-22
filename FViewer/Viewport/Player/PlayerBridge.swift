@@ -17,6 +17,7 @@ final class PlayerMessageProxy: NSObject, WKScriptMessageHandler {
 
 final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
     static let protocolVersion = 1
+    static let followTolerance = 3.0
     static weak var main: PlayerBridge?
     private static let drivers = NSMapTable<NSString, PlayerBridge>.strongToWeakObjects()
 
@@ -50,7 +51,12 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
     private var libraryToken = -1
     private var schemaCache: (revision: Int, schema: REffectSchema)?
     private var pushQueued = false
-    private var outbox: [(object: String, method: String, args: [Any])] = []
+    private var outbox: [(object: String, method: String, args: [Any], done: ((Any?) -> Void)?)] = []
+    private var sharedFiles: [String: URL] = [:]
+    private var sharedTokens: [String: String] = [:]
+    private var appliedCharacter: String?
+    @Published private(set) var characterClips: [CharacterClip] = []
+    @Published private(set) var characterStatus = ""
     private var pumping = false
 
     func attach(_ webView: WKWebView) {
@@ -88,6 +94,7 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         clock.$startFrame.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
         clock.$endFrame.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
         clock.$loop.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
+        clock.$loopDelay.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
         clock.$lockSeed.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
         clock.$seed.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
         clock.$speed.dropFirst().sink { _ in refresh() }.store(in: &clockBindings)
@@ -111,11 +118,12 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         apply("fvHost", "setSeed", [clock.seed])
         apply("avfxHost", "setView", [viewSettings(app)])
         apply("avfxHost", "setStage", [stageSettings(app)])
+        pushCharacter()
         apply("avfxHost", "setHidden", [hidden(document)])
         apply("avfxHost", "setSpeed", [min(max(clock.speed, 0), 2)])
         apply("fvHost", "setEvents", [clock.events.map(PlayerBridge.event)])
-        let end = clock.endFrame ?? max(document.duration, clock.lastEventFrame + 1)
-        apply("fvHost", "setPlayback", [["start": clock.startFrame, "end": end, "loop": clock.loop, "lockSeed": clock.lockSeed]])
+        let end = clock.endFrame ?? 0
+        apply("fvHost", "setPlayback", [["start": clock.startFrame, "end": end, "loop": clock.loop, "loopDelay": clock.loopDelay, "lockSeed": clock.lockSeed]])
         if openedDocument != document.id {
             libraryToken = app.libraryToken
             open(document)
@@ -137,7 +145,7 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         let hex = String(format: "#%02x%02x%02x", Int((min(max(color.x, 0), 1) * 255).rounded()),
                          Int((min(max(color.y, 0), 1) * 255).rounded()), Int((min(max(color.z, 0), 1) * 255).rounded()))
         return ["background": hex, "toneMapping": look.toneMap, "exposure": Double(look.exposure), "lightIntensity": Double(look.lightIntensity),
-                "floor": app.showFloor, "relief": app.showRelief, "grid": app.showFloor, "loop": false, "wireframe": app.effectShading != 0, "emitters": app.showEmitters]
+                "floor": app.showFloor, "relief": app.showRelief, "grid": app.showFloor, "wireframe": app.effectShading != 0, "emitters": app.showEmitters]
     }
 
     private func stageSettings(_ app: AppModel) -> [String: Any] {
@@ -146,7 +154,7 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
             ["motion": m.motion.playerName, "amp": Double(m.amplitude), "period": Double(m.period), "jump": m.jump,
                     "jumpHeight": Double(m.jumpHeight), "jumpPeriod": Double(m.jumpPeriod)]
         }
-        return ["showCaster": app.showBindPoints, "bindMarkers": app.showBindPoints, "showTarget": stage.showTarget, "distance": Double(stage.distance),
+        return ["showCaster": app.showBindPoints || PreviewSettings.activeModel != nil, "bindMarkers": app.showBindPoints, "showTarget": stage.showTarget, "distance": Double(stage.distance),
                 "side": Double(stage.side), "face": stage.faceEachOther, "casterMotion": mover(stage.caster), "targetMotion": mover(stage.target)]
     }
 
@@ -230,6 +238,42 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
 
     func documentData(_ key: String) -> Data? { documents.last { $0.key == key }?.data }
 
+    func sharedFile(_ token: String) -> URL? { sharedFiles[token] }
+
+    private func share(_ file: URL) -> String {
+        let token = sharedTokens[file.path] ?? String(sharedTokens.count + 1)
+        sharedTokens[file.path] = token
+        sharedFiles[token] = file
+        let name = file.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "file"
+        return "\(PlayerSchemeHandler.scheme)://app/file/\(token)/\(name)"
+    }
+
+    private func pushCharacter() {
+        let model = PreviewSettings.activeModel
+        let key = model?.file.path ?? ""
+        if key != appliedCharacter {
+            appliedCharacter = key
+            characterClips = []
+            characterStatus = model.map { "Loading \($0.name)…" } ?? ""
+            let args: [Any] = model.map { [share($0.file), $0.eid.map { share($0) } ?? NSNull()] } ?? [NSNull(), NSNull()]
+            enqueue("fvHost", "setCharacter", args) { [weak self] result in self?.receiveCharacter(result, model: model) }
+        }
+        let character = PreviewSettings.character
+        apply("fvHost", "setPose", [character.pose, Double(character.poseFrame), character.posePlay])
+    }
+
+    private func receiveCharacter(_ result: Any?, model: CharacterModelEntry?) {
+        guard let model, PreviewSettings.activeModel?.file == model.file else { return }
+        guard let info = result as? [String: Any] else { return }
+        let clips = (info["clips"] as? [[String: Any]] ?? []).compactMap { entry -> CharacterClip? in
+            guard let name = entry["name"] as? String else { return nil }
+            return CharacterClip(name: name, frames: entry["frames"] as? Int ?? 0)
+        }
+        characterClips = clips
+        let points = info["points"] as? Int ?? 0
+        characterStatus = "\(model.name): \(clips.count) poses, \(points) bind points" + (model.eid == nil ? " (no .eid found, the mannequin's points)" : "")
+    }
+
     func libraryFile(_ path: String) -> URL? {
         guard let url = app?.textureURL(path), url.pathExtension.lowercased() != "png" else { return nil }
         return url
@@ -307,8 +351,8 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         enqueue(object, method, args)
     }
 
-    private func enqueue(_ object: String, _ method: String, _ args: [Any]) {
-        outbox.append((object, method, args))
+    private func enqueue(_ object: String, _ method: String, _ args: [Any], done: ((Any?) -> Void)? = nil) {
+        outbox.append((object, method, args, done))
         pump()
     }
 
@@ -319,7 +363,8 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
             while let self {
                 if !self.outbox.isEmpty {
                     let next = self.outbox.removeFirst()
-                    await self.perform(next.object, next.method, next.args)
+                    let result = await self.perform(next.object, next.method, next.args)
+                    next.done?(result)
                 } else if let target = self.seekTarget {
                     self.seekTarget = nil
                     await self.perform("fvHost", "seekTo", [target.frame, target.play])
@@ -332,12 +377,18 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         }
     }
 
-    private func perform(_ object: String, _ method: String, _ args: [Any]) async {
+    @discardableResult
+    private func perform(_ object: String, _ method: String, _ args: [Any]) async -> Any? {
         do {
-            _ = try await call(object, method, args)
+            return try await call(object, method, args)
         } catch {
             if method == "open" || method == "reload" { loading = false }
-            failure = "\(method): \(error.localizedDescription)"
+            if method == "setCharacter" {
+                characterStatus = "The model could not be loaded: \(error.localizedDescription)"
+            } else {
+                failure = "\(method): \(error.localizedDescription)"
+            }
+            return nil
         }
     }
 
@@ -361,9 +412,18 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
             applied = [:]
             openedDocument = nil
             failure = nil
+            appliedCharacter = nil
             push()
         case "frame":
             receiveFrame(event)
+        case "density":
+            guard isDriver, let document, let series = event["series"] as? [String: [Double]] else { return }
+            document.density = series.mapValues { $0.map(Float.init) }
+            document.densityRevision = document.previewRevision
+        case "timelines":
+            guard isDriver, let clock = document?.clock, let states = event["states"] as? [String: String] else { return }
+            let next = Dictionary(uniqueKeysWithValues: states.compactMap { key, value in Int(key).map { ($0, value) } })
+            if clock.timelineStates != next { clock.timelineStates = next }
         case "ended":
             if isDriver { document?.clock.playing = false }
         case "loaded":
@@ -391,7 +451,11 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         let emitters = event["emitters"] as? Int ?? 0
         if self.particles != particles { self.particles = particles }
         if self.emitters != emitters { self.emitters = emitters }
-        guard !seeking, isDriver, let frame = event["frame"] as? Double, let clock = document?.clock, clock.seekToken == seekToken else { return }
+        guard !seeking, let frame = event["frame"] as? Double, let clock = document?.clock, clock.seekToken == seekToken else { return }
+        guard isDriver else {
+            if clock.playing, abs(frame - clock.time) > PlayerBridge.followTolerance { seek(clock.time, play: true) }
+            return
+        }
         reportedFrame = frame
         clock.follow(frame, publish: !(event["playing"] as? Bool ?? true))
     }

@@ -48,9 +48,32 @@ struct PreviewLook: Equatable, Codable {
     var lightIntensity: Float = 4
 }
 
+struct PreviewCharacter: Equatable, Codable {
+    var model = ""
+    var pose = ""
+    var poseFrame: Float = 0
+    var posePlay = false
+}
+
+struct CharacterClip: Hashable {
+    let name: String
+    let frames: Int
+}
+
+struct CharacterModelEntry: Equatable {
+    let name: String
+    let file: URL
+    let eid: URL?
+}
+
 enum PreviewSettings {
     static var look = PreviewLook()
     static var stage = PreviewStage()
+    static var character = PreviewCharacter()
+    static var modelsFolder: URL?
+    static var models: [CharacterModelEntry] = []
     static var backgroundColor: SIMD3<Double>?
     static var token = 0
+
+    static var activeModel: CharacterModelEntry? { models.first { $0.name == character.model } }
 }

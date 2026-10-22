@@ -215,6 +215,7 @@ struct PreviewMenu: View {
 
 struct StageMenu: View {
     @EnvironmentObject var app: AppModel
+    @ObservedObject var bridge: PlayerBridge
     @State private var shown = false
 
     private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -252,6 +253,46 @@ struct StageMenu: View {
         .allowsHitTesting(m.jump)
     }
 
+    @ViewBuilder private var characterRows: some View {
+        let character = PreviewSettings.character
+        let models = PreviewSettings.models
+        let active = PreviewSettings.activeModel
+        Text("Caster").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+        row("Model") {
+            ChoiceField(choices: [FieldChoice(name: "Mannequin", value: -1)] + models.enumerated().map { FieldChoice(name: $0.element.name, value: $0.offset) },
+                        value: models.firstIndex { $0.name == character.model } ?? -1) { value in
+                app.setCharacter { $0.model = models.indices.contains(value) ? models[value].name : "" }
+            }
+        }
+        .help("The figure the effect binds to: the mannequin, or a character model (.glb of ffxiv_mdls) with its skeleton's bind points")
+        row("Folder") {
+            Text(PreviewSettings.modelsFolder?.path ?? "Not chosen").font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).truncationMode(.head)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            SegmentButton(title: "Choose…", active: false) { app.chooseModelsFolder() }
+        }
+        .help("Folder with the .glb models: _glb, _models or monster folders inside it are searched, and the skeleton bind points (.eid) next to it in chara/")
+        if active != nil {
+            row("Pose") {
+                ChoiceField(choices: [FieldChoice(name: "Rest Pose", value: -1)] + bridge.characterClips.enumerated().map { FieldChoice(name: "\($0.element.name) · \($0.element.frames) f", value: $0.offset) },
+                            value: bridge.characterClips.firstIndex { $0.name == character.pose } ?? -1) { value in
+                    app.setCharacter { $0.pose = bridge.characterClips.indices.contains(value) ? bridge.characterClips[value].name : "" }
+                }
+            }
+            row("Pose Frame") {
+                NumberField(label: nil, value: Double(character.poseFrame), suffix: " f", step: 1, digits: 0, onLive: { v in app.setCharacter { $0.poseFrame = Float(v) } },
+                            onCommit: { _, next in app.setCharacter { $0.poseFrame = Float(next) } })
+            }
+            .opacity(character.pose.isEmpty || character.posePlay ? 0.4 : 1)
+            .allowsHitTesting(!character.pose.isEmpty && !character.posePlay)
+            CheckBox(isOn: character.posePlay, label: "Play the Pose on the Effect's Clock") { on in app.setCharacter { $0.posePlay = on } }
+                .opacity(character.pose.isEmpty ? 0.4 : 1)
+                .allowsHitTesting(!character.pose.isEmpty)
+        }
+        if !bridge.characterStatus.isEmpty {
+            Text(bridge.characterStatus).font(Theme.small).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         let stage = PreviewSettings.stage
         let moving = stage.caster.motion != .still || stage.target.motion != .still || stage.caster.jump || stage.target.jump
@@ -268,6 +309,8 @@ struct StageMenu: View {
         .help("Caster and target mannequins the effect binds to: where the target stands and how both move on the effect's clock")
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
+                characterRows
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
                 Text("Target").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
                 CheckBox(isOn: stage.showTarget, label: "Show Target") { on in app.setStage { $0.showTarget = on } }
                 row("Distance") { number(stage.distance, " m", 0.1) { $0.distance = $1 } }
@@ -476,7 +519,7 @@ struct ViewportPanel: View {
                 if showEffect {
                     HelpBadge(text: "Drag: orbit\n⇧ or ⌘ Drag, or right drag: pan\nScroll: zoom\n1 / 3 / 7: front, right, top\n. : reset view")
                     PreviewMenu()
-                    StageMenu()
+                    StageMenu(bridge: bridge)
                     GizmoMenu()
                     isolateButton
                     playerShadingButtons

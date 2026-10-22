@@ -46,6 +46,7 @@ final class PlaybackClock: ObservableObject {
     @Published var playing = true { didSet { if playing, !oldValue { resumed = true } } }
     private var resumed = false
     @Published var loop = true
+    @Published var loopDelay: Double = 0
     @Published var endFrame: Double?
     @Published var startFrame: Double = 0
     @Published var speed: Double = 1
@@ -67,6 +68,7 @@ final class PlaybackClock: ObservableObject {
     func isPlayed(_ event: PreviewEvent) -> Bool { !event.muted }
 
     var playedEvents: [PreviewEvent] { events.filter(isPlayed) }
+    @Published var timelineStates: [Int: String] = [:]
     var restartToken = 0
     private var lastTick: Double = 0
 
