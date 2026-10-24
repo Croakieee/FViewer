@@ -52,7 +52,8 @@ struct FViewerApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Menu("New Effect") {
-                    Button("Blank…") { app.newEffect(template: "blank") }.keyboardShortcut(AppShortcuts.key("new"))
+                    Button("One Layer…") { app.newEffect(template: "blank", layer: true) }.keyboardShortcut(AppShortcuts.key("new"))
+                    Button("Blank…") { app.newEffect(template: "blank") }
                     Button("Weapon…") { app.newEffect(template: "weapon") }
                 }
                 Button("Open File…") { app.openFilePanel() }.keyboardShortcut(AppShortcuts.key("open"))

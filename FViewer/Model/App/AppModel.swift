@@ -223,21 +223,29 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func newEffect(template: String) {
-        guard let source = Bundle.main.url(forResource: "template_" + template, withExtension: "avfx") else {
-            errorMessage = "The \(template) template is missing from the app bundle"
-            return
-        }
+    func newEffect(template: String, layer: Bool = false) {
         let panel = NSSavePanel()
         panel.title = "New Effect"
         panel.nameFieldStringValue = "new_effect.avfx"
         panel.directoryURL = libraryRoot ?? document?.url.deletingLastPathComponent()
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        createEffect(at: url, template: template, layer: layer)
+    }
+
+    func createEffect(at url: URL, template: String, layer: Bool) {
+        guard let source = Bundle.main.url(forResource: "template_" + template, withExtension: "avfx") else {
+            errorMessage = "The \(template) template is missing from the app bundle"
+            return
+        }
         do {
             try Data(contentsOf: source).write(to: url, options: .atomic)
             EffectDocument.markOwned(url)
             documents[url] = nil
             open(url)
+            if layer, let opened = document, opened.url == url {
+                opened.addLayer()
+                save()
+            }
             if let root = libraryRoot, url.path.hasPrefix(root.path) { setLibrary(root) }
         } catch {
             errorMessage = error.localizedDescription
@@ -1165,6 +1173,21 @@ final class AppModel: ObservableObject {
                 errorMessage = "\(url.lastPathComponent): \(error.localizedDescription)"
             }
             return root.childrenNamed("Tex").count - 1
+        }
+    }
+
+    func importLayerTexture(_ layer: AvfxBlock, in document: EffectDocument) {
+        let panel = NSOpenPanel()
+        panel.title = "Import Texture"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.prompt = "Import"
+        panel.message = "PNG, JPEG, TIFF, DDS, .atex or .tex"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        document.batch("Import Texture") {
+            if let index = addTextureAsset(url, to: document) { document.writeLayerTexture(layer, index: index) }
         }
     }
 

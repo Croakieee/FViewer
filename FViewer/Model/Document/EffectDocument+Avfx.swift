@@ -41,6 +41,7 @@ extension EffectDocument {
         let effect = OutlineNode(id: "avfx", title: title, symbol: "sparkles", tint: .effect,
                                  payload: .avfx(block: root, cls: "AvfxMain", record: nil))
         var result = [effect]
+        let used = referencedIndices(root)
         for folder in EffectDocument.folders {
             let blocks = root.childrenNamed(folder.tag)
             if blocks.isEmpty { continue }
@@ -48,8 +49,13 @@ extension EffectDocument {
                                     symbol: "folder", tint: folder.tint, payload: .group)
             for (i, block) in blocks.enumerated() {
                 let cls = catalog.classOf(block, in: "AvfxMain", parentBlock: root)
-                group.children.append(avfxNode(block, cls, id: "avfx/\(folder.tag)/\(i)", index: i, parentClass: "AvfxMain",
-                                               symbol: folder.symbol, tint: folder.tint, owner: root))
+                let node = avfxNode(block, cls, id: "avfx/\(folder.tag)/\(i)", index: i, parentClass: "AvfxMain",
+                                    symbol: folder.symbol, tint: folder.tint, owner: root)
+                if used[folder.tag]?.contains(i) == false { markUnused(node, tag: folder.tag, index: i) }
+                group.children.append(node)
+            }
+            if let limit = EffectDocument.gameLimits[folder.tag], blocks.count > limit {
+                group.warning = "\(blocks.count) \(folder.title.lowercased()): game files have up to ~\(limit)"
             }
             if blocks.count == 1 && folder.tag == "Schd" {
                 result.append(group.children[0])
@@ -57,6 +63,7 @@ extension EffectDocument {
                 result.append(group)
             }
         }
+        applyChainWarnings(result, root)
         return result
     }
 
@@ -153,7 +160,7 @@ extension EffectDocument {
             if listTag != "Trgr", let itemClass {
                 group.actions = [NodeAction(id: group.id + "!add", title: "Add Item", symbol: "plus") { [weak self] in
                     self?.addRecord(block, list: listTag, cls: itemClass, id: id)
-                }]
+                }] + linkedAddActions(block, list: listTag, groupID: group.id)
             }
             for (i, record) in records.enumerated() {
                 let item = recordNode(record, list: last, cls: itemClass, id: "\(id)/\(listTag)/\(i)", index: i, owner: block.tag, listTag: listTag)
@@ -296,7 +303,16 @@ extension EffectDocument {
         if AvfxCatalog.typeTags.contains(block.tag), let enumName = def?.enumName {
             let choices = (catalog.enums[enumName] ?? []).map { FieldChoice(name: $0.name, value: $0.value) }
             return PropField(id: id, label: label, tag: block.tag, kind: .choice(choices), read: { .int(block.intValue) },
-                             write: { [weak self] in if case .int(let v) = $0 { self?.applyType(block, ownerClass: cls, value: v) } })
+                             write: { [weak self] in
+                                 guard case .int(let v) = $0, let self else { return }
+                                 let before = self.catalog.enumCaseName(enumName, block.intValue) ?? "\(block.intValue)"
+                                 let after = self.catalog.enumCaseName(enumName, v) ?? "\(v)"
+                                 let hadData = block.parent?.child("Data") != nil
+                                 self.applyType(block, ownerClass: cls, value: v)
+                                 if hadData, before != after {
+                                     AppDelegate.model?.notice = "\(label) is now \(after): the \(before) settings were dropped. Undo brings them back"
+                                 }
+                             })
         }
         switch base {
         case "AvfxBool":
@@ -356,7 +372,13 @@ extension EffectDocument {
         return blocks.flatMap { block -> [PropField] in
             let n = seen[block.tag, default: 0]
             seen[block.tag] = n + 1
-            if list == nil, let target = EffectDocument.indexListTarget(block, cls: cls) { return indexListFields(block, target: target, id: id) }
+            if list == nil, let target = EffectDocument.indexListTarget(block, cls: cls) {
+                return indexListFields(block, target: target, id: id).map { field in
+                    var field = field
+                    field.stat = cls.map { $0 + "." + block.tag }
+                    return field
+                }
+            }
             guard var field = avfxField(block, cls: cls, id: "\(id)#\(block.tag)\(n)", list: list) else { return [] }
             field.stat = cls.map { $0 + "." + block.tag }
             if list == nil, field.write != nil, let parent = block.parent, !AvfxCatalog.typeTags.contains(block.tag) {
@@ -376,7 +398,7 @@ extension EffectDocument {
 
     private func indexListFields(_ block: AvfxBlock, target: String, id: String) -> [PropField] {
         let choices = referenceChoices(tag: target == "Tex" ? "TxNo" : "MdNo", cls: target == "Tex" ? nil : "AvfxEmitterDataModel", list: nil) ?? []
-        let title = target == "Tex" ? "Mask Texture" : "Model"
+        let title = target == "Tex" ? "Texture" : "Model"
         return block.data.indices.map { position in
             var field = PropField(id: "\(id)#\(block.tag)@\(position)", label: "\(title) \(position + 1)", tag: block.tag, kind: .choice(choices),
                                   read: { position < block.data.count && block.data[position] != 255 ? .int(Int(block.data[position])) : .int(-1) },
@@ -715,6 +737,7 @@ extension EffectDocument {
             let id = "avfx/TmLn/\(t)"
             var children: [SequencerRow] = []
             let records = timeline.children?.last { $0.tag == "Item" && $0.children != nil }?.records() ?? []
+            let loopFrom = timeline.int("LpSt"), loopTo = timeline.int("LpEd")
             for (i, record) in records.enumerated() {
                 let start = base + Double(recordInt(record, "StTm", 0))
                 let endTime = recordInt(record, "EdTm", 0)
@@ -749,6 +772,10 @@ extension EffectDocument {
                 row.base = base
                 row.started = starts[t] != nil
                 row.timeline = t
+                if !open, life > 0, start + life < end { row.lifeEnd = start + life }
+                if loopTo > loopFrom, loopFrom >= 0, recordInt(record, "StTm", 0) > loopTo {
+                    row.neverRuns = "Starts after the timeline's Loop End (\(loopTo)): the loop goes back to \(loopFrom) before it, so it never runs"
+                }
                 if emitter < 0, clip >= 0, clip < clipBlocks.count { row.clip = EffectDocument.clipSummary(clipBlocks[clip]) }
                 row.densityKey = emitter >= 0 ? "e\(emitter)" : "-"
                 if emitter >= 0, emitter < emitters.count {

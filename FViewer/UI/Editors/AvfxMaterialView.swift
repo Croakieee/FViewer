@@ -41,7 +41,7 @@ struct AvfxMaterialView: View {
     private func field(_ layer: Layer, _ tag: String) -> PropField? { layer.fields.first { $0.tag == tag } }
 
     private func textureFields(_ layer: Layer) -> [PropField] {
-        layer.fields.filter { $0.tag == "TxNo" || $0.tag.hasPrefix("TLst") || $0.label.hasPrefix("Mask Texture") }
+        layer.fields.filter { $0.tag == "TxNo" || $0.tag.hasPrefix("TLst") }
     }
 
     private func textureIndices(_ layer: Layer) -> [Int] { textureFields(layer).map { Int(safe: $0.read().number.rounded()) }.filter { $0 >= 0 } }
@@ -80,7 +80,7 @@ struct AvfxMaterialView: View {
             return
         }
         guard index >= 0 else { return }
-        if let add = layer.node.actions.first(where: { $0.title == "Add Mask Texture" }) {
+        if let add = layer.node.actions.first(where: { $0.title == "Add Texture Slot" }) {
             add.perform()
         } else if let create = document.missingFields(for: layer.node).first(where: { $0.title == "Texture Index" }) {
             create.create()

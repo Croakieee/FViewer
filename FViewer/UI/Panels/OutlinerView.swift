@@ -33,6 +33,9 @@ struct OutlinerView: View {
             EditorHeader(symbol: "list.bullet.indent", title: "Outliner") {
                 if document.format == .avfx {
                     Menu {
+                        Button("Layer") { document.addLayer() }
+                            .help("A particle, an emitter that creates it and a timeline item that runs the emitter, ready to see")
+                        Divider()
                         ForEach(EffectDocument.addableKinds, id: \.tag) { kind in
                             Button(kind.title) { document.addTopLevel(kind.tag) }
                         }
@@ -132,6 +135,9 @@ struct OutlinerView: View {
             Text(node.title).font(Theme.font).foregroundStyle(selected ? .white : Theme.text).lineLimit(1)
             if changes.contains(node.id) { ChangeDot(added: changes.added.contains(node.id)) }
             Spacer(minLength: 4)
+            if let warning = node.warning {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundStyle(Theme.changed).help(warning)
+            }
             Text(node.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
             if let key = node.visibility {
                 let hidden = document.hidden.contains(key)

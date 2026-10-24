@@ -5,7 +5,7 @@ extension EffectDocument {
         let slots = textureSlots
         if let node, let slot = slots.first(where: { $0.nodeID == node.id }) { return slot.path }
         for field in fields {
-            if field.tag == "TxNo" || field.tag.hasPrefix("TLst") || field.label.hasPrefix("Mask Texture"), case .int(let index) = field.read(), index >= 0, index < slots.count {
+            if field.tag == "TxNo" || field.tag.hasPrefix("TLst"), case .int(let index) = field.read(), index >= 0, index < slots.count {
                 return slots[index].path
             }
             if field.tag == "texture", case .text(let name) = field.read() { return name }

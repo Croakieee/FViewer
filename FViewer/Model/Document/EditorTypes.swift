@@ -144,6 +144,7 @@ final class OutlineNode: Identifiable {
     var visibility: VisibilityKey?
     var focus: VisibilityKey?
     var actions: [NodeAction] = []
+    var warning: String?
 
     init(id: String, title: String, detail: String = "", symbol: String, tint: NodeTint, payload: NodePayload) {
         self.id = id
@@ -174,6 +175,8 @@ struct SequencerRow: Identifiable {
     var timeline: Int?
     var sources: [TimelineSource] = []
     var started = true
+    var lifeEnd: Double?
+    var neverRuns: String?
 }
 
 struct TextureSlot: Identifiable {

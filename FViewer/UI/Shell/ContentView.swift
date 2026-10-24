@@ -51,6 +51,7 @@ struct TopBar: View {
             Text("FViewer").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.text)
             menuButton("File") {
                 Menu("New Effect") {
+                    Button("One Layer…") { app.newEffect(template: "blank", layer: true) }
                     Button("Blank…") { app.newEffect(template: "blank") }
                     Button("Weapon…") { app.newEffect(template: "weapon") }
                 }

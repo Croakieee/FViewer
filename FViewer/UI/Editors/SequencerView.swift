@@ -103,6 +103,40 @@ struct SequencerView: View {
         placeAtPlayhead(fresh)
     }
 
+    private func addMenu(_ row: SequencerRow, id: String, timeline: Int) -> some View {
+        let emitters = document.referenceChoices(tag: "EmNo", cls: "AvfxTimelineItem", list: nil)?.filter { $0.value >= 0 } ?? []
+        return Menu {
+            Button("New Layer") { addFresh(to: row, id: id) { document.addLayer(to: timeline) } }
+            Menu("Emitter") {
+                ForEach(emitters, id: \.self) { choice in
+                    Button(choice.name) { addFresh(to: row, id: id) { document.addEmitterItem(to: timeline, emitter: choice.value) } }
+                }
+            }
+            .disabled(emitters.isEmpty)
+            Divider()
+            Button("Empty Item") { addItem(to: row) }
+        } label: {
+            Image(systemName: "plus").font(.system(size: 10)).foregroundStyle(Theme.text).frame(width: 18, height: rowHeight).contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Add to this timeline at the playhead: a new layer (particle, emitter and item), an item for an emitter that exists, or an empty item")
+    }
+
+    private func addFresh(to row: SequencerRow, id: String, _ add: () -> Void) {
+        let before = Set(document.sequencerRows.map(\.id))
+        let previous = document.selectionID
+        add()
+        let chosen = document.selectionID != previous ? document.selectionID : nil
+        if let timeline = row.timeline { collapsed.remove(timeline) }
+        if let fresh = document.sequencerRows.first(where: { !before.contains($0.id) && $0.id.hasPrefix(id + "/") }) {
+            placeAtPlayhead(fresh)
+            if let chosen, chosen.hasPrefix("avfx/Ptcl/") { document.selectionID = chosen }
+        }
+    }
+
     private func addItem(to row: SequencerRow) {
         guard let id = row.nodeID, let add = document.node(id + "/Item")?.actions.first(where: { $0.title == "Add Item" }) else { return }
         let before = Set(document.sequencerRows.map(\.id))
@@ -557,6 +591,17 @@ struct SequencerView: View {
             .help(help)
     }
 
+    private func rowHelp(_ row: SequencerRow) -> String {
+        var lines = [row.label]
+        if let clip = row.clip { lines.append(EffectDocument.clipHelp(clip.code)) }
+        if let never = row.neverRuns { lines.append(never) }
+        if let lifeEnd = row.lifeEnd {
+            lines.append("The emitter's Life ends at frame \(Int(lifeEnd - row.base)), before the item's End: the dark part does nothing")
+        }
+        lines.append("Double-click to rename")
+        return lines.joined(separator: "\n")
+    }
+
     private func rowLabel(_ row: SequencerRow) -> some View {
         let changes = document.changes
         let selected = document.selectionID != nil && document.selectionID == row.nodeID
@@ -581,7 +626,10 @@ struct SequencerView: View {
             Text(row.label).font(isHeader ? .system(size: 11, weight: .semibold) : Theme.font)
                 .foregroundStyle(selected ? .white : Theme.text).lineLimit(1).truncationMode(.middle)
                 .onTapGesture(count: 2) { if let target = renameTarget(row) { AppDelegate.model?.renameNode(target) } }
-                .help(row.label + (row.clip.map { "\n" + EffectDocument.clipHelp($0.code) } ?? "") + "\nDouble-click to rename")
+                .help(rowHelp(row))
+            if row.neverRuns != nil {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 8)).foregroundStyle(Theme.changed).help(row.neverRuns ?? "")
+            }
             if let id = row.nodeID, changes.contains(id) { ChangeDot(added: changes.added.contains(id)) }
             if isHeader, !row.sources.isEmpty {
                 Text(row.sources.map(\.short).joined(separator: " ")).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1).fixedSize()
@@ -591,7 +639,9 @@ struct SequencerView: View {
             if isHeader {
                 fireButton(row)
                 stateDot(row)
-                if let id = row.nodeID, document.node(id + "/Item")?.actions.contains(where: { $0.title == "Add Item" }) == true {
+                if let id = row.nodeID, document.avfxRoot != nil, let timeline = row.timeline {
+                    addMenu(row, id: id, timeline: timeline)
+                } else if let id = row.nodeID, document.node(id + "/Item")?.actions.contains(where: { $0.title == "Add Item" }) == true {
                     channelIcon("plus", on: true, help: "Add an item to this timeline at the playhead") { addItem(to: row) }
                 }
             } else {
@@ -719,7 +769,7 @@ struct SequencerView: View {
         let bar = CGRect(x: x(row.start, width, span), y: top + 3, width: max(x(reach, width, span) - x(row.start, width, span), 3), height: rowHeight - 6)
         let shape = Path(roundedRect: bar, cornerRadius: 3)
         let tint = row.tint == .emitter ? (Appearance.barColor ?? row.tint.color) : row.tint.color
-        let enabled = row.enabledField.map { $0.read() == .bool(true) } ?? true
+        let enabled = (row.enabledField.map { $0.read() == .bool(true) } ?? true) && row.neverRuns == nil
         let strength = (enabled ? 1 : 0.45) * dim
         context.fill(shape, with: .color(tint.opacity((selected ? 0.95 : 0.72) * strength)))
         if !enabled {
@@ -756,6 +806,17 @@ struct SequencerView: View {
                     layer.fill(fill, with: .color(Color.black.opacity(0.42)))
                     layer.stroke(line, with: .color(Color.white.opacity(0.9)), lineWidth: 1)
                 }
+            }
+        }
+        if let lifeEnd = row.lifeEnd {
+            let from = x(lifeEnd, width, span)
+            if from < bar.maxX - 2 {
+                let tail = CGRect(x: from, y: bar.minY, width: bar.maxX - from, height: bar.height)
+                context.drawLayer { layer in
+                    layer.clip(to: shape)
+                    layer.fill(Path(tail), with: .color(Color.black.opacity(0.38)))
+                }
+                context.fill(Path(CGRect(x: from - 0.5, y: bar.minY, width: 1, height: bar.height)), with: .color(Color.black.opacity(0.6)))
             }
         }
         if let loop = row.loop {

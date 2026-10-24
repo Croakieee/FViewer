@@ -15,27 +15,8 @@ extension EffectDocument {
     ]
 
     func addTopLevel(_ tag: String) {
-        guard let root = avfxRoot, let kind = EffectDocument.addableKinds.first(where: { $0.tag == tag }) else { return }
-        let block: AvfxBlock?
-        if tag == "Tex" {
-            block = AvfxBlock(tag: "Tex", data: Array("vfx/common/texture/new_texture.atex".utf8) + [0])
-        } else if tag == "Modl" {
-            block = AvfxBlock(tag: "Modl", children: [])
-        } else {
-            block = AvfxBlock.template(kind.template)
-            if let color = block?.child("Col"), color.children == nil, color.data.isEmpty, let host = block,
-               let at = host.children?.firstIndex(where: { $0 === color }) {
-                host.remove(color)
-                host.insert(AvfxBlock.curveColor(tag: "Col"), at: at)
-            }
-        }
-        guard let block else { return }
-        performStructural("Add " + kind.title) {
-            root.insertTopLevel(block)
-            for reference in EffectDocument.nodeReferences(block) where reference.get() >= root.childrenNamed(reference.target).count {
-                reference.set(-1)
-            }
-        }
+        guard let root = avfxRoot, let kind = EffectDocument.addableKinds.first(where: { $0.tag == tag }), let block = freshTopLevel(tag) else { return }
+        performStructural("Add " + kind.title) { insertFresh(block, into: root) }
         selectionID = "avfx/\(tag)/\(root.childrenNamed(tag).count - 1)"
     }
 
@@ -361,6 +342,7 @@ extension EffectDocument {
         var result: [MissingCurve] = []
         for (position, field) in fields.enumerated() where block.child(field.tag) == nil {
             guard !AvfxCatalog.countTags.contains(field.tag), !AvfxCatalog.typeTags.contains(field.tag) else { continue }
+            if cls == "AvfxParticleTextureColor1", field.tag == "TxNo" { continue }
             if AvfxCatalog.curveClasses.contains(field.baseType) || field.baseType == "AvfxCurve1Axis" { continue }
             guard catalog.freshBlock(field, in: cls) != nil else { continue }
             let created: () -> AvfxBlock = { [catalog] in catalog.freshBlock(field, in: cls) ?? AvfxBlock.leaf(field.tag, int: 0) }
@@ -444,7 +426,7 @@ extension EffectDocument {
             if block.tag != "Modl" {
                 actions.append(NodeAction(id: node.id + "!dup", title: "Duplicate", symbol: "plus.square.on.square") { [weak self] in self?.duplicateTopLevel(block) })
             }
-            actions.append(NodeAction(id: node.id + "!del", title: "Delete", symbol: "trash", destructive: true) { [weak self] in self?.deleteTopLevel(block) })
+            actions.append(NodeAction(id: node.id + "!del", title: "Delete", symbol: "trash", destructive: true) { [weak self] in self?.confirmDelete(block, title: node.title) })
         }
         if parent === avfxRoot, EffectDocument.exchangeTags.contains(block.tag) {
             actions.append(NodeAction(id: node.id + "!export", title: "Export…", symbol: "square.and.arrow.up") { [weak self] in
@@ -515,7 +497,7 @@ extension EffectDocument {
         }
         for child in block.children ?? [] {
             guard let target = EffectDocument.indexListTarget(child, cls: cls), child.data.count < 255 else { continue }
-            let title = target == "Tex" ? "Add Mask Texture" : "Add Model Slot"
+            let title = target == "Tex" ? "Add Texture Slot" : "Add Model Slot"
             actions.append(NodeAction(id: node.id + "!list" + child.tag, title: title, symbol: "plus") { [weak self] in
                 self?.performStructural(title) { child.data.append(255) }
             })

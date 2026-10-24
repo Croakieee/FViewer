@@ -153,6 +153,7 @@ struct FieldRows: View {
         let before = isChanged ? field.flatMap { document.originalValue(of: $0, in: nodeID) } : nil
         var help = field.map { "\($0.label) [\($0.tag)]" } ?? text
         if field?.tag == "SdNo" { help += " · -1 if no sound" }
+        if let note = FieldNotes.text(field?.stat) { help += "\n" + note }
         if isChanged { help += " · was " + (before.map(document.describe) ?? "not in the file") }
         if let field, let stat = FieldStats.stat(field.stat) { help += "\n" + FieldStats.summary(stat, current: field.read(), kind: field.kind) }
         return HStack(spacing: 4) {
@@ -344,7 +345,12 @@ struct InspectorView: View {
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let path = document.texturePath(of: node, fields: sections.flatMap(\.fields)) {
+            if case .avfx(let block, _, let record) = node.payload, record == nil, EffectDocument.isTextureLayer(block) {
+                Panel(title: "Texture", memory: "layertexture") {
+                    LayerTexturePicker(document: document, layer: block)
+                    if let path = document.texturePath(of: node, fields: sections.flatMap(\.fields)) { TexturePreview(path: path) }
+                }
+            } else if let path = document.texturePath(of: node, fields: sections.flatMap(\.fields)) {
                 Panel(title: "Preview") {
                     TexturePreview(path: path)
                     if case .avfx(let block, _, _) = node.payload, block.tag == "Tex", block.children == nil {

@@ -227,7 +227,7 @@ struct LayerStackPanel: View {
     }
 
     private func field(_ fields: [PropField], _ tag: String) -> PropField? {
-        if tag == "TxNo" { return fields.first { $0.tag == "TxNo" } ?? fields.first { $0.label.hasPrefix("Mask Texture") || $0.tag.hasPrefix("TLst") } }
+        if tag == "TxNo" { return fields.first { $0.tag == "TxNo" } ?? fields.first { $0.tag.hasPrefix("TLst") } }
         return fields.first { $0.tag == tag }
     }
 
