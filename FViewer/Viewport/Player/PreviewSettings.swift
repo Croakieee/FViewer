@@ -70,6 +70,14 @@ enum PreviewSettings {
     static var look = PreviewLook()
     static var stage = PreviewStage()
     static var character = PreviewCharacter()
+    static var facing: Float = 0
+
+    static func compassName(_ degrees: Float) -> String {
+        let names = ["South", "South-East", "East", "North-East", "North", "North-West", "West", "South-West"]
+        let step = Int((degrees / 45).rounded())
+        let name = names[((step % 8) + 8) % 8]
+        return degrees.truncatingRemainder(dividingBy: 45) == 0 ? name : "about " + name
+    }
     static var modelsFolder: URL?
     static var models: [CharacterModelEntry] = []
     static var backgroundColor: SIMD3<Double>?

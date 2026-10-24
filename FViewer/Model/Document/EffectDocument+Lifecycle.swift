@@ -51,9 +51,10 @@ nonisolated struct ClipSummary {
     let targets: [TimelineSource]
     let trigger: Int?
     let range: ClosedRange<Int>?
+    var endsEffect = false
 
-    var usesTargets: Bool { ["KILL", "ULLP", "REST", "FADI"].contains(code) }
-    var stops: Bool { code == "KILL" || code == "ULLP" }
+    var usesTargets: Bool { ["KILL", "REST", "FADI"].contains(code) }
+    var stops: Bool { code == "KILL" || code == "ULLP" || code == "END " }
 }
 
 extension EffectDocument {
@@ -86,9 +87,9 @@ extension EffectDocument {
 
     static func clipHelp(_ code: String) -> String {
         switch code {
-        case "KILL": return "Fades out and removes the timelines its targets point to. No targets: everything alive"
-        case "END ": return "Emitters stop creating and every loop is released, so the effect plays out"
-        case "ULLP": return "Releases the loops of the timelines its targets point to, so they play to the end. No targets: everything"
+        case "KILL": return "Fades out what its targets started (a scheduler item or every run of a trigger) over Fade frames; those runs do nothing more. With Allow Show off the whole effect ends after Fade frames, the rest cut off at once. No target and Allow Show on: nothing (measured in the game)"
+        case "END ": return "The whole effect disappears at once, endless particles too, and nothing more is created (measured in the game)"
+        case "ULLP": return "Releases every loop of the effect, particles, emitters and timelines, whatever its targets, so everything plays to its end (measured in the game)"
         case "TRG ": return "Fires a trigger slot, as if the game sent it"
         case "RTRG": return "Fires one random trigger slot from the range"
         case "REST": return "Restarts the timelines its targets point to from their first frame. No targets: the whole effect"
@@ -104,7 +105,7 @@ extension EffectDocument {
         switch code {
         case "KILL":
             return ClipSummary(code: code, name: clipName(code), fade: max(0, ints[0]), targets: ints.dropFirst().compactMap(TimelineSource.init(target:)),
-                               trigger: nil, range: nil)
+                               trigger: nil, range: nil, endsEffect: block.data.f32(20) != 0)
         case "ULLP", "REST":
             return ClipSummary(code: code, name: clipName(code), fade: 0, targets: ints.dropFirst().compactMap(TimelineSource.init(target:)),
                                trigger: nil, range: nil)
@@ -126,9 +127,17 @@ extension EffectDocument {
         if clip.usesTargets {
             var seen = Set<TimelineSource>()
             let unique = clip.targets.filter { seen.insert($0).inserted }
-            text += unique.isEmpty ? " · everything" : " → " + unique.map(\.name).joined(separator: ", ")
+            if !unique.isEmpty {
+                text += " → " + unique.map(\.name).joined(separator: ", ")
+            } else if clip.code == "KILL" {
+                text += clip.endsEffect ? "" : " · no target"
+            } else {
+                text += " · everything"
+            }
         }
+        if clip.code == "ULLP" { text += " · every loop" }
         if clip.code == "KILL", clip.fade > 0 { text += " · fade \(clip.fade)" }
+        if clip.code == "KILL", clip.endsEffect { text += " · ends the effect" }
         if clip.code == "FADI", clip.fade > 0 { text += " · fade in \(clip.fade)" }
         if let trigger = clip.trigger { text += " → Trigger \(trigger)" }
         if let range = clip.range { text += " → Trigger \(range.lowerBound)…\(range.upperBound)" }
@@ -185,7 +194,12 @@ extension EffectDocument {
         for (t, block) in root.childrenNamed("TmLn").enumerated() {
             for (c, clip) in block.childrenNamed("Clip").enumerated() {
                 guard let summary = EffectDocument.clipSummary(clip), summary.stops else { continue }
-                if summary.targets.isEmpty ? t != timeline : summary.targets.contains(where: mine.contains) { result.append((t, c, summary)) }
+                let reaches: Bool
+                switch summary.code {
+                case "KILL": reaches = summary.targets.contains(where: mine.contains) || (summary.endsEffect && t != timeline)
+                default: reaches = t != timeline
+                }
+                if reaches { result.append((t, c, summary)) }
             }
         }
         return result
@@ -204,7 +218,7 @@ extension EffectDocument {
             guard clip >= 0, clip < clips.count, let summary = EffectDocument.clipSummary(clips[clip]) else { continue }
             switch summary.code {
             case "ULLP", "END ": return true
-            case "KILL" where summary.targets.isEmpty || summary.targets.contains(where: { if case .scheduler = $0 { return true }; return false }): return true
+            case "KILL" where summary.endsEffect || summary.targets.contains(where: { if case .scheduler = $0 { return true }; return false }): return true
             default: continue
             }
         }

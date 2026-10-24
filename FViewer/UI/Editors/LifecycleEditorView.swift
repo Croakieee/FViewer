@@ -153,7 +153,8 @@ struct LifecycleEditorView: View {
                         if let target = field(list, suffix: "target\(k)") { FieldControl(document: document, field: target).frame(maxWidth: 200) }
                     }
                     if entry.summary.targets.isEmpty {
-                        Text("all empty: everything alive").font(Theme.small).foregroundStyle(Theme.changed).lineLimit(1)
+                        Text(code == "KILL" ? (entry.summary.endsEffect ? "no target: the whole effect ends" : "no target: does nothing") : "all empty: everything")
+                            .font(Theme.small).foregroundStyle(Theme.changed).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }

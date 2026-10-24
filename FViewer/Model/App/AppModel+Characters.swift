@@ -49,7 +49,17 @@ extension AppModel {
         objectWillChange.send()
     }
 
+    func setFacing(_ degrees: Float) {
+        let value = degrees.isFinite ? degrees.truncatingRemainder(dividingBy: 360) : 0
+        guard value != PreviewSettings.facing else { return }
+        PreviewSettings.facing = value
+        PreviewSettings.token += 1
+        UserDefaults.standard.set(Double(value), forKey: "preview.facing")
+        objectWillChange.send()
+    }
+
     func loadCharacterSettings() {
+        PreviewSettings.facing = Float(UserDefaults.standard.double(forKey: "preview.facing"))
         if let data = UserDefaults.standard.data(forKey: "preview.character"), let character = try? JSONDecoder().decode(PreviewCharacter.self, from: data) {
             PreviewSettings.character = character
         }

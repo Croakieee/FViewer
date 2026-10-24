@@ -145,7 +145,7 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         let hex = String(format: "#%02x%02x%02x", Int((min(max(color.x, 0), 1) * 255).rounded()),
                          Int((min(max(color.y, 0), 1) * 255).rounded()), Int((min(max(color.z, 0), 1) * 255).rounded()))
         return ["background": hex, "toneMapping": look.toneMap, "exposure": Double(look.exposure), "lightIntensity": Double(look.lightIntensity),
-                "floor": app.showFloor, "relief": app.showRelief, "grid": app.showFloor, "wireframe": app.effectShading != 0, "emitters": app.showEmitters]
+                "floor": app.showFloor, "relief": app.showRelief, "worldAxes": app.showWorldAxes, "grid": app.showFloor, "wireframe": app.effectShading != 0, "emitters": app.showEmitters]
     }
 
     private func stageSettings(_ app: AppModel) -> [String: Any] {
@@ -260,6 +260,7 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         }
         let character = PreviewSettings.character
         apply("fvHost", "setPose", [character.pose, Double(character.poseFrame), character.posePlay])
+        apply("fvHost", "setFacing", [Double(PreviewSettings.facing)])
     }
 
     private func receiveCharacter(_ result: Any?, model: CharacterModelEntry?) {

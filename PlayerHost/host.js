@@ -225,6 +225,19 @@
       }
       return info;
     },
+    setFacing(degrees) {
+      const stage = player.stage;
+      if (stage.stage.facing === degrees) return;
+      const effect = player.effect;
+      const time = effect?.time ?? 0;
+      const playing = effect?.playing ?? true;
+      stage.setFacing(degrees);
+      if (!effect) return;
+      player.playScenario(scenario);
+      if (time > 0) player.seek(time);
+      if (playing) player.play();
+      else player.pause();
+    },
     setPose(name, frame, play) {
       const stage = player.stage.stage;
       stage.pose = name ?? '';

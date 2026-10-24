@@ -288,6 +288,12 @@ struct StageMenu: View {
                 .opacity(character.pose.isEmpty ? 0.4 : 1)
                 .allowsHitTesting(!character.pose.isEmpty)
         }
+        row("Facing") {
+            NumberField(label: nil, value: Double(PreviewSettings.facing), suffix: "°", step: 1, digits: 0, onLive: { v in app.setFacing(Float(v)) },
+                        onCommit: { _, next in app.setFacing(Float(next)) })
+            Text(PreviewSettings.compassName(PreviewSettings.facing)).font(Theme.small).foregroundStyle(Theme.dim).frame(width: 78, alignment: .leading)
+        }
+        .help("Where the caster faces, as the game's world directions: 0 south, 90 east, 180 north, 270 west. The whole effect and the mannequins turn about the origin")
         if !bridge.characterStatus.isEmpty {
             Text(bridge.characterStatus).font(Theme.small).foregroundStyle(Theme.dim).fixedSize(horizontal: false, vertical: true)
         }
@@ -335,7 +341,7 @@ struct GizmoMenu: View {
     @EnvironmentObject var app: AppModel
     @State private var shown = false
 
-    private var states: [Bool] { [app.showEmitters, app.showBindPoints, app.showFloor, app.showRelief] }
+    private var states: [Bool] { [app.showEmitters, app.showBindPoints, app.showFloor, app.showRelief, app.showWorldAxes] }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -356,6 +362,8 @@ struct GizmoMenu: View {
                 CheckBox(isOn: app.showBindPoints, label: "Mannequin and bind points") { app.showBindPoints = $0 }
                 CheckBox(isOn: app.showFloor, label: "Floor and grid") { app.showFloor = $0 }
                 CheckBox(isOn: app.showRelief, label: "Uneven ground: steps, ramp, wall") { app.showRelief = $0 }
+                CheckBox(isOn: app.showWorldAxes, label: "World axes in the corner") { app.showWorldAxes = $0 }
+                    .help("The game's world directions in the top left corner: red east, green up, blue south, N north. To compare a preview frame with the game's")
                     .help("Shows how projected decals lie on steps, a slope and a wall ahead of the caster")
             }
             .padding(12)
@@ -418,6 +426,7 @@ struct ViewportPanel: View {
         hasher.combine(app.showBindPoints)
         hasher.combine(app.showFloor)
         hasher.combine(app.showRelief)
+        hasher.combine(app.showWorldAxes)
         hasher.combine(app.libraryToken)
         hasher.combine(PreviewSettings.token)
         return hasher.finalize()

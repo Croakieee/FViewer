@@ -24,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published var showBindPoints = true
     @Published var showFloor = false
     @Published var showRelief = false
+    @Published var showWorldAxes = false
     @Published var themeToken = 0
     @Published var showCatalog = false
     @Published var catalogNote: String?
