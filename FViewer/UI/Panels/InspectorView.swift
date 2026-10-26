@@ -153,13 +153,16 @@ struct FieldRows: View {
         let before = isChanged ? field.flatMap { document.originalValue(of: $0, in: nodeID) } : nil
         var help = field.map { "\($0.label) [\($0.tag)]" } ?? text
         if field?.tag == "SdNo" { help += " · -1 if no sound" }
+        let status = FieldStatus.of(field?.stat)
+        if let status { help += "\n" + status.text }
         if let note = FieldNotes.text(field?.stat) { help += "\n" + note }
         if isChanged { help += " · was " + (before.map(document.describe) ?? "not in the file") }
         if let field, let stat = FieldStats.stat(field.stat) { help += "\n" + FieldStats.summary(stat, current: field.read(), kind: field.kind) }
         return HStack(spacing: 4) {
             Spacer(minLength: 0)
             if isChanged { ChangeDot(added: before == nil) }
-            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
+            if let status { FieldStatusBadge(kind: status) }
+            Text(text).font(Theme.font).foregroundStyle(isChanged ? Theme.changed : status?.hidden == true ? Theme.dim : Theme.text).lineLimit(1).minimumScaleFactor(0.75)
         }
         .frame(width: labelWidth, height: 20)
         .help(help)
@@ -314,6 +317,12 @@ struct InspectorView: View {
             .help(help)
     }
 
+    private func playerNotes(_ id: String) -> [String]? {
+        let parts = id.split(separator: "/")
+        guard parts.count >= 3, parts[0] == "avfx" else { return nil }
+        return document.playerNotes[parts.prefix(3).joined(separator: "/")]
+    }
+
     @ViewBuilder private var properties: some View {
         if let node = document.selectedNode {
             let sections = document.sections(for: node)
@@ -344,6 +353,17 @@ struct InspectorView: View {
                 FlowLayout(spacing: 4) { ForEach(node.actions) { NodeActionButton(action: $0) } }
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let notes = playerNotes(node.id) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(notes, id: \.self) { note in
+                        Label(note, systemImage: "eye.trianglebadge.exclamationmark").font(Theme.small).foregroundStyle(Theme.changed)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help("What the preview player says about this item")
             }
             if case .avfx(let block, _, let record) = node.payload, record == nil, EffectDocument.isTextureLayer(block) {
                 Panel(title: "Texture", memory: "layertexture") {

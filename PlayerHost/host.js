@@ -29,9 +29,34 @@
   let render = { frameCap: 0, fullResolution: true, gameLight: 'day' };
   let drawn = 0;
 
+  const linear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+
   const applyGameLight = () => {
     const kind = player.effect?.constructor;
     if (kind?.GAME_LIGHT_DAY) kind.gameLight = render.gameLight === 'night' ? kind.GAME_LIGHT_NIGHT : kind.GAME_LIGHT_DAY;
+    if (kind?.sceneFog) {
+      const fog = kind.sceneFog;
+      fog.on = !!render.fog;
+      fog.density = render.fogDensity ?? 0.0025;
+      fog.start = render.fogStart ?? 0;
+      const [r, g, b] = render.fogColor ?? [0.702, 0.71, 0.702];
+      fog.color.set(r, g, b);
+    }
+    const scene = player.stage.scene;
+    if (!render.fog) {
+      scene.fog = null;
+      return;
+    }
+    const Color = scene.background?.constructor;
+    if (!Color?.prototype?.getRGB) return;
+    const [r, g, b] = (render.fogColor ?? [0.702, 0.71, 0.702]).map(linear);
+    const density = render.fogDensity ?? 0.0025;
+    const start = render.fogStart ?? 0;
+    const near = 1 - Math.exp(-density * 100);
+    const color = new Color(r, g, b);
+    scene.fog = start > 0
+      ? { isFog: true, name: '', color, near: start, far: start + 100 / Math.max(near, 1e-3), clone() { return this; }, toJSON() { return {}; } }
+      : { isFogExp2: true, name: '', color, density: Math.sqrt(density * 100) / 100, clone() { return this; }, toJSON() { return {}; } };
   };
 
   setInterval(() => {

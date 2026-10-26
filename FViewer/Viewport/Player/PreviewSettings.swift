@@ -52,6 +52,24 @@ struct PreviewRender: Equatable, Codable {
     var frameCap = 0
     var fullResolution = true
     var nightLight = false
+    var fog = false
+    var fogDensity = 0.0025
+    var fogStart = 0.0
+    var fogColor = SIMD3<Double>(0.702, 0.71, 0.702)
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let base = PreviewRender()
+        frameCap = try values.decodeIfPresent(Int.self, forKey: .frameCap) ?? base.frameCap
+        fullResolution = try values.decodeIfPresent(Bool.self, forKey: .fullResolution) ?? base.fullResolution
+        nightLight = try values.decodeIfPresent(Bool.self, forKey: .nightLight) ?? base.nightLight
+        fog = try values.decodeIfPresent(Bool.self, forKey: .fog) ?? base.fog
+        fogDensity = try values.decodeIfPresent(Double.self, forKey: .fogDensity) ?? base.fogDensity
+        fogStart = try values.decodeIfPresent(Double.self, forKey: .fogStart) ?? base.fogStart
+        fogColor = try values.decodeIfPresent(SIMD3<Double>.self, forKey: .fogColor) ?? base.fogColor
+    }
 }
 
 struct PreviewCharacter: Equatable, Codable {

@@ -122,7 +122,9 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         apply("avfxHost", "setView", [viewSettings(app)])
         apply("avfxHost", "setStage", [stageSettings(app)])
         let render = PreviewSettings.render
-        apply("fvHost", "setRender", [["frameCap": render.frameCap, "fullResolution": render.fullResolution, "gameLight": render.nightLight ? "night" : "day"]])
+        apply("fvHost", "setRender", [["frameCap": render.frameCap, "fullResolution": render.fullResolution, "gameLight": render.nightLight ? "night" : "day",
+                                        "fog": render.fog, "fogDensity": render.fogDensity, "fogStart": render.fogStart,
+                                        "fogColor": [render.fogColor.x, render.fogColor.y, render.fogColor.z]]])
         pushCharacter()
         apply("avfxHost", "setHidden", [hidden(document)])
         apply("avfxHost", "setSpeed", [min(max(clock.speed, 0), 2)])
@@ -146,7 +148,8 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
     private func viewSettings(_ app: AppModel) -> [String: Any] {
         let look = PreviewSettings.look
         let shade = AppModel.backgrounds[min(max(app.viewportBackground, 0), AppModel.backgrounds.count - 1)].value
-        let color = PreviewSettings.backgroundColor ?? SIMD3(shade, shade, shade)
+        let render = PreviewSettings.render
+        let color = render.fog ? render.fogColor : PreviewSettings.backgroundColor ?? SIMD3(shade, shade, shade)
         let hex = String(format: "#%02x%02x%02x", Int((min(max(color.x, 0), 1) * 255).rounded()),
                          Int((min(max(color.y, 0), 1) * 255).rounded()), Int((min(max(color.z, 0), 1) * 255).rounded()))
         return ["background": hex, "toneMapping": look.toneMap, "exposure": Double(look.exposure), "lightIntensity": Double(look.lightIntensity),
@@ -441,9 +444,9 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         case "loaded":
             loading = false
             failure = nil
-            warnings = event["warnings"] as? [String] ?? []
+            setWarnings(event["warnings"] as? [String] ?? [])
         case "warnings":
-            warnings = event["warnings"] as? [String] ?? []
+            setWarnings(event["warnings"] as? [String] ?? [])
         case "missing":
             if let path = event["path"] as? String, !missing.contains(path) { missing.append(path) }
         case "camera":
@@ -456,6 +459,21 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         default:
             break
         }
+    }
+
+    private func setWarnings(_ list: [String]) {
+        warnings = list
+        guard isDriver, let document else { return }
+        var notes: [String: [String]] = [:]
+        for warning in list {
+            for (prefix, tag) in [("particle #", "Ptcl"), ("emitter #", "Emit"), ("texture #", "Tex")] where warning.hasPrefix(prefix) {
+                let rest = warning.dropFirst(prefix.count)
+                guard let index = Int(rest.prefix { $0.isNumber }) else { continue }
+                let text = rest.drop { $0.isNumber || $0 == ":" || $0 == " " }
+                notes["avfx/\(tag)/\(index)", default: []].append(String(text))
+            }
+        }
+        if document.playerNotes != notes { document.playerNotes = notes }
     }
 
     private func receiveFrame(_ event: [String: Any]) {

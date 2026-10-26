@@ -560,6 +560,7 @@ struct CurveValueRows: View {
 
     private var headerHelp: String {
         var base = group.title + " [" + group.tag + "]"
+        if let status = FieldStatus.of(group.stat) { base += "\n" + status.text }
         if let note = FieldNotes.text(group.stat) { base += "\n" + note }
         guard let stat = FieldStats.stat(group.stat) else { return base }
         return base + "\n" + FieldStats.summary(stat)
@@ -576,6 +577,7 @@ struct CurveValueRows: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
                 .help(headerHelp)
+            if let status = FieldStatus.of(group.stat) { FieldStatusBadge(kind: status) }
             if changed { ChangeDot() }
             modeMenu(group.channels, CurveValueRows.mode(group))
             if let remove = group.remove {

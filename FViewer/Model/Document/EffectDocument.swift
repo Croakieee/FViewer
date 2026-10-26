@@ -20,6 +20,7 @@ final class EffectDocument: ObservableObject, Identifiable {
     private var dragging = false
     var isDragging: Bool { dragging }
     @Published var density: [String: [Float]] = [:]
+    @Published var playerNotes: [String: [String]] = [:]
     var densityRevision = -1
     var densityJob: DensityJob?
     @Published private(set) var outline: [OutlineNode] = []
@@ -262,6 +263,14 @@ final class EffectDocument: ObservableObject, Identifiable {
     }
     private var changeCache: (revision: Int, set: ChangeSet)?
 
+    func resetBaseline() {
+        original = EffectDocument(shadowOf: self)
+        origins = [:]
+        originalFields = [:]
+        changeCache = nil
+        objectWillChange.send()
+    }
+
     var changes: ChangeSet {
         if let cached = changeCache, cached.revision == revision { return cached.set }
         let fresh = computeChanges()
@@ -310,7 +319,9 @@ final class EffectDocument: ObservableObject, Identifiable {
         if destination.standardizedFileURL == url.standardizedFileURL, !isEditedCopy {
             throw AvfxError.malformed("Original files are never overwritten. Choose another name")
         }
+        let ownFile = isEditedCopy
         try serializedData().write(to: destination, options: .atomic)
+        if ownFile { resetBaseline() }
         EffectDocument.markOwned(destination)
         url = destination
         savedNames = names

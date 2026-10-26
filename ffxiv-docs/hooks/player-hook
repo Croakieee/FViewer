@@ -5,4 +5,4 @@ TARGET="$SOURCE/../player"
 [ -d "$TARGET" ] || exit 0
 cd "$SOURCE" || exit 0
 npx --yes yarn@1.22.22 --silent install --frozen-lockfile && npx --yes yarn@1.22.22 --silent build:player >/dev/null || { echo "FViewer: yarn build:player failed"; exit 0; }
-cp dist/player/avfx-player.iife.js docs/field_stats.json "$TARGET/" && echo "FViewer: ffxiv-docs/player updated"
+cp dist/player/avfx-player.iife.js docs/field_stats.json docs/properties.md "$TARGET/" && echo "FViewer: ffxiv-docs/player updated"

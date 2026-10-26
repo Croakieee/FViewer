@@ -173,6 +173,7 @@
 			inputPaths = (
 				"$(SRCROOT)/ffxiv-docs/player/avfx-player.iife.js",
 				"$(SRCROOT)/ffxiv-docs/player/field_stats.json",
+				"$(SRCROOT)/ffxiv-docs/player/properties.md",
 				"$(SRCROOT)/PlayerHost/host.html",
 				"$(SRCROOT)/PlayerHost/host.js",
 			);
@@ -182,12 +183,13 @@
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Player/avfx-player.iife.js",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Player/field_stats.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Player/properties.md",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Player/host.html",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Player/host.js",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nOUT=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Player\"\nmkdir -p \"$OUT\"\ncp \"$SRCROOT/ffxiv-docs/player/avfx-player.iife.js\" \"$SRCROOT/ffxiv-docs/player/field_stats.json\" \"$SRCROOT/PlayerHost/host.html\" \"$SRCROOT/PlayerHost/host.js\" \"$OUT/\"\n";
+			shellScript = "set -e\nOUT=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Player\"\nmkdir -p \"$OUT\"\ncp \"$SRCROOT/ffxiv-docs/player/avfx-player.iife.js\" \"$SRCROOT/ffxiv-docs/player/field_stats.json\" \"$SRCROOT/ffxiv-docs/player/properties.md\" \"$SRCROOT/PlayerHost/host.html\" \"$SRCROOT/PlayerHost/host.js\" \"$OUT/\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */

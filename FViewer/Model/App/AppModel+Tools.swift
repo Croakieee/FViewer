@@ -588,6 +588,8 @@ extension AppModel {
     func setRender(_ change: (inout PreviewRender) -> Void) {
         var render = PreviewSettings.render
         change(&render)
+        render.fogDensity = min(max(render.fogDensity, 0), 1)
+        render.fogStart = min(max(render.fogStart, 0), 1000)
         guard render != PreviewSettings.render else { return }
         PreviewSettings.render = render
         PreviewSettings.token += 1

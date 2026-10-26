@@ -21,6 +21,16 @@ enum FieldNotes {
         "AvfxParticleDataPolyline.bLcl": "1: the trail's points are kept in the axes of the effect's root binder and move and turn with it; 0: in the world. Measured in the game",
         "AvfxParticleDataPolyline.Wd": "Half width in metres; Width Begin, Center and End multiply it at the head, at Point Count Center and at the tail. The particle's Scale changes neither the width nor the length. Measured in the game",
         "AvfxParticleDataPolyline.Len": "Position History: the trail is at most this many metres along the path from the head. Connect Target: metres per repeat of the texture along the line. Measured in the game",
+        "AvfxParticle.bAFg": "The particle takes the scene's fog: the farther from the camera, the more it fades into the fog colour (Preview → Scene Fog). Measured in the game",
+        "AvfxMain.bGFE": "Every particle of the effect takes the scene's fog, Apply Fog off too; Add particles fade out. Measured in the game",
+        "AvfxMain.GFIM": "With Global Fog: the share of fog is √(this) × the share an Apply Fog particle gets — 0 none, 0.25 half, 1 full. Measured in the game",
+        "AvfxMain.DwOT": "The order inside one Draw Priority: 0 Default, 1 Reverse, 2 Depth — farther particles first. Measured in the game",
+        "AvfxMain.SKO": "Metres: moves the whole effect in the drawing order against other effects. Measured in the game",
+        "AvfxMain.SPFR": "Soft Particle fade range in metres: alpha × min(1, distance to the scene ÷ this)². Measured in the game",
+        "AvfxParticleSimple.LLin": "A Line streak is min(Line Length Min, Line Length Max) metres long, whatever the speed or age. Measured in the game",
+        "AvfxParticleSimple.LLax": "A Line streak is min(Line Length Min, Line Length Max) metres long, whatever the speed or age. Measured in the game",
+        "AvfxParticleDataModel.NoAn": "Which entry of the model list is drawn at the particle's age (a list position, not a model number). Measured on a test effect only",
+        "AvfxParticleDataModel.Moph": "With Is Morph: the vertices blend along the model list (models with the same vertex count). Measured on a test effect only",
         "AvfxParticleTextureColor1.TLst": "The textures of this layer; TexN picks one of them. Game files keep the layer's texture here, not in Texture Index",
     ]
 

@@ -216,6 +216,28 @@ struct PreviewMenu: View {
                     }
                 }
                 .help("Frame rate limit, as in the game's settings. Polyline trails take one point per drawn frame, so their length depends on it")
+                CheckBox(isOn: PreviewSettings.render.fog, label: "Scene Fog") { on in app.setRender { $0.fog = on } }
+                    .help("The game's Fog weather: particles with Apply Fog, and every particle of an effect with Global Fog, fade into the fog with distance from the camera; the floor and the background take its colour")
+                Group {
+                    row("Density") {
+                        NumberField(label: nil, value: PreviewSettings.render.fogDensity, step: 0.0005, digits: 4,
+                                    onLive: { v in app.setRender { $0.fogDensity = v } }, onCommit: { _, next in app.setRender { $0.fogDensity = next } })
+                    }
+                    .help("Share of fog 1 − e^(−k·(d − start)), d — metres to the camera. In the game about 0.002–0.003; thick fog about 0.0056")
+                    row("Start") {
+                        NumberField(label: nil, value: PreviewSettings.render.fogStart, suffix: " m", step: 1, digits: 0,
+                                    onLive: { v in app.setRender { $0.fogStart = v } }, onCommit: { _, next in app.setRender { $0.fogStart = next } })
+                    }
+                    .help("No fog closer than this. Thick fog in the game starts at about 40 m")
+                    row("Fog Color") {
+                        let c = PreviewSettings.render.fogColor
+                        ColorField(color: SIMD4(c.x, c.y, c.z, 1), alpha: false,
+                                   onLive: { v in app.setRender { $0.fogColor = SIMD3(v.x, v.y, v.z) } },
+                                   onCommit: { _, next in app.setRender { $0.fogColor = SIMD3(next.x, next.y, next.z) } })
+                    }
+                }
+                .opacity(PreviewSettings.render.fog ? 1 : 0.4)
+                .allowsHitTesting(PreviewSettings.render.fog)
                 CheckBox(isOn: PreviewSettings.render.fullResolution, label: "Full Resolution") { on in app.setRender { $0.fullResolution = on } }
                     .help("Draw at the screen's Retina resolution. Off draws a quarter of the pixels, to tell whether the graphics card limits the frame rate")
             }

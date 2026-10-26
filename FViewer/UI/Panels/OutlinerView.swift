@@ -138,6 +138,12 @@ struct OutlinerView: View {
             if let warning = node.warning {
                 Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9)).foregroundStyle(Theme.changed).help(warning)
             }
+            if let notes = document.playerNotes[node.id] {
+                let serious = notes.contains { $0.contains("not drawn") || $0.contains("missing") }
+                Image(systemName: serious ? "eye.trianglebadge.exclamationmark" : "info.circle").font(.system(size: 9))
+                    .foregroundStyle(serious ? Theme.changed : Theme.dim)
+                    .help("Preview player: " + notes.joined(separator: "\n"))
+            }
             Text(node.detail).font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
             if let key = node.visibility {
                 let hidden = document.hidden.contains(key)

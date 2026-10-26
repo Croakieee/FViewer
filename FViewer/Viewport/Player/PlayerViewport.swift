@@ -86,6 +86,7 @@ struct PlayerFooter: View {
     @ObservedObject var bridge: PlayerBridge
     @ObservedObject var clock: PlaybackClock
     @State private var showMissing = false
+    @State private var showWarnings = false
 
     private func readout(_ label: String, _ value: String) -> some View {
         HStack(spacing: 4) {
@@ -113,6 +114,13 @@ struct PlayerFooter: View {
                     .help("Game files the preview asked for and could not find")
                     .popover(isPresented: $showMissing, arrowEdge: .top) { missingList }
             }
+            if !bridge.warnings.isEmpty {
+                Text(bridge.warnings.count == 1 ? "1 note" : "\(bridge.warnings.count) notes")
+                    .foregroundStyle(Theme.dim)
+                    .pressable { showWarnings.toggle() }
+                    .help("What the preview player simplified or could not draw in this effect")
+                    .popover(isPresented: $showWarnings, arrowEdge: .top) { warningList }
+            }
             Spacer(minLength: 4)
             if !bridge.build.isEmpty {
                 Text("player " + String(bridge.build.prefix(7))).foregroundStyle(Theme.dim)
@@ -133,6 +141,25 @@ struct PlayerFooter: View {
         .padding(.horizontal, 10)
         .frame(height: 24)
         .background(Theme.header)
+    }
+
+    private var warningList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Notes of the preview player").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(bridge.warnings, id: \.self) {
+                        Text($0).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.text).textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 460)
+        .background(Theme.panel)
+        .preferredColorScheme(Theme.scheme)
     }
 
     private var missingList: some View {
