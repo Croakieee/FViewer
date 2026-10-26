@@ -580,6 +580,19 @@ extension AppModel {
         if let data = defaults.data(forKey: "preview.stage"), let stage = try? JSONDecoder().decode(PreviewStage.self, from: data) {
             PreviewSettings.stage = stage
         }
+        if let data = defaults.data(forKey: "preview.render"), let render = try? JSONDecoder().decode(PreviewRender.self, from: data) {
+            PreviewSettings.render = render
+        }
+    }
+
+    func setRender(_ change: (inout PreviewRender) -> Void) {
+        var render = PreviewSettings.render
+        change(&render)
+        guard render != PreviewSettings.render else { return }
+        PreviewSettings.render = render
+        PreviewSettings.token += 1
+        if let data = try? JSONEncoder().encode(render) { UserDefaults.standard.set(data, forKey: "preview.render") }
+        objectWillChange.send()
     }
 
     func setPreviewColor(_ color: SIMD3<Double>?) {

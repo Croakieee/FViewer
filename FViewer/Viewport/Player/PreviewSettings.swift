@@ -48,6 +48,12 @@ struct PreviewLook: Equatable, Codable {
     var lightIntensity: Float = 4
 }
 
+struct PreviewRender: Equatable, Codable {
+    var frameCap = 0
+    var fullResolution = true
+    var nightLight = false
+}
+
 struct PreviewCharacter: Equatable, Codable {
     var model = ""
     var pose = ""
@@ -68,6 +74,7 @@ struct CharacterModelEntry: Equatable {
 
 enum PreviewSettings {
     static var look = PreviewLook()
+    static var render = PreviewRender()
     static var stage = PreviewStage()
     static var character = PreviewCharacter()
     static var facing: Float = 0

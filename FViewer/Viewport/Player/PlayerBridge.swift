@@ -27,12 +27,15 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
     @Published private(set) var particles = 0
     @Published private(set) var emitters = 0
     @Published private(set) var fov = 45.0
+    @Published private(set) var fps = 0
+    @Published private(set) var frameTime = 0.0
+    @Published private(set) var waitingForTrigger = false
     @Published private(set) var build = ""
     @Published private(set) var loading = true
 
     weak var webView: WKWebView?
     weak var app: AppModel?
-    private weak var document: EffectDocument?
+    private(set) weak var document: EffectDocument?
     private var ready = false
     private var clockBindings: Set<AnyCancellable> = []
     private var documents: [(key: String, data: Data)] = []
@@ -118,6 +121,8 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         apply("fvHost", "setSeed", [clock.seed])
         apply("avfxHost", "setView", [viewSettings(app)])
         apply("avfxHost", "setStage", [stageSettings(app)])
+        let render = PreviewSettings.render
+        apply("fvHost", "setRender", [["frameCap": render.frameCap, "fullResolution": render.fullResolution, "gameLight": render.nightLight ? "night" : "day"]])
         pushCharacter()
         apply("avfxHost", "setHidden", [hidden(document)])
         apply("avfxHost", "setSpeed", [min(max(clock.speed, 0), 2)])
@@ -425,6 +430,12 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
             guard isDriver, let clock = document?.clock, let states = event["states"] as? [String: String] else { return }
             let next = Dictionary(uniqueKeysWithValues: states.compactMap { key, value in Int(key).map { ($0, value) } })
             if clock.timelineStates != next { clock.timelineStates = next }
+        case "stats":
+            let next = event["fps"] as? Int ?? 0, time = event["ms"] as? Double ?? 0
+            if next != fps { fps = next }
+            if abs(time - frameTime) >= 0.1 { frameTime = time }
+            let waiting = event["waiting"] as? Bool ?? false
+            if waiting != waitingForTrigger { waitingForTrigger = waiting }
         case "ended":
             if isDriver { document?.clock.playing = false }
         case "loaded":

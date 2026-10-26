@@ -96,6 +96,7 @@ extension EffectDocument {
 
     static let gameLimits: [String: Int] = ["Emit": 68, "Ptcl": 96]
     static let timelineItemLimit = 32
+    static let polylinePointLimit = 64
 
     func chainWarnings(_ root: AvfxBlock) -> [String: [String]] {
         var notes: [String: [String]] = [:]
@@ -130,6 +131,12 @@ extension EffectDocument {
                 note("\(id)/Item/\(k)", "Enabled, but runs no emitter or effector")
             }
             if items.isEmpty { note(id, "Has no items: add a layer with the + on its timeline row") }
+        }
+        for (index, particle) in root.childrenNamed("Ptcl").enumerated() where particle.int("PrVT") == 6 {
+            let points = particle.child("Data")?.int("PnC") ?? 0
+            if points > EffectDocument.polylinePointLimit {
+                note("avfx/Ptcl/\(index)", "Point Count \(points): more than \(EffectDocument.polylinePointLimit) crashed the game (\(EffectDocument.polylinePointLimit) is the largest in game files)")
+            }
         }
         for (k, item) in (root.child("Schd")?.ownRecords("Item") ?? []).enumerated() where on(item, "bEna") && int(item, "TlNo") < 0 {
             note("avfx/Schd/0/Item/\(k)", "Enabled, but starts no timeline")

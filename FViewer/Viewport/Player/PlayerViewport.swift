@@ -96,8 +96,16 @@ struct PlayerFooter: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            readout("effect", "\(bridge.emitters) emitters · \(bridge.particles) particles")
-            readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(safe: clock.time.rounded())))
+            readout("effect", "\(bridge.emitters) emitters · \(bridge.particles) particles").layoutPriority(2)
+            readout("time", String(format: "%.2f s · frame %d", clock.time / 30, Int(safe: clock.time.rounded()))).layoutPriority(1)
+            if bridge.fps > 0 {
+                readout("draw", String(format: "%d fps · %.1f ms", bridge.fps, bridge.frameTime))
+                    .help("Frames the preview draws per second and the time one frame takes in the page (update and draw calls, not the graphics card's own time)")
+            }
+            if bridge.waitingForTrigger, bridge.document?.triggerSlots.contains(where: { $0.enabled && $0.timeline >= 0 }) == true {
+                Text("waiting for a trigger").foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))
+                    .help("Nothing in this effect starts by itself: its timelines start on game events. Add a trigger to the Events track of the timeline to play it")
+            }
             if !bridge.missing.isEmpty {
                 Text("\(bridge.missing.count) missing")
                     .foregroundStyle(Color(red: 1, green: 0.75, blue: 0.3))

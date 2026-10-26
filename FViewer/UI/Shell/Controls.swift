@@ -559,7 +559,8 @@ struct CurveValueRows: View {
     }
 
     private var headerHelp: String {
-        let base = group.title + " [" + group.tag + "]"
+        var base = group.title + " [" + group.tag + "]"
+        if let note = FieldNotes.text(group.stat) { base += "\n" + note }
         guard let stat = FieldStats.stat(group.stat) else { return base }
         return base + "\n" + FieldStats.summary(stat)
     }

@@ -159,7 +159,7 @@ struct PreviewMenu: View {
 
     var body: some View {
         let look = PreviewSettings.look
-        let changed = look != PreviewLook()
+        let changed = look != PreviewLook() || PreviewSettings.render != PreviewRender()
         HStack(spacing: 4) {
             Image(systemName: "sparkles.rectangle.stack").font(.system(size: 10))
             Text(changed ? "Preview · Look" : "Preview").font(Theme.font)
@@ -204,6 +204,20 @@ struct PreviewMenu: View {
                 .opacity(look.toneMap ? 1 : 0.4)
                 .allowsHitTesting(look.toneMap)
                 SegmentButton(title: "Reset Look", active: false) { app.setLook { $0 = PreviewLook() } }
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                row("Game Light") {
+                    SegmentButton(title: "Day", active: !PreviewSettings.render.nightLight) { app.setRender { $0.nightLight = false } }
+                    SegmentButton(title: "Night", active: PreviewSettings.render.nightLight) { app.setRender { $0.nightLight = true } }
+                }
+                .help("The game's light on lit Model particles of effects with Directional Light Source InGame: the sun by day, a weak light from above by night")
+                row("Frame Rate") {
+                    ForEach([(0, "System"), (60, "60"), (30, "30")], id: \.0) { cap, title in
+                        SegmentButton(title: title, active: PreviewSettings.render.frameCap == cap) { app.setRender { $0.frameCap = cap } }
+                    }
+                }
+                .help("Frame rate limit, as in the game's settings. Polyline trails take one point per drawn frame, so their length depends on it")
+                CheckBox(isOn: PreviewSettings.render.fullResolution, label: "Full Resolution") { on in app.setRender { $0.fullResolution = on } }
+                    .help("Draw at the screen's Retina resolution. Off draws a quarter of the pixels, to tell whether the graphics card limits the frame rate")
             }
             .padding(12)
             .frame(width: 290)

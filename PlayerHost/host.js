@@ -26,6 +26,19 @@
     return AvfxPlayer.loadCharacterModel(glb, eid ? new Uint8Array(eid) : null);
   };
 
+  let render = { frameCap: 0, fullResolution: true, gameLight: 'day' };
+  let drawn = 0;
+
+  const applyGameLight = () => {
+    const kind = player.effect?.constructor;
+    if (kind?.GAME_LIGHT_DAY) kind.gameLight = render.gameLight === 'night' ? kind.GAME_LIGHT_NIGHT : kind.GAME_LIGHT_DAY;
+  };
+
+  setInterval(() => {
+    post({ v: AvfxPlayer.PROTOCOL, type: 'stats', fps: drawn, ms: Math.round(player.stage.load.ms * 10) / 10, waiting: player.effect?.waitingForTrigger === true });
+    drawn = 0;
+  }, 1000);
+
   const record = (effect) => {
     const frame = Math.floor(effect.time);
     if (effect !== player.effect || frame < 0 || frame >= DENSITY_FRAMES) return;
@@ -75,6 +88,7 @@
     patchedProto = proto;
     const update = proto.update;
     proto.update = function (dt, camera) {
+      if (this === player.effect) drawn += 1;
       const before = this.time;
       if (this.playing && stops.length) {
         const done = fired.get(this) ?? new Set();
@@ -136,6 +150,7 @@
   player.on((event) => {
     if (event.type === 'loaded') {
       patch();
+      applyGameLight();
       clearDensity();
       if (player.effect && JSON.stringify(player.effect.scenario) !== JSON.stringify(scenario)) replay();
     }
@@ -179,6 +194,13 @@
     setPlayback(next) {
       playback = { ...playback, ...next };
       player.setView({ loop: playback.loop && !ranged(), loopDelay: playback.loopDelay });
+    },
+    setRender(next) {
+      render = { ...render, ...next };
+      player.stage.setFrameCap(render.frameCap);
+      const ratio = render.fullResolution ? devicePixelRatio : 1;
+      if (player.stage.renderer.getPixelRatio() !== ratio) player.stage.renderer.setPixelRatio(ratio);
+      applyGameLight();
     },
     setSeed(seed) {
       if (player.stage.seed === seed) return;
