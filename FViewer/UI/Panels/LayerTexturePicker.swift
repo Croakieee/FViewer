@@ -20,18 +20,18 @@ struct LayerTexturePicker: View {
                 }
                 if !slots.isEmpty { Divider() }
                 ForEach(Array(slots.enumerated()), id: \.offset) { index, slot in
-                    Button { document.setLayerTexture(layer, index: index) } label: {
+                    Button { if slots.indices.contains(index) { app.chooseLayerTexture(layer, path: slots[index].path, in: document) } } label: {
                         if index == current { Label("\(index) · " + slot.name, systemImage: "checkmark") } else { Text("\(index) · " + slot.name) }
                     }
                 }
                 Divider()
                 Menu("From Library") {
                     ForEach(Array(app.textureLibrary.enumerated()), id: \.offset) { _, entry in
-                        Button("★ " + entry.name) { document.setLayerTexture(layer, path: entry.path) }
+                        Button("★ " + entry.name) { app.chooseLayerTexture(layer, path: entry.path, in: document) }
                     }
                     if !app.textureLibrary.isEmpty { Divider() }
                     ForEach(Array(AppModel.usefulTextures.enumerated()), id: \.offset) { _, entry in
-                        Button(entry.name + (available(entry.path) ? "" : " · not found")) { document.setLayerTexture(layer, path: entry.path) }
+                        Button(entry.name + (available(entry.path) ? "" : " · not found")) { app.chooseLayerTexture(layer, path: entry.path, in: document) }
                     }
                 }
                 Button("Import Image…") { app.importLayerTexture(layer, in: document) }

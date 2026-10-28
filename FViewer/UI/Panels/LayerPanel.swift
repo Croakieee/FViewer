@@ -238,6 +238,14 @@ struct LayerPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
+            row("Preset", "Sets the whole layer — look, emission and timing — to a ready recipe. Undo brings the old values back") {
+                FlowLayout(spacing: 3) {
+                    ForEach(LayerPreset.all, id: \.name) { preset in
+                        SegmentButton(title: preset.name, active: false) { document.applyPreset(preset, to: layer) }.help(preset.help)
+                    }
+                }
+            }
+            Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
             look
             if let emitter = layer.emitter {
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)

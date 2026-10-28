@@ -107,6 +107,11 @@ struct SequencerView: View {
         let emitters = document.referenceChoices(tag: "EmNo", cls: "AvfxTimelineItem", list: nil)?.filter { $0.value >= 0 } ?? []
         return Menu {
             Button("New Layer") { addFresh(to: row, id: id) { document.addLayer(to: timeline) } }
+            Menu("New Layer Preset") {
+                ForEach(LayerPreset.all, id: \.name) { preset in
+                    Button(preset.name) { addFresh(to: row, id: id) { document.addLayer(preset: preset, to: timeline) } }
+                }
+            }
             Menu("Emitter") {
                 ForEach(emitters, id: \.self) { choice in
                     Button(choice.name) { addFresh(to: row, id: id) { document.addEmitterItem(to: timeline, emitter: choice.value) } }

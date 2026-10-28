@@ -543,11 +543,13 @@ extension EffectDocument {
                 self?.changeRecords(owner, list: list, title: "Move Item") { records in
                     if index > 0, index < records.count { records.swapAt(index, index - 1) }
                 }
+                self?.noteDrawOrder(owner, list: list)
             },
             NodeAction(id: node.id + "!down", title: "Move Down", symbol: "arrow.down") { [weak self] in
                 self?.changeRecords(owner, list: list, title: "Move Item") { records in
                     if index + 1 < records.count { records.swapAt(index, index + 1) }
                 }
+                self?.noteDrawOrder(owner, list: list)
             },
             NodeAction(id: node.id + "!del", title: "Delete", symbol: "trash", destructive: true) { [weak self] in
                 self?.changeRecords(owner, list: list, title: "Delete Item") { records in
@@ -555,6 +557,11 @@ extension EffectDocument {
                 }
             },
         ]
+    }
+
+    func noteDrawOrder(_ owner: AvfxBlock, list: String) {
+        guard owner.tag == "TmLn" || owner.tag == "Emit", list == "Item" || list == "ItPr" else { return }
+        AppDelegate.model?.notice = "Draw order changed: with the same Draw Priority, items earlier in the list draw first, later ones on top"
     }
 
     func renumberJSON(_ elementID: String, array: JSONNode, _ map: (Int) -> Int?) {

@@ -97,6 +97,7 @@ extension EffectDocument {
     static let gameLimits: [String: Int] = ["Emit": 68, "Ptcl": 96]
     static let timelineItemLimit = 32
     static let polylinePointLimit = 64
+    static let curveKeyLimit = 120
 
     func chainWarnings(_ root: AvfxBlock) -> [String: [String]] {
         var notes: [String: [String]] = [:]
@@ -109,10 +110,17 @@ extension EffectDocument {
             if particles.isEmpty && children.isEmpty && emitter.int("EfNo", -1) < 0 && emitter.int("SdNo", -1) < 0 {
                 note(id, "Creates nothing: add a particle to Create Particles")
             }
+            let rate = emitter.child("CrC")?.curveKeys ?? []
+            let rateZero = !rate.isEmpty && rate.allSatisfy { $0.z == 0 }
             for (list, records, kind) in [("ItPr", particles, "particle"), ("ItEm", children, "emitter")] {
                 for (k, record) in records.enumerated() {
-                    if int(record, "TgtB") < 0 { note("\(id)/\(list)/\(k)", "Creates no \(kind): pick its target") }
-                    if !on(record, "bEnb") { note("\(id)/\(list)/\(k)", "Off, but the game creates it anyway") }
+                    let item = "\(id)/\(list)/\(k)"
+                    let mode = int(record, "CrTm")
+                    if int(record, "TgtB") < 0 { note(item, "Creates no \(kind): pick its target") }
+                    if !on(record, "bEnb") { note(item, "Off, but the game creates it anyway") }
+                    if mode != 0, int(record, "CrCn") == 0 { note(item, "Create Count 0: creates nothing") }
+                    if mode == 0, rateZero { note(item, "The emitter's Create Count is 0 all the time: creates nothing") }
+                    if int(record, "PrLk") >= 0, int(record, "GenD") > 0, mode != 0 { note(item, "Parameter Link is ignored with Generate Delay above 0") }
                 }
             }
         }
@@ -136,6 +144,38 @@ extension EffectDocument {
             let points = particle.child("Data")?.int("PnC") ?? 0
             if points > EffectDocument.polylinePointLimit {
                 note("avfx/Ptcl/\(index)", "Point Count \(points): more than \(EffectDocument.polylinePointLimit) crashed the game (\(EffectDocument.polylinePointLimit) is the largest in game files)")
+            }
+        }
+        let models = root.childrenNamed("Modl")
+        let ownLight = root.childrenNamed("Efct").contains { $0.int("EfVT") == 1 }
+        for (index, particle) in root.childrenNamed("Ptcl").enumerated() {
+            let id = "avfx/Ptcl/\(index)", data = particle.child("Data")
+            switch particle.int("PrVT") {
+            case 5:
+                if let data, data.child("bLgt")?.data.first.map({ $0 != 0 }) == true, root.int("DLST") == 1, !ownLight {
+                    note(id, "Lit, but the effect has no Directional Light effector of its own (Directional Light Source InLocal): the model is drawn black")
+                }
+                if let model = data?.child("MdNo")?.data.first, model != 255, Int(model) < models.count, (models[Int(model)].child("VDrw")?.data.isEmpty ?? true) {
+                    note(id, "Its model has emit points only, no mesh: it is not drawn")
+                }
+            case 3:
+                if particle.child("bSCt")?.data.first.map({ $0 == 0 }) ?? true { note(id, "A Line without Simple Animation is never drawn") }
+            default:
+                break
+            }
+        }
+        for (index, binder) in root.childrenNamed("Bind").enumerated() where binder.int("BnVr") == 2 {
+            if let life = binder.child("Life"), life.children == nil, life.intValue < 0 { note("avfx/Bind/\(index)", "A Spline binder with Life −1 builds no path: give it a Life above 0") }
+        }
+        for tag in ["TmLn", "Emit", "Ptcl", "Efct", "Bind"] {
+            for (index, block) in root.childrenNamed(tag).enumerated() {
+                var most = 0
+                func scan(_ node: AvfxBlock) {
+                    if node.tag == "Keys" { most = max(most, node.data.count / 16) }
+                    node.children?.forEach(scan)
+                }
+                scan(block)
+                if most > EffectDocument.curveKeyLimit { note("avfx/\(tag)/\(index)", "A curve has \(most) keys: game files have up to ~\(EffectDocument.curveKeyLimit)") }
             }
         }
         for (k, item) in (root.child("Schd")?.ownRecords("Item") ?? []).enumerated() where on(item, "bEna") && int(item, "TlNo") < 0 {

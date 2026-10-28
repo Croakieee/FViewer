@@ -237,3 +237,111 @@ extension EffectDocument {
         }
     }
 }
+
+struct LayerPreset {
+    let name: String
+    let help: String
+    let texture: String
+    let blend: Int
+    let facing: Int
+    let colorStart: SIMD4<Double>
+    let colorEnd: SIMD4<Double>
+    let sizeStart: Double
+    let sizeEnd: Double
+    let life: Double?
+    let shape: Int
+    let aim: Double
+    let speed: Double
+    let spread: Double
+    let stream: Bool
+    let every: Double
+    let count: Double
+    let follow: Int
+    let gravity: Double
+    var point: Int? = nil
+    var textureColor = 0
+    var colorToAlpha = false
+
+    static let all: [LayerPreset] = [
+        LayerPreset(name: "Glow", help: "A soft light that stays on the bind point until the effect is released", texture: "vfx/common/texture/glow006fc.atex",
+                    blend: 2, facing: 6, colorStart: SIMD4(1, 0.85, 0.55, 1), colorEnd: SIMD4(1, 0.85, 0.55, 1), sizeStart: 1, sizeEnd: 1, life: nil,
+                    shape: 0, aim: 0, speed: 0, spread: 0, stream: false, every: 1, count: 1, follow: 2, gravity: 0),
+        LayerPreset(name: "Sparks", help: "Small bright sparks thrown up that fall and fade", texture: "vfx/common/texture/glow001bf.atex",
+                    blend: 2, facing: 6, colorStart: SIMD4(1, 0.8, 0.35, 1), colorEnd: SIMD4(1, 0.25, 0.05, 0), sizeStart: 0.35, sizeEnd: 0.05, life: 24,
+                    shape: 1, aim: -90, speed: 4, spread: 35, stream: true, every: 2, count: 2, follow: 3, gravity: -6),
+        LayerPreset(name: "Fire", help: "Flames rising from the point", texture: "vfx/common/texture/glow001f.atex",
+                    blend: 2, facing: 6, colorStart: SIMD4(1, 0.9, 0.5, 1), colorEnd: SIMD4(1, 0.3, 0.05, 0), sizeStart: 0.9, sizeEnd: 0.3, life: 25,
+                    shape: 1, aim: -90, speed: 1.2, spread: 10, stream: true, every: 1, count: 1, follow: 3, gravity: 0),
+        LayerPreset(name: "Smoke", help: "Slow grey puffs that rise, grow and fade", texture: "vfx/common/texture/smoke004_e2.atex",
+                    blend: 0, facing: 6, colorStart: SIMD4(0.55, 0.55, 0.55, 0.6), colorEnd: SIMD4(0.4, 0.4, 0.4, 0), sizeStart: 0.5, sizeEnd: 1.5, life: 60,
+                    shape: 1, aim: -90, speed: 0.6, spread: 15, stream: true, every: 6, count: 1, follow: 3, gravity: 0, textureColor: 1, colorToAlpha: true),
+        LayerPreset(name: "Ring", help: "A ring on the ground at the feet that grows and fades, again every second", texture: "vfx/common/texture/ring04a_c.atex",
+                    blend: 2, facing: 1, colorStart: SIMD4(0.6, 0.85, 1, 1), colorEnd: SIMD4(0.6, 0.85, 1, 0), sizeStart: 0.2, sizeEnd: 3, life: 30,
+                    shape: 0, aim: 0, speed: 0, spread: 0, stream: true, every: 30, count: 1, follow: 3, gravity: 0, point: -1),
+    ]
+}
+
+extension EffectDocument {
+    func applyPreset(_ preset: LayerPreset, to layer: EffectLayer) {
+        let particle = layer.particle
+        batch("Apply " + preset.name) {
+            if let type = particle.child("PrVT"), type.intValue != 8 { applyType(type, ownerClass: "AvfxParticle", value: 8) }
+            particle.child("RMT")?.intValue = preset.blend
+            particle.child("RBDT")?.intValue = preset.facing
+            particle.child("CulT")?.intValue = 0
+            if let layerTexture = particle.child("TC1") {
+                setLayerTexture(layerTexture, path: preset.texture)
+                layerTexture.child("TCCT")?.intValue = preset.textureColor
+                layerTexture.child("bC2A")?.intValue = preset.colorToAlpha ? 1 : 0
+            }
+            setLayerLife(particle, preset.life, title: "Set Particle Life")
+            let span = preset.life ?? 60
+            setColorEnds(particle, start: preset.colorStart, end: preset.colorEnd, over: span)
+            setCurveEnds(particle, cls: "AvfxParticle", tag: "Scl", axes: ["X", "Y", "Z"], start: preset.sizeStart, end: preset.sizeEnd, over: span, title: "Set Size")
+            setCurveEnds(particle, cls: "AvfxParticle", tag: "Gra", axes: nil, start: preset.gravity / 900, end: preset.gravity / 900, over: 1, title: "Set Gravity")
+            guard let emitter = layer.emitter else { return }
+            setEmitterShape(emitter, preset.shape)
+            setEmitterAim(emitter, preset.aim * .pi / 180)
+            if let data = emitter.child("Data") {
+                for (tag, value) in [("IjS", preset.speed / 30), ("IjA", preset.spread * .pi / 180)] where data.child(tag) != nil {
+                    data.child(tag)?.curveKeys = [AvfxKey(time: 0, type: 1, x: 1, y: 1, z: Float(value))]
+                }
+            }
+            setItemField(emitter, list: "ItPr", index: layer.item, "CrTm", preset.stream ? 0 : 1, title: "Set Create Time")
+            setItemField(emitter, list: "ItPr", index: layer.item, "PICd", preset.follow, title: "Set Influence on Child")
+            if preset.stream {
+                setCurveEnds(emitter, cls: "AvfxEmitter", tag: "CrI", axes: nil, start: preset.every, end: preset.every, over: 1, title: "Set Interval")
+                setCurveEnds(emitter, cls: "AvfxEmitter", tag: "CrC", axes: nil, start: preset.count, end: preset.count, over: 1, title: "Set Count")
+            } else {
+                setItemField(emitter, list: "ItPr", index: layer.item, "CrCn", Int(preset.count), title: "Set Create Count")
+            }
+            if let point = preset.point, let timeline = layer.timeline, layer.timelineItem >= 0 {
+                setItemField(timeline, list: "Item", index: layer.timelineItem, "BdNo", binder(atPoint: point < 0 ? nil : point), title: "Set Binder")
+            }
+            if preset.life == nil, let timeline = layer.timeline, layer.timelineItem >= 0 {
+                setItemField(timeline, list: "Item", index: layer.timelineItem, "EdTm", -1, title: "Set End Time")
+                setLayerLife(emitter, nil, title: "Set Emitter Life")
+            }
+        }
+    }
+
+    func binder(atPoint point: Int?) -> Int {
+        guard let root = avfxRoot else { return -1 }
+        let binders = root.childrenNamed("Bind")
+        if let found = binders.firstIndex(where: { $0.int("BnVr") == 0 && binderPoint($0) == point }) { return found }
+        guard let fresh = freshTopLevel("Bind") else { return -1 }
+        let index = insertFresh(fresh, into: root)
+        if let properties = fresh.child("PrpS") {
+            properties.child("BPTP")?.intValue = point == nil ? 0 : 3
+            if let point { properties.child("BPID")?.intValue = point }
+        }
+        return index
+    }
+
+    func addLayer(preset: LayerPreset, to timeline: Int? = nil) {
+        batch("Add " + preset.name) {
+            addLayer(to: timeline)
+            if let selected = selectionID, let layer = layer(for: selected) { applyPreset(preset, to: layer) }
+        }
+    }
+}

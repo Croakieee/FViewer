@@ -1176,6 +1176,22 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func isAlphaOnlyTexture(_ path: String) -> Bool {
+        guard let url = textureURL(path), url.pathExtension.lowercased() != "png", let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 8), head.count == 8 else { return false }
+        return head[4] == 0x31 && head[5] == 0x11
+    }
+
+    func chooseLayerTexture(_ layer: AvfxBlock, path: String, in document: EffectDocument) {
+        let alphaOnly = isAlphaOnlyTexture(path)
+        document.batch("Set Texture") {
+            document.setLayerTexture(layer, path: path)
+            if alphaOnly, layer.tag == "TC1", layer.int("TCCT") != 0 { layer.child("TCCT")?.intValue = 0 }
+        }
+        if alphaOnly { notice = "\((path as NSString).lastPathComponent) holds only alpha: Calculate Color now takes the particle's colour" }
+    }
+
     func importLayerTexture(_ layer: AvfxBlock, in document: EffectDocument) {
         let panel = NSOpenPanel()
         panel.title = "Import Texture"

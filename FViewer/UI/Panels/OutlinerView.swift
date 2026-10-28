@@ -35,6 +35,11 @@ struct OutlinerView: View {
                     Menu {
                         Button("Layer") { document.addLayer() }
                             .help("A particle, an emitter that creates it and a timeline item that runs the emitter, ready to see")
+                        Menu("Layer Preset") {
+                            ForEach(LayerPreset.all, id: \.name) { preset in
+                                Button(preset.name) { document.addLayer(preset: preset) }
+                            }
+                        }
                         Divider()
                         ForEach(EffectDocument.addableKinds, id: \.tag) { kind in
                             Button(kind.title) { document.addTopLevel(kind.tag) }
