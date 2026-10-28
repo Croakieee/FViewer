@@ -39,7 +39,27 @@ struct LayerPanel: View {
     }
 
     private func number(_ value: Double, suffix: String = "", step: Double, digits: Int? = nil, isInteger: Bool = false, _ commit: @escaping (Double) -> Void) -> some View {
-        NumberField(label: nil, value: value, isInteger: isInteger, suffix: suffix, step: step, digits: digits, onLive: { _ in }, onCommit: { _, next in commit(next) })
+        NumberField(label: nil, value: value, isInteger: isInteger, suffix: suffix, step: step, digits: digits,
+                    onLive: { next in
+                        document.withoutUndo { commit(next) }
+                        document.liveChanged()
+                    },
+                    onCommit: { old, next in
+                        document.withoutUndo { commit(old) }
+                        commit(next)
+                    })
+    }
+
+    private func color(_ value: SIMD4<Double>, _ commit: @escaping (SIMD4<Double>) -> Void) -> some View {
+        ColorField(color: value, alpha: true,
+                   onLive: { next in
+                       document.withoutUndo { commit(next) }
+                       document.liveChanged()
+                   },
+                   onCommit: { old, next in
+                       document.withoutUndo { commit(old) }
+                       commit(next)
+                   })
     }
 
     private func openCurve(_ nodeID: String, _ tag: String) {
@@ -72,8 +92,7 @@ struct LayerPanel: View {
         Text("Look").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
         row("Type", "What the particle is. Changing it drops the settings of the old type (Undo brings them back)") {
             ChoiceField(choices: LayerPanel.types.map { FieldChoice(name: $0.0, value: $0.1) }, value: type) { value in
-                guard value != type, let field = particle.child("PrVT") else { return }
-                document.batch("Set Particle Type") { document.applyType(field, ownerClass: "AvfxParticle", value: value) }
+                document.setParticleType(particle, value)
             }
         }
         if let layerTexture = particle.child("TC1") {
@@ -89,15 +108,19 @@ struct LayerPanel: View {
                 document.setLayerField(particle, "RBDT", value, title: "Set Facing")
             }
         }
+        row("Axes", "The effect's +Z is where the character faces; with the camera behind the character, +X is on the left. Markers show each live emitter's axes, the corner shows the world's") {
+            Text("+Z forward · +X left · +Y up").font(Theme.small).foregroundStyle(Theme.dim).lineLimit(1)
+            SegmentButton(title: "Show", active: app.showEmitters && app.showWorldAxes) {
+                let on = !(app.showEmitters && app.showWorldAxes)
+                app.showEmitters = on
+                app.showWorldAxes = on
+            }
+        }
         row("Color", "Colour and alpha at birth → at the end of its life") {
             if let ends = document.colorEnds(particle) {
-                ColorField(color: ends.start, alpha: true, onLive: { _ in }, onCommit: { _, next in
-                    document.setColorEnds(particle, start: next, end: ends.start == ends.end ? next : ends.end, over: span)
-                })
+                color(ends.start) { next in document.setColorEnds(particle, start: next, end: ends.start == ends.end ? next : ends.end, over: span) }
                 Image(systemName: "arrow.right").font(.system(size: 8)).foregroundStyle(Theme.dim)
-                ColorField(color: ends.end, alpha: true, onLive: { _ in }, onCommit: { _, next in
-                    document.setColorEnds(particle, start: ends.start, end: next, over: span)
-                })
+                color(ends.end) { next in document.setColorEnds(particle, start: ends.start, end: next, over: span) }
             } else if particle.child("Col") != nil {
                 customCurve(layer.particleID, "Col")
             }
@@ -124,6 +147,73 @@ struct LayerPanel: View {
             let life = document.layerLife(particle)
             if let life { number(life, suffix: " fr", step: 1, isInteger: true) { document.setLayerLife(particle, max(1, $0), title: "Set Particle Life") } }
             CheckBox(isOn: life == nil, label: "Forever") { on in document.setLayerLife(particle, on ? nil : 40, title: "Set Particle Life") }.fixedSize()
+        }
+    }
+
+    private func dataNumber(_ particle: AvfxBlock, _ tag: String, _ label: String, _ help: String, scale: Double = 1, suffix: String, step: Double, digits: Int) -> some View {
+        let data = particle.child("Data")
+        let curve = data?.child(tag)
+        let cls = document.particleDataClass(particle) ?? ""
+        return row(label, help) {
+            if case .custom? = document.curveEnds(curve) {
+                customCurve(layer.particleID, tag)
+            } else if let data {
+                number((constant(curve) ?? 0) * scale, suffix: suffix, step: step, digits: digits) { next in
+                    document.setCurveEnds(data, cls: cls, tag: tag, axes: nil, start: next / scale, end: next / scale, over: 1, title: "Set " + label)
+                }
+            }
+        }
+    }
+
+    private func dataInt(_ particle: AvfxBlock, _ tag: String, _ label: String, _ help: String, range: ClosedRange<Int>) -> some View {
+        row(label, help) {
+            if let data = particle.child("Data"), let field = data.child(tag) {
+                number(Double(field.intValue), step: 1, isInteger: true) { next in
+                    document.setLayerField(data, tag, min(max(Int(next), range.lowerBound), range.upperBound), title: "Set " + label)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var shapeRows: some View {
+        let particle = layer.particle
+        switch particle.int("PrVT") {
+        case 6:
+            Text("Ribbon").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+            row("Kind", "Trail: the path the particle flew. Line: a straight line along the particle's own axis") {
+                chips([("Trail", 1, "Position History"), ("Line", 0, "Axis Order")], current: particle.child("Data")?.int("LnCT")) { value in
+                    if let data = particle.child("Data") { document.setLayerField(data, "LnCT", value, title: "Set Create Line Type") }
+                }
+            }
+            dataNumber(particle, "Wd", "Width", "Half the ribbon's width in metres", suffix: " m", step: 0.01, digits: 3)
+            dataNumber(particle, "Len", "Length", "The trail is at most this long along its path, in metres", suffix: " m", step: 0.1, digits: 2)
+            dataInt(particle, "PnC", "Points", "Points in the chain, one per game frame: the trail covers the last Points − 1 frames. More than 64 crashed the game", range: 2...64)
+            dataNumber(particle, "WdB", "Head Width", "Multiplies the width at the head", suffix: "×", step: 0.05, digits: 2)
+            dataNumber(particle, "WdE", "Tail Width", "Multiplies the width at the tail; 0 makes it a point", suffix: "×", step: 0.05, digits: 2)
+        case 12:
+            Text("Disc").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+            dataNumber(particle, "RB", "Radius", "Radius of the band's middle, metres per unit of Size", suffix: " m", step: 0.05, digits: 2)
+            dataNumber(particle, "WB", "Band", "Half the band's width; equal to the radius makes a full disc", suffix: " m", step: 0.05, digits: 2)
+            dataNumber(particle, "Ang", "Arc", "How much of the circle is drawn, from +X", scale: 180 / .pi, suffix: "°", step: 5, digits: 0)
+        case 11:
+            Text("Decal Ring").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+            dataNumber(particle, "WID", "Ring Width", "Radii 0.5 ± this per unit of Size; 0.5 is a full disc", suffix: "", step: 0.01, digits: 3)
+            row("Arc", "How much of the ring is drawn") {
+                if let data = particle.child("Data"), let fan = data.child("RF") {
+                    let arc = 2 * acos(max(-1, min(1, 1 - 2 * Double(fan.floatValue)))) * 180 / .pi
+                    number(arc, suffix: "°", step: 5, digits: 0) { next in
+                        let value = Float((1 - cos(min(max(next, 0), 360) * .pi / 360)) / 2)
+                        guard value != fan.floatValue else { return }
+                        document.batch("Set Ring Fan") { fan.floatValue = value }
+                    }
+                }
+            }
+        case 4:
+            Text("Laser").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text)
+            dataNumber(particle, "Len", "Length", "The beam runs this many metres along the particle's facing axis", suffix: " m", step: 0.1, digits: 2)
+            dataNumber(particle, "Wdt", "Width", "Half the beam's width in metres", suffix: " m", step: 0.01, digits: 3)
+        default:
+            EmptyView()
         }
     }
 
@@ -247,6 +337,10 @@ struct LayerPanel: View {
             }
             Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
             look
+            if [6, 12, 11, 4].contains(layer.particle.int("PrVT")) {
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                shapeRows
+            }
             if let emitter = layer.emitter {
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
                 emission(emitter)

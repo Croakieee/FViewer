@@ -261,6 +261,9 @@ struct LayerPreset {
     var point: Int? = nil
     var textureColor = 0
     var colorToAlpha = false
+    var type = 8
+    var data: [(String, Double)] = []
+    var ints: [(String, Int)] = []
 
     static let all: [LayerPreset] = [
         LayerPreset(name: "Glow", help: "A soft light that stays on the bind point until the effect is released", texture: "vfx/common/texture/glow006fc.atex",
@@ -275,6 +278,21 @@ struct LayerPreset {
         LayerPreset(name: "Smoke", help: "Slow grey puffs that rise, grow and fade", texture: "vfx/common/texture/smoke004_e2.atex",
                     blend: 0, facing: 6, colorStart: SIMD4(0.55, 0.55, 0.55, 0.6), colorEnd: SIMD4(0.4, 0.4, 0.4, 0), sizeStart: 0.5, sizeEnd: 1.5, life: 60,
                     shape: 1, aim: -90, speed: 0.6, spread: 15, stream: true, every: 6, count: 1, follow: 3, gravity: 0, textureColor: 1, colorToAlpha: true),
+        LayerPreset(name: "Burst", help: "One burst of sparks flying out in every direction, falling and fading", texture: "vfx/common/texture/glow001bf.atex",
+                    blend: 2, facing: 6, colorStart: SIMD4(1, 0.95, 0.7, 1), colorEnd: SIMD4(1, 0.4, 0.1, 0), sizeStart: 0.4, sizeEnd: 0.05, life: 30,
+                    shape: 3, aim: 0, speed: 5, spread: 0, stream: false, every: 1, count: 24, follow: 3, gravity: -4),
+        LayerPreset(name: "Trail", help: "Glowing ribbons that streak up and arc down", texture: "vfx/common/texture/glow001f.atex",
+                    blend: 2, facing: 6, colorStart: SIMD4(0.6, 0.85, 1, 1), colorEnd: SIMD4(0.3, 0.5, 1, 0), sizeStart: 1, sizeEnd: 1, life: 30,
+                    shape: 1, aim: -90, speed: 4, spread: 40, stream: true, every: 6, count: 1, follow: 3, gravity: -5,
+                    type: 6, data: [("Wd", 0.04), ("Len", 1.5), ("WdB", 1), ("WdC", 1), ("WdE", 0)], ints: [("LnCT", 1), ("PnC", 16), ("PnCC", 8)]),
+        LayerPreset(name: "Beam", help: "A straight beam from the bind point along the character's facing", texture: "vfx/common/texture/glow001f.atex",
+                    blend: 2, facing: 2, colorStart: SIMD4(0.5, 0.9, 1, 1), colorEnd: SIMD4(0.5, 0.9, 1, 1), sizeStart: 1, sizeEnd: 1, life: nil,
+                    shape: 0, aim: 0, speed: 0, spread: 0, stream: false, every: 1, count: 1, follow: 2, gravity: 0,
+                    type: 4, data: [("Len", 4), ("Wdt", 0.15)]),
+        LayerPreset(name: "Ground Mark", help: "A ring painted on the ground at the feet, held until the effect is released", texture: "vfx/common/texture/glow006fc.atex",
+                    blend: 2, facing: 2, colorStart: SIMD4(1, 0.6, 0.2, 1), colorEnd: SIMD4(1, 0.6, 0.2, 1), sizeStart: 3, sizeEnd: 3, life: nil,
+                    shape: 0, aim: 0, speed: 0, spread: 0, stream: false, every: 1, count: 1, follow: 2, gravity: 0, point: -1,
+                    type: 11, data: [("WID", 0.08)], ints: []),
         LayerPreset(name: "Ring", help: "A ring on the ground at the feet that grows and fades, again every second", texture: "vfx/common/texture/ring04a_c.atex",
                     blend: 2, facing: 1, colorStart: SIMD4(0.6, 0.85, 1, 1), colorEnd: SIMD4(0.6, 0.85, 1, 0), sizeStart: 0.2, sizeEnd: 3, life: 30,
                     shape: 0, aim: 0, speed: 0, spread: 0, stream: true, every: 30, count: 1, follow: 3, gravity: 0, point: -1),
@@ -285,7 +303,14 @@ extension EffectDocument {
     func applyPreset(_ preset: LayerPreset, to layer: EffectLayer) {
         let particle = layer.particle
         batch("Apply " + preset.name) {
-            if let type = particle.child("PrVT"), type.intValue != 8 { applyType(type, ownerClass: "AvfxParticle", value: 8) }
+            setParticleType(particle, preset.type)
+            if let data = particle.child("Data") {
+                for (tag, value) in preset.data {
+                    if data.child(tag) == nil { putCurve(AvfxBlock.curveData(tag: tag, value: 0), into: data, cls: particleDataClass(particle) ?? "") }
+                    data.child(tag)?.curveKeys = [AvfxKey(time: 0, type: 1, x: 1, y: 1, z: Float(value))]
+                }
+                for (tag, value) in preset.ints { data.child(tag)?.intValue = value }
+            }
             particle.child("RMT")?.intValue = preset.blend
             particle.child("RBDT")?.intValue = preset.facing
             particle.child("CulT")?.intValue = 0
@@ -323,6 +348,86 @@ extension EffectDocument {
                 setLayerLife(emitter, nil, title: "Set Emitter Life")
             }
         }
+    }
+
+    func particleDataClass(_ particle: AvfxBlock) -> String? {
+        guard let name = catalog.enumCaseName("ParticleType", particle.int("PrVT"))?.replacingOccurrences(of: "_Variable", with: "") else { return nil }
+        return "AvfxParticleData" + name
+    }
+
+    func setParticleType(_ particle: AvfxBlock, _ type: Int) {
+        guard let field = particle.child("PrVT"), field.intValue != type else { return }
+        batch("Set Particle Type") {
+            applyType(field, ownerClass: "AvfxParticle", value: type)
+            guard let data = particle.child("Data") else { return }
+            func put(_ tag: String, _ value: Float) {
+                if let curve = data.child(tag), curve.curveKeys.isEmpty { curve.curveKeys = [AvfxKey(time: 0, type: 1, x: 1, y: 1, z: value)] }
+            }
+            func whole(_ tag: String, _ value: Int) { if let field = data.child(tag), field.intValue == 0 { field.intValue = value } }
+            switch type {
+            case 6:
+                whole("LnCT", 1)
+                whole("PnC", 16)
+                whole("PnCC", 8)
+                put("Wd", 0.05)
+                put("Len", 2)
+                for tag in ["WdB", "WdC", "WdE"] { put(tag, 1) }
+            case 12:
+                whole("PrtC", 1)
+                whole("PCnU", 32)
+                whole("PCnV", 2)
+                put("RB", 1)
+                put("RE", 1)
+                put("WB", 0.2)
+                put("WE", 0.2)
+                put("Ang", Float.pi * 2)
+            case 11:
+                put("WID", 0.1)
+                if let fan = data.child("RF"), fan.floatValue == 0 { fan.floatValue = 1 }
+            case 4:
+                put("Len", 3)
+                put("Wdt", 0.1)
+            default:
+                break
+            }
+        }
+    }
+
+    func addCastEnd(trigger: Int = 0, fade: Int = 15) {
+        guard let root = avfxRoot, let schedule = root.child("Schd"), let timeline = freshTopLevel("TmLn") else { return }
+        var index = 0
+        batch("Add Cast End") {
+            index = insertFresh(timeline, into: root)
+            var clip = Array("KILL".utf8.reversed())
+            clip.append(contentsOf: [UInt8](repeating: 0, count: 160))
+            clip.setU32(4, UInt32(fade))
+            clip.setU32(8, 1)
+            clip.setU32(20, Float(-1).bitPattern)
+            timeline.insert(AvfxBlock(tag: "Clip", data: clip), at: timeline.children?.count ?? 0)
+            let item = defaultRecord("AvfxTimelineItem")
+            if let field = item.first(where: { $0.tag == "bEna" }) { field.intValue = 1 }
+            if let field = item.first(where: { $0.tag == "ClNo" }) { field.intValue = 0 }
+            if let field = item.first(where: { $0.tag == "EdTm" }) { field.intValue = 1 }
+            timeline.setOwnRecords("Item", [item])
+            let triggers = schedule.ownRecords("Trgr")
+            if triggers.indices.contains(trigger) {
+                triggers[trigger].first { $0.tag == "TlNo" }?.intValue = index
+                triggers[trigger].first { $0.tag == "bEna" }?.intValue = 1
+                schedule.setOwnRecords("Trgr", triggers)
+            }
+            for timeline in root.childrenNamed("TmLn").prefix(index) {
+                let records = timeline.ownRecords("Item")
+                for record in records where (record.first { $0.tag == "EmNo" }?.intValue ?? -1) >= 0 {
+                    record.first { $0.tag == "EdTm" }?.intValue = -1
+                }
+                timeline.setOwnRecords("Item", records)
+            }
+            for emitter in root.childrenNamed("Emit") {
+                if let life = emitter.child("Life"), life.children != nil { makeLifeInfinite(life, in: emitter) }
+            }
+        }
+        if !clock.events.contains(where: { $0.kind == .trigger(trigger) }) { addEvent(.trigger(trigger), at: 60) }
+        selectionID = "avfx/TmLn/\(index)"
     }
 
     func binder(atPoint point: Int?) -> Int {

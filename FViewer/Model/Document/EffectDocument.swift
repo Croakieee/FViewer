@@ -446,6 +446,13 @@ final class EffectDocument: ObservableObject, Identifiable {
 
     private var undoSuspended = false
 
+    func withoutUndo(_ body: () -> Void) {
+        let was = undoSuspended
+        undoSuspended = true
+        body()
+        undoSuspended = was
+    }
+
     @discardableResult func batch<T>(_ title: String, _ body: () throws -> T) rethrows -> T {
         if undoSuspended { return try body() }
         normalize()

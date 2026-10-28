@@ -40,6 +40,8 @@ struct OutlinerView: View {
                                 Button(preset.name) { document.addLayer(preset: preset) }
                             }
                         }
+                        Button("Cast End on Trigger 0") { document.addCastEnd() }
+                            .help("Holds the effect until the game's trigger 0 (the cast finished), then fades the whole effect out over 15 frames")
                         Divider()
                         ForEach(EffectDocument.addableKinds, id: \.tag) { kind in
                             Button(kind.title) { document.addTopLevel(kind.tag) }

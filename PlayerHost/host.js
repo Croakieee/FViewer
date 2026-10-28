@@ -63,7 +63,7 @@
   };
 
   setInterval(() => {
-    post({ v: AvfxPlayer.PROTOCOL, type: 'stats', fps: drawn, ms: Math.round(player.stage.load.ms * 10) / 10, waiting: player.effect?.waitingForTrigger === true });
+    post({ v: AvfxPlayer.PROTOCOL, type: 'stats', fps: drawn, ms: Math.round(player.stage.load.ms * 10) / 10, waiting: player.effect?.waitingForTrigger === true, settled: player.effect?.settledFrame ?? null, finished: player.effect?.finishedFrame ?? player.effect?.lastFinishedFrame ?? null });
     drawn = 0;
   }, 1000);
 

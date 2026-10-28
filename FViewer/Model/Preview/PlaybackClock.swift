@@ -69,6 +69,8 @@ final class PlaybackClock: ObservableObject {
 
     var playedEvents: [PreviewEvent] { events.filter(isPlayed) }
     @Published var timelineStates: [Int: String] = [:]
+    @Published var settledFrame: Double?
+    @Published var finishedFrame: Double?
     var restartToken = 0
     private var lastTick: Double = 0
 

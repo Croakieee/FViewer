@@ -444,10 +444,18 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
             if abs(time - frameTime) >= 0.1 { frameTime = time }
             let waiting = event["waiting"] as? Bool ?? false
             if waiting != waitingForTrigger { waitingForTrigger = waiting }
+            if isDriver, let clock = document?.clock {
+                if let settled = event["settled"] as? Double, clock.settledFrame != settled { clock.settledFrame = settled }
+                if let finished = event["finished"] as? Double, clock.finishedFrame != finished { clock.finishedFrame = finished }
+            }
         case "ended":
             if isDriver { document?.clock.playing = false }
         case "loaded":
             loading = false
+            if isDriver, let clock = document?.clock {
+                clock.settledFrame = nil
+                clock.finishedFrame = nil
+            }
             failure = nil
             setWarnings(event["warnings"] as? [String] ?? [])
         case "warnings":

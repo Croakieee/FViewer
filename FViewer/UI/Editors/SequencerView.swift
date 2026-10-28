@@ -596,6 +596,25 @@ struct SequencerView: View {
             .help(help)
     }
 
+    private func zones(end: Double) -> [(title: String, from: Double, to: Double, color: Color)] {
+        let settled = clock.settledFrame, finished = clock.finishedFrame
+        let intro = Color(red: 0.45, green: 0.75, blue: 1), outro = Color(red: 1, green: 0.55, blue: 0.35)
+        let ending = clock.events.filter { clock.isPlayed($0) && clock.isEnding($0.kind) }.map(\.frame).min()
+        var result: [(title: String, from: Double, to: Double, color: Color)] = []
+        if let ending {
+            let start = min(settled ?? 0, ending)
+            if start > 0 { result.append(("Intro", 0, start, intro)) }
+            if ending > start { result.append((settled == nil ? "Before the Event" : "Held ↺", start, ending, SequencerView.loopColor)) }
+            result.append(("Outro", ending, max(finished ?? ending + 30, ending + 1), outro))
+        } else if let finished {
+            result.append(("Plays Out", 0, finished, intro))
+        } else if let settled {
+            if settled > 0 { result.append(("Intro", 0, settled, intro)) }
+            result.append(("Held ↺ until released", settled, max(end, settled + 30), SequencerView.loopColor))
+        }
+        return result
+    }
+
     private func rowHelp(_ row: SequencerRow) -> String {
         var lines = [row.label]
         if let clip = row.clip { lines.append(EffectDocument.clipHelp(clip.code)) }
@@ -896,6 +915,15 @@ struct SequencerView: View {
                             for (index, row) in rows.enumerated() where row.depth == 0 {
                                 let top = bodyTop + CGFloat(index) * rowHeight
                                 context.fill(Path(CGRect(x: 0, y: top, width: width, height: rowHeight)), with: .color(Theme.gray(0.2)))
+                            }
+                            for zone in zones(end: end) {
+                                let from = x(zone.from, width, span), to = x(zone.to, width, span)
+                                let band = CGRect(x: from, y: rulerHeight + 1, width: max(to - from, 1), height: markerHeight - 2)
+                                context.fill(Path(band), with: .color(zone.color.opacity(0.13)))
+                                context.fill(Path(CGRect(x: from, y: rulerHeight + markerHeight - 3, width: max(to - from, 1), height: 2)), with: .color(zone.color.opacity(0.6)))
+                                if band.width > 40 {
+                                    drawLabel(&context, zone.title, in: CGRect(x: from + 5, y: rulerHeight, width: band.width - 8, height: markerHeight - 2), color: zone.color.opacity(0.9))
+                                }
                             }
                             let base: Double = span / viewZoom > 400 ? 50 : span / viewZoom > 160 ? 20 : span / viewZoom > 60 ? 10 : 5
                             let step = span / viewZoom / base > 200 ? (span / viewZoom / 200 / 50).rounded(.up) * 50 : base
