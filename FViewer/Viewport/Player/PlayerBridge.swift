@@ -121,8 +121,9 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         apply("fvHost", "setSeed", [clock.seed])
         apply("avfxHost", "setView", [viewSettings(app)])
         apply("avfxHost", "setStage", [stageSettings(app)])
+        apply("fvHost", "setMannequinScale", mannequinScale())
         let render = PreviewSettings.render
-        apply("fvHost", "setRender", [["frameCap": render.frameCap, "fullResolution": render.fullResolution, "gameLight": render.nightLight ? "night" : "day",
+        apply("fvHost", "setRender", [["frameCap": render.frameCap, "fullResolution": render.fullResolution, "gameLight": render.gameLight.rawValue,
                                         "fog": render.fog, "fogDensity": render.fogDensity, "fogStart": render.fogStart,
                                         "fogColor": [render.fogColor.x, render.fogColor.y, render.fogColor.z]]])
         pushCharacter()
@@ -164,6 +165,10 @@ final class PlayerBridge: NSObject, ObservableObject, WKNavigationDelegate {
         }
         return ["showCaster": app.showBindPoints || PreviewSettings.activeModel != nil, "bindMarkers": app.showBindPoints, "showTarget": stage.showTarget, "distance": Double(stage.distance),
                 "side": Double(stage.side), "face": stage.faceEachOther, "casterMotion": mover(stage.caster), "targetMotion": mover(stage.target)]
+    }
+
+    private func mannequinScale() -> [Any] {
+        [Double(PreviewSettings.stage.mannequinScale), PreviewSettings.stage.scalePulse]
     }
 
     private nonisolated static func event(_ event: PreviewEvent) -> [String: Any] {

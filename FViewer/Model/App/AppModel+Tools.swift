@@ -624,6 +624,7 @@ extension AppModel {
         change(&stage)
         stage.distance = min(max(stage.distance, 0), 60)
         stage.side = min(max(stage.side, -30), 30)
+        stage.mannequinScale = min(max(stage.mannequinScale, 0.1), 10)
         for keyPath in [\PreviewStage.caster, \PreviewStage.target] {
             stage[keyPath: keyPath].amplitude = min(max(stage[keyPath: keyPath].amplitude, 0), 30)
             stage[keyPath: keyPath].period = min(max(stage[keyPath: keyPath].period, 0.2), 60)

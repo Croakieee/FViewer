@@ -206,10 +206,12 @@ struct PreviewMenu: View {
                 SegmentButton(title: "Reset Look", active: false) { app.setLook { $0 = PreviewLook() } }
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
                 row("Game Light") {
-                    SegmentButton(title: "Day", active: !PreviewSettings.render.nightLight) { app.setRender { $0.nightLight = false } }
-                    SegmentButton(title: "Night", active: PreviewSettings.render.nightLight) { app.setRender { $0.nightLight = true } }
+                    ChoiceField(choices: GameLight.allCases.enumerated().map { FieldChoice(name: $0.element.title, value: $0.offset) },
+                                value: GameLight.allCases.firstIndex(of: PreviewSettings.render.gameLight) ?? 0) { index in
+                        app.setRender { $0.gameLight = GameLight.allCases[index] }
+                    }
                 }
-                .help("The game's light on lit Model particles of effects with Directional Light Source InGame: the sun by day, a weak light from above by night")
+                .help("The game's scene light: particles take it by their Apply Rate Directional / Environment, lit models of effects with Directional Light Source InGame by its sun. Empyreum at night darkens particles, Empyreum by day and the plain presets brighten them (measured)")
                 row("Frame Rate") {
                     ForEach([(0, "System"), (60, "60"), (30, "30")], id: \.0) { cap, title in
                         SegmentButton(title: title, active: PreviewSettings.render.frameCap == cap) { app.setRender { $0.frameCap = cap } }
@@ -362,6 +364,11 @@ struct StageMenu: View {
                 mover("Caster Motion", \.caster)
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
                 mover("Target Motion", \.target)
+                Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
+                row("Mannequin Size") { number(stage.mannequinScale, "×", 0.05) { $0.mannequinScale = $1 } }
+                    .help("Size of the caster and the target: binders with VFX Scale take it, as on a large or small race or monster")
+                CheckBox(isOn: stage.scalePulse, label: "Swell and Shrink Every 4 s") { on in app.setStage { $0.scalePulse = on } }
+                    .help("The mannequins grow from 1 to Mannequin Size and back every 4 s on the effect's clock, to see the binders' Scale Interpolation")
                 Rectangle().fill(Theme.line).frame(height: 1).padding(.vertical, 2)
                 SegmentButton(title: "Reset Stage", active: false) { app.setStage { $0 = PreviewStage() } }
             }

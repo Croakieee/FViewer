@@ -365,6 +365,9 @@ struct InspectorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help("What the preview player says about this item")
             }
+            if node.id.split(separator: "/").count == 3 || node.id.contains("/Item/") && node.id.hasPrefix("avfx/TmLn/"), let layer = document.layer(for: node.id) {
+                Panel(title: "Layer", memory: "layer") { LayerPanel(document: document, layer: layer) }
+            }
             if case .avfx(let block, _, let record) = node.payload, record == nil, EffectDocument.isTextureLayer(block) {
                 Panel(title: "Texture", memory: "layertexture") {
                     LayerTexturePicker(document: document, layer: block)

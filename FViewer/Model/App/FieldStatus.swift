@@ -2,14 +2,14 @@ import Foundation
 
 enum FieldStatus {
     enum Kind {
-        case measured, inferred, guess, unsure, notYet, noEffect, unread, read
+        case measured, inferred, ownLogic, guess, unsure, notYet, noEffect, unread, read
 
         var symbol: String? {
             switch self {
             case .measured: return "checkmark"
             case .notYet, .unread: return "eye.slash"
             case .noEffect: return "minus.circle"
-            case .guess, .unsure, .read: return "questionmark"
+            case .guess, .unsure, .read, .ownLogic: return "questionmark"
             case .inferred: return nil
             }
         }
@@ -20,7 +20,7 @@ enum FieldStatus {
             switch self {
             case .measured: return "Checked against the game"
             case .inferred: return "By analogy"
-            case .guess, .unsure, .read: return "Not confirmed"
+            case .guess, .unsure, .read, .ownLogic: return "Not confirmed"
             case .notYet, .unread: return "Not in the preview yet"
             case .noEffect: return "No visible effect"
             }
@@ -36,6 +36,7 @@ enum FieldStatus {
             case .noEffect: return "No visible effect: the preview leaves it out on purpose"
             case .unread: return "Preview: not read yet, not sorted out"
             case .read: return "Preview: read, not checked against the game"
+            case .ownLogic: return "Preview: its own logic, not measured in the game"
             }
         }
     }
@@ -89,6 +90,7 @@ enum FieldStatus {
     private static func kind(status: String, note: String) -> Kind? {
         if status.contains("✅") { return .measured }
         if status.contains("🔶") { return .inferred }
+        if status.contains("🛠") { return .ownLogic }
         if status.contains("❓") { return .guess }
         if status.contains("⚠") { return .unsure }
         if status.contains("🚫") { return .noEffect }

@@ -40,6 +40,23 @@ struct PreviewStage: Equatable, Codable {
     var faceEachOther = true
     var caster = StageMover()
     var target = StageMover()
+    var mannequinScale: Float = 1
+    var scalePulse = false
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let base = PreviewStage()
+        showTarget = try values.decodeIfPresent(Bool.self, forKey: .showTarget) ?? base.showTarget
+        distance = try values.decodeIfPresent(Float.self, forKey: .distance) ?? base.distance
+        side = try values.decodeIfPresent(Float.self, forKey: .side) ?? base.side
+        faceEachOther = try values.decodeIfPresent(Bool.self, forKey: .faceEachOther) ?? base.faceEachOther
+        caster = try values.decodeIfPresent(StageMover.self, forKey: .caster) ?? base.caster
+        target = try values.decodeIfPresent(StageMover.self, forKey: .target) ?? base.target
+        mannequinScale = try values.decodeIfPresent(Float.self, forKey: .mannequinScale) ?? base.mannequinScale
+        scalePulse = try values.decodeIfPresent(Bool.self, forKey: .scalePulse) ?? base.scalePulse
+    }
 }
 
 struct PreviewLook: Equatable, Codable {
@@ -48,10 +65,23 @@ struct PreviewLook: Equatable, Codable {
     var lightIntensity: Float = 4
 }
 
+enum GameLight: String, Codable, CaseIterable {
+    case empyreumNight = "empyreum", empyreumDay = "empyreum-day", day, night
+
+    var title: String {
+        switch self {
+        case .empyreumNight: return "Empyreum Night"
+        case .empyreumDay: return "Empyreum Day"
+        case .day: return "Day"
+        case .night: return "Night"
+        }
+    }
+}
+
 struct PreviewRender: Equatable, Codable {
     var frameCap = 0
     var fullResolution = true
-    var nightLight = false
+    var gameLight = GameLight.empyreumNight
     var fog = false
     var fogDensity = 0.0025
     var fogStart = 0.0
@@ -64,7 +94,7 @@ struct PreviewRender: Equatable, Codable {
         let base = PreviewRender()
         frameCap = try values.decodeIfPresent(Int.self, forKey: .frameCap) ?? base.frameCap
         fullResolution = try values.decodeIfPresent(Bool.self, forKey: .fullResolution) ?? base.fullResolution
-        nightLight = try values.decodeIfPresent(Bool.self, forKey: .nightLight) ?? base.nightLight
+        gameLight = try values.decodeIfPresent(GameLight.self, forKey: .gameLight) ?? base.gameLight
         fog = try values.decodeIfPresent(Bool.self, forKey: .fog) ?? base.fog
         fogDensity = try values.decodeIfPresent(Double.self, forKey: .fogDensity) ?? base.fogDensity
         fogStart = try values.decodeIfPresent(Double.self, forKey: .fogStart) ?? base.fogStart

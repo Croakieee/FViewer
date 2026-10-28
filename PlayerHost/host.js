@@ -26,14 +26,17 @@
     return AvfxPlayer.loadCharacterModel(glb, eid ? new Uint8Array(eid) : null);
   };
 
-  let render = { frameCap: 0, fullResolution: true, gameLight: 'day' };
+  let render = { frameCap: 0, fullResolution: true, gameLight: 'empyreum' };
   let drawn = 0;
 
   const linear = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
   const applyGameLight = () => {
     const kind = player.effect?.constructor;
-    if (kind?.GAME_LIGHT_DAY) kind.gameLight = render.gameLight === 'night' ? kind.GAME_LIGHT_NIGHT : kind.GAME_LIGHT_DAY;
+    if (kind?.GAME_LIGHT_DAY) {
+      const presets = { day: kind.GAME_LIGHT_DAY, night: kind.GAME_LIGHT_NIGHT, empyreum: kind.GAME_LIGHT_EMPYREUM_NIGHT, 'empyreum-day': kind.GAME_LIGHT_EMPYREUM_DAY };
+      kind.gameLight = presets[render.gameLight] ?? kind.GAME_LIGHT_EMPYREUM_NIGHT ?? kind.GAME_LIGHT_NIGHT;
+    }
     if (kind?.sceneFog) {
       const fog = kind.sceneFog;
       fog.on = !!render.fog;
@@ -85,11 +88,13 @@
   };
 
   const timelineStates = (effect) => {
-    const live = new Set([...(effect.emitters ?? []).map((e) => e.timeline), ...effect.particles.map((p) => p.emitter.timeline)]);
+    const owners = [...(effect.emitters ?? []), ...effect.particles.map((p) => p.emitter)];
+    const live = new Set(owners.map((e) => e.timeline));
+    const fading = new Set(owners.filter((e) => effect.timelineKills?.has(e.run)).map((e) => e.timeline));
     const states = {};
     for (const index of live) {
       if (index < 0) continue;
-      if (effect.kill || effect.timelineKills?.has(index)) states[index] = 'fading';
+      if (effect.kill || fading.has(index)) states[index] = 'fading';
       else if (effect.released) states[index] = 'released';
       else if (effect.settled) states[index] = 'held';
       else states[index] = 'playing';
@@ -226,6 +231,11 @@
       const ratio = render.fullResolution ? devicePixelRatio : 1;
       if (player.stage.renderer.getPixelRatio() !== ratio) player.stage.renderer.setPixelRatio(ratio);
       applyGameLight();
+    },
+    setMannequinScale(scale, pulse) {
+      const stage = player.stage.stage;
+      stage.targetScale = scale;
+      stage.targetScalePulse = !!pulse;
     },
     setSeed(seed) {
       if (player.stage.seed === seed) return;
