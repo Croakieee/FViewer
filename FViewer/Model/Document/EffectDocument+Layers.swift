@@ -98,6 +98,7 @@ extension EffectDocument {
     static let timelineItemLimit = 32
     static let polylinePointLimit = 64
     static let curveKeyLimit = 120
+    static let keyTimeLimit = 0x3FFF
 
     func chainWarnings(_ root: AvfxBlock) -> [String: [String]] {
         var notes: [String: [String]] = [:]
@@ -121,6 +122,10 @@ extension EffectDocument {
                     if mode != 0, int(record, "CrCn") == 0 { note(item, "Create Count 0: creates nothing") }
                     if mode == 0, rateZero { note(item, "The emitter's Create Count is 0 all the time: creates nothing") }
                     if int(record, "PrLk") >= 0, int(record, "GenD") > 0, mode != 0 { note(item, "Parameter Link is ignored with Generate Delay above 0") }
+                    if int(record, "GenD") >= 1, int(record, "CrCn") == 1, (mode == 1 && on(record, "bGD")) || mode == 2 {
+                        note(item, mode == 2 ? "Create Time End with Generate Delay and Create Count 1 creates nothing in the game"
+                                             : "Generate Delay By One with Generate Delay and Create Count 1 creates nothing in the game")
+                    }
                 }
             }
         }
@@ -150,6 +155,7 @@ extension EffectDocument {
         let ownLight = root.childrenNamed("Efct").contains { $0.int("EfVT") == 1 }
         for (index, particle) in root.childrenNamed("Ptcl").enumerated() {
             let id = "avfx/Ptcl/\(index)", data = particle.child("Data")
+            if particle.child("bS11")?.data.first.map({ $0 != 0 }) == true { note(id, "S11 Enabled: the game never creates this particle") }
             switch particle.int("PrVT") {
             case 5:
                 if let data, data.child("bLgt")?.data.first.map({ $0 != 0 }) == true, root.int("DLST") == 1, !ownLight {
@@ -170,12 +176,21 @@ extension EffectDocument {
         for tag in ["TmLn", "Emit", "Ptcl", "Efct", "Bind"] {
             for (index, block) in root.childrenNamed(tag).enumerated() {
                 var most = 0
+                var wrapped: Int?, early: Int?
                 func scan(_ node: AvfxBlock) {
                     if node.tag == "Keys" { most = max(most, node.data.count / 16) }
+                    if node.child("Keys") != nil {
+                        for key in node.curveKeys where key.time < -16 || (node.tag != "RGB" && key.time > EffectDocument.keyTimeLimit) {
+                            if node.tag == "RGB" { early = early ?? key.time & 0xFFFF } else { wrapped = wrapped ?? key.time & 0xFFFF }
+                        }
+                    }
                     node.children?.forEach(scan)
                 }
                 scan(block)
-                if most > EffectDocument.curveKeyLimit { note("avfx/\(tag)/\(index)", "A curve has \(most) keys: game files have up to ~\(EffectDocument.curveKeyLimit)") }
+                let id = "avfx/\(tag)/\(index)"
+                if most > EffectDocument.curveKeyLimit { note(id, "A curve has \(most) keys: game files have up to ~\(EffectDocument.curveKeyLimit)") }
+                if let wrapped { note(id, "A curve key at frame \(wrapped): the game keeps 14 bits of the time and reads it as frame \(wrapped & EffectDocument.keyTimeLimit)") }
+                if let early { note(id, "A colour key at frame \(early): the game reads it as a time before frame 0 and holds the first key") }
             }
         }
         for (k, item) in (root.child("Schd")?.ownRecords("Item") ?? []).enumerated() where on(item, "bEna") && int(item, "TlNo") < 0 {
@@ -332,6 +347,7 @@ extension EffectDocument {
         if let typeField = particle.child("PrVT") { applyType(typeField, ownerClass: "AvfxParticle", value: 8) }
         particle.child("RBDT")?.intValue = 6
         particle.child("CulT")?.intValue = 0
+        if let layer = particle.child("TC1"), layerTexture(layer) < 0 { writeLayerTexture(layer, index: -1) }
         putCurve(AvfxBlock.curveAxes(tag: "Scl", axes: ["X", "Y", "Z"], value: 1), into: particle, cls: "AvfxParticle")
         let life = max(1, Int(particle.child("Life")?.float("Val") ?? 40))
         if let alpha = particle.child("Col")?.child("A") {
@@ -390,6 +406,10 @@ extension EffectDocument {
     func writeLayerTexture(_ layer: AvfxBlock, index: Int) {
         let byte: UInt8 = index < 0 ? 255 : UInt8(truncatingIfNeeded: index)
         if layer.tag == "TC1" {
+            if index < 0 {
+                for list in layer.childrenNamed("TLst") { layer.remove(list) }
+                return
+            }
             if let list = layer.child("TLst"), !list.data.isEmpty {
                 list.data[0] = byte
             } else {
